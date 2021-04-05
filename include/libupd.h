@@ -214,6 +214,12 @@ typedef struct upd_req_dir_access_t {
   unsigned rm   : 1;
 } upd_req_dir_access_t;
 
+typedef struct upd_req_dir_entry_t {
+  uint8_t*    name;
+  size_t      len;
+  upd_file_t* file;
+} upd_req_dir_entry_t;
+
 struct upd_req_t {
   upd_iso_t*  iso;
   upd_file_t* file;
@@ -222,12 +228,14 @@ struct upd_req_t {
 
   void* udata;
   void
-  (*callback)(
+  (*cb)(
     upd_req_t* req);
 
   union {
     union {
-      upd_req_dir_access_t access;
+      upd_req_dir_access_t  access;
+      upd_req_dir_entry_t** entries;
+      upd_req_dir_entry_t   entry;
     } dir;
   };
 };
