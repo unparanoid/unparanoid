@@ -76,7 +76,7 @@ struct upd_driver_t {
   const uint8_t*       name;
   const upd_req_cat_t* cats;
 
-  void
+  bool
   (*init)(
     upd_file_t* f);
   void

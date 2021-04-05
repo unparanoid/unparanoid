@@ -25,10 +25,6 @@ static inline upd_file_t* upd_file_new(
   if (HEDLEY_UNLIKELY(!upd_malloc(&f, sizeof(*f)))) {
     return NULL;
   }
-  if (HEDLEY_UNLIKELY(!upd_array_insert(&iso->files, f, SIZE_MAX))) {
-    upd_free(&f);
-    return NULL;
-  }
 
   *f = (upd_file_t_) {
     .super = {
@@ -38,7 +34,15 @@ static inline upd_file_t* upd_file_new(
       .refcnt = 1,
     },
   };
-  driver->init(&f->super);
+  if (HEDLEY_UNLIKELY(!driver->init(&f->super))) {
+    upd_free(&f);
+    return NULL;
+  }
+
+  if (HEDLEY_UNLIKELY(!upd_array_insert(&iso->files, f, SIZE_MAX))) {
+    upd_free(&f);
+    return NULL;
+  }
   return &f->super;
 }
 

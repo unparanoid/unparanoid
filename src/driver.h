@@ -3,6 +3,9 @@
 #include "common.h"
 
 
+extern const upd_driver_t upd_driver_dir;
+
+
 HEDLEY_NON_NULL(1, 2)
 static inline bool upd_driver_register(
     upd_iso_t* iso, const upd_driver_t* driver) {
@@ -32,8 +35,9 @@ static inline const upd_driver_t* upd_driver_lookup(
 
 
 #if defined(UPD_TEST)
-static void upd_test_driver_null_init_(upd_file_t* f) {
+static bool upd_test_driver_null_init_(upd_file_t* f) {
   (void) f;
+  return true;
 }
 static void upd_test_driver_null_deinit_(upd_file_t* f) {
   (void) f;
