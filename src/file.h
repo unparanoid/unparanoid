@@ -192,13 +192,15 @@ static inline void upd_file_unlock(upd_file_lock_t* l) {
     l->ok = false;
     l->cb(l);
     return;
-  } else {
-    if (HEDLEY_UNLIKELY(l->ex)) {
-      upd_file_trigger(&f->super, UPD_FILE_UPDATE);
-    }
   }
 
-  if (HEDLEY_UNLIKELY(deleted || !f->lock.n)) {
+  if (HEDLEY_UNLIKELY(deleted)) {
+    return;
+  }
+  if (HEDLEY_UNLIKELY(l->ex)) {
+    upd_file_trigger(&f->super, UPD_FILE_UPDATE);
+  }
+  if (HEDLEY_UNLIKELY(!f->lock.n)) {
     return;
   }
 
