@@ -43,6 +43,7 @@ target_link_libraries(libupd
     hedley
     PkgConfig::UV
     PkgConfig::YAML
+    utf8.h
 )
 
 
