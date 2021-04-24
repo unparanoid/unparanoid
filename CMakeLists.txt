@@ -36,6 +36,7 @@ target_sources(libupd
   PRIVATE
     src/array.h
     src/iso.c
+    src/memory.h
 )
 target_link_libraries(libupd
   PUBLIC
@@ -55,3 +56,22 @@ target_sources(upd
   PRIVATE
     src/main.c
 )
+
+
+# ---- test app ----
+if(BUILD_TESTING)
+  add_executable(updtest)
+  target_link_libraries(updtest
+    PRIVATE
+      libupd
+  )
+  target_sources(updtest
+    PRIVATE
+      src/test.c
+  )
+
+  add_test(
+    NAME    updtest
+    COMMAND $<TARGET_FILE:updtest>
+  )
+endif()
