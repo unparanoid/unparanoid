@@ -40,7 +40,7 @@ static inline bool upd_array_insert(upd_array_t* a, void* p, size_t i) {
   if (HEDLEY_UNLIKELY(!upd_array_resize(a, a->n+1))) {
     return false;
   }
-  memmove(a->p+i+1, a->p+i, a->n-i);
+  memmove(a->p+i+1, a->p+i, a->n-i-1);
   a->p[i] = p;
   return true;
 }
