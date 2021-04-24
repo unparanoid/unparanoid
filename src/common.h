@@ -16,4 +16,5 @@
 #undef UPD_DECL_FUNC
 
 
-
+#include "memory.h"
+#include "array.h"
