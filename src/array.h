@@ -76,8 +76,8 @@ static inline bool upd_array_find(const upd_array_t* a, size_t* i, void* p) {
 }
 
 
-#if !defined(NDEBUG)
-static inline void upd_test_array(void) {
+#if defined(UPD_TEST)
+static void upd_test_array(void) {
   upd_array_t a = {0};
 
   assert(upd_array_insert(&a, (void*) 0x00, SIZE_MAX));

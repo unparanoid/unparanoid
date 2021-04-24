@@ -78,3 +78,14 @@ static inline bool upd_file_unwatch(upd_file_t* f, uint64_t id) {
   /* TODO */
   return true;
 }
+
+
+#if defined(UPD_TEST)
+static void upd_test_file(void) {
+  const uint8_t* dname = (void*) "upd.test.driver.null";
+
+  const upd_driver_t* driver =
+    upd_driver_lookup(upd_test.iso, dname, utf8size_lazy(dname));
+  assert(driver);
+}
+#endif

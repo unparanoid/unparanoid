@@ -29,3 +29,33 @@ static inline const upd_driver_t* upd_driver_lookup(
   }
   return NULL;
 }
+
+
+#if defined(UPD_TEST)
+static void upd_test_driver_null_init_(upd_file_t* f) {
+  (void) f;
+}
+static void upd_test_driver_null_deinit_(upd_file_t* f) {
+  (void) f;
+}
+static bool upd_test_driver_null_handle_(upd_req_t* req) {
+  (void) req;
+  return true;
+}
+static const upd_driver_t upd_test_driver_null_ = {
+  .name   = (uint8_t*) "upd.test.driver.null",
+  .cats   = (upd_req_cat_t[]) {0},
+  .init   = upd_test_driver_null_init_,
+  .deinit = upd_test_driver_null_deinit_,
+  .handle = upd_test_driver_null_handle_,
+};
+static void upd_test_driver(void) {
+  assert(upd_driver_register(upd_test.iso, &upd_test_driver_null_));
+  assert(!upd_driver_register(upd_test.iso, &upd_test_driver_null_));
+
+  const uint8_t* dname = upd_test_driver_null_.name;
+  const upd_driver_t* d =
+    upd_driver_lookup(upd_test.iso, dname, utf8size_lazy(dname));
+  assert(d == &upd_test_driver_null_);
+}
+#endif

@@ -24,6 +24,11 @@
 typedef struct upd_srv_t upd_srv_t;
 typedef struct upd_cli_t upd_cli_t;
 
+
+#if defined(UPD_TEST)
+# include "test.h"
+#endif
+
 #include "iso.h"
 #include "driver.h"
 #include "file.h"

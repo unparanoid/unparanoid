@@ -36,8 +36,8 @@ static inline void upd_free(void* p) {
 }
 
 
-#if !defined(NDEBUG)
-static inline void upd_test_memory(void) {
+#if defined(UPD_TEST)
+static void upd_test_memory(void) {
   void* ptr = NULL;
   assert(upd_malloc(&ptr, 16));
   assert(upd_malloc(&ptr, 32));
