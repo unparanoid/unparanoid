@@ -73,11 +73,9 @@ struct upd_driver_t {
 
   void
   (*init)(
-    upd_iso_t*  iso,
     upd_file_t* f);
   void
   (*deinit)(
-    upd_iso_t*  iso,
     upd_file_t* f);
   bool
   (*handle)(

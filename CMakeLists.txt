@@ -35,8 +35,12 @@ target_sources(libupd
     include/libupd.h
   PRIVATE
     src/array.h
+    src/common.h
+    src/driver.h
+    src/file.h
     src/iso.c
     src/memory.h
+    src/req.h
 )
 target_link_libraries(libupd
   PUBLIC
