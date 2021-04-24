@@ -6,6 +6,9 @@
 struct upd_iso_t {
   uv_loop_t loop;
 
+  bool      out_ok;
+  uv_tty_t  out;
+
   upd_iso_status_t status;
 
   upd_array_of(const upd_driver_t*) drivers;
@@ -59,11 +62,37 @@ static inline void upd_iso_unstack(upd_iso_t* iso, void* ptr) {
   }
 }
 
+static void upd_iso_msg_write_cb_(uv_write_t* req, int status) {
+  upd_iso_unstack(req->data, req);
+  if (HEDLEY_UNLIKELY(status < 0)) {
+    fprintf(stderr, "failed to write msg to stdout\n");
+    return;
+  }
+}
 HEDLEY_NON_NULL(1)
 static inline void upd_iso_msg(upd_iso_t* iso, const uint8_t* msg, uint64_t len) {
-  (void) iso;
-  (void) msg;
-  (void) len;
+  if (HEDLEY_UNLIKELY(!iso->out_ok)) {
+    return;
+  }
+
+  uv_write_t* req = upd_iso_stack(iso, sizeof(*req)+len);
+  if (HEDLEY_UNLIKELY(req == NULL)) {
+    fprintf(stderr, "msg allocation failure\n");
+    return;
+  }
+
+  *req = (uv_write_t) { .data = iso, };
+  memcpy(req+1, msg, len);
+
+  const uv_buf_t buf = uv_buf_init((char*) (req+1), len);
+
+  const int err =
+    uv_write(req, (uv_stream_t*) &iso->out, &buf, 1, upd_iso_msg_write_cb_);
+  if (HEDLEY_UNLIKELY(err < 0)) {
+    upd_iso_unstack(iso, req);
+    fprintf(stderr, "failed to write msg to stdout\n");
+    return;
+  }
 }
 
 HEDLEY_NON_NULL(1)
