@@ -75,6 +75,15 @@ static inline bool upd_array_find(const upd_array_t* a, size_t* i, void* p) {
   return false;
 }
 
+HEDLEY_NON_NULL(1)
+static inline bool upd_array_find_and_remove(upd_array_t* a, void* p) {
+  size_t i;
+  if (HEDLEY_UNLIKELY(!upd_array_find(a, &i, p))) {
+    return NULL;
+  }
+  return upd_array_remove(a, i) == p;
+}
+
 
 #if defined(UPD_TEST)
 static void upd_test_array(void) {

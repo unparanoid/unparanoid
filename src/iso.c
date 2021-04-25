@@ -40,6 +40,6 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
     return UPD_ISO_PANIC;
   }
   const upd_iso_status_t ret = iso->status;
-  upd_free(iso);
+  upd_free(&iso);
   return ret;
 }
