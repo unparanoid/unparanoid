@@ -61,6 +61,7 @@ HEDLEY_NON_NULL(1)
 static inline void upd_file_unref(upd_file_t* f) {
   assert(f->refcnt);
   if (HEDLEY_UNLIKELY(!--f->refcnt)) {
+    upd_array_find_and_remove(&f->iso->files, f);
     f->driver->deinit(f);
     upd_free(&f);
   }

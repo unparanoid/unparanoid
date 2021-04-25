@@ -39,6 +39,12 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   if (HEDLEY_UNLIKELY(0 > uv_loop_close(&iso->loop))) {
     return UPD_ISO_PANIC;
   }
+
+  assert(iso->drivers.n == 0);
+  assert(iso->files.n   == 0);
+  assert(iso->srv.n     == 0);
+  assert(iso->cli.n     == 0);
+
   const upd_iso_status_t ret = iso->status;
   upd_free(&iso);
   return ret;
