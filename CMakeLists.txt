@@ -41,6 +41,8 @@ target_sources(libupd
     src/iso.c
     src/memory.h
     src/req.h
+    src/srv.c
+    src/srv.h
 )
 target_link_libraries(libupd
   PUBLIC

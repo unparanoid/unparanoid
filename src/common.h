@@ -1,6 +1,7 @@
 #pragma once
 
 #include <assert.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,7 +25,6 @@
 typedef struct upd_srv_t upd_srv_t;
 typedef struct upd_cli_t upd_cli_t;
 
-
 #if defined(UPD_TEST)
 # include "test.h"
 #endif
@@ -33,3 +33,4 @@ typedef struct upd_cli_t upd_cli_t;
 #include "driver.h"
 #include "file.h"
 #include "req.h"
+#include "srv.h"
