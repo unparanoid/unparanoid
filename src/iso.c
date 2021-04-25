@@ -39,13 +39,22 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   if (HEDLEY_UNLIKELY(0 > uv_loop_close(&iso->loop))) {
     return UPD_ISO_PANIC;
   }
+  upd_array_clear(&iso->drivers);
 
-  assert(iso->drivers.n == 0);
-  assert(iso->files.n   == 0);
-  assert(iso->srv.n     == 0);
-  assert(iso->cli.n     == 0);
+  assert(iso->files.n == 0);
+  assert(iso->srv.n   == 0);
+  assert(iso->cli.n   == 0);
 
   const upd_iso_status_t ret = iso->status;
   upd_free(&iso);
   return ret;
+}
+
+void upd_iso_close_all_conn(upd_iso_t* iso) {
+  while (iso->srv.n) {
+    upd_srv_delete(iso->srv.p[0]);
+  }
+  while (iso->cli.n) {
+    upd_cli_delete(iso->cli.p[0]);
+  }
 }

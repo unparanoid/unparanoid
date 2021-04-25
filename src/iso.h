@@ -37,6 +37,11 @@ upd_iso_status_t
 upd_iso_run(
   upd_iso_t* iso);
 
+HEDLEY_NON_NULL(1)
+void
+upd_iso_close_all_conn(
+  upd_iso_t* iso);
+
 
 HEDLEY_NON_NULL(1)
 HEDLEY_WARN_UNUSED_RESULT
@@ -111,5 +116,5 @@ static inline void upd_iso_msgf(upd_iso_t* iso, const char* fmt, ...) {
 HEDLEY_NON_NULL(1)
 static inline void upd_iso_exit(upd_iso_t* iso, upd_iso_status_t status) {
   iso->status = status;
-  /* TODO */
+  upd_iso_close_all_conn(iso);
 }
