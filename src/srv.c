@@ -89,8 +89,22 @@ static void srv_conn_cb_(uv_stream_t* stream, int status) {
     return;
   }
 
-  /* TODO */
-  upd_iso_msgf(srv->iso, "new conn\n");
+  upd_cli_t* cli = NULL;
+  switch (srv->uv.handle.type) {
+  case UV_TCP:
+    cli = upd_cli_new_tcp(srv);
+    break;
+  default:
+    assert(false);
+    HEDLEY_UNREACHABLE();
+  }
+
+  if (HEDLEY_UNLIKELY(cli == NULL)) {
+    upd_iso_msgf(srv->iso, "client creation failure\n");
+    upd_srv_delete(srv);
+    return;
+  }
+  upd_iso_msgf(srv->iso, "new conn established\n");
 }
 
 static void srv_shutdown_cb_(uv_shutdown_t* req, int status) {

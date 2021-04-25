@@ -30,6 +30,8 @@ typedef struct upd_cli_t upd_cli_t;
 #endif
 
 #include "iso.h"
+
+#include "cli.h"
 #include "driver.h"
 #include "file.h"
 #include "req.h"

@@ -35,6 +35,8 @@ target_sources(libupd
     include/libupd.h
   PRIVATE
     src/array.h
+    src/cli.c
+    src/cli.h
     src/common.h
     src/driver.h
     src/file.h
