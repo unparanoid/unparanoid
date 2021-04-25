@@ -160,7 +160,7 @@ upd_file_ref(
   upd_file_t* file);
 
 UPD_DECL_FUNC
-void
+bool
 upd_file_unref(
   upd_file_t* file);
 
