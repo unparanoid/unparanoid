@@ -69,22 +69,30 @@ static inline void upd_file_unref(upd_file_t* f) {
 
 HEDLEY_NON_NULL(1)
 HEDLEY_WARN_UNUSED_RESULT
-static inline bool upd_file_watch(
-    upd_file_t* f, uint64_t* id, upd_file_watch_cb_t cb, void* udata) {
-  (void) f;
-  (void) id;
-  (void) cb;
-  (void) udata;
+static inline bool upd_file_watch(upd_file_watch_t* w) {
+  (void) w;
   /* TODO */
   return true;
 }
 
 HEDLEY_NON_NULL(1)
-static inline bool upd_file_unwatch(upd_file_t* f, uint64_t id) {
-  (void) f;
-  (void) id;
+static inline void upd_file_unwatch(upd_file_watch_t* w) {
+  (void) w;
+  /* TODO */
+}
+
+HEDLEY_NON_NULL(1)
+HEDLEY_WARN_UNUSED_RESULT
+static inline bool upd_file_lock(upd_file_lock_t* l) {
+  (void) l;
   /* TODO */
   return true;
+}
+
+HEDLEY_NON_NULL(1)
+static inline void upd_file_unlock(upd_file_lock_t* l) {
+  (void) l;
+  /* TODO */
 }
 
 

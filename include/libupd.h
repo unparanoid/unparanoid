@@ -9,10 +9,12 @@
 #endif
 
 
-typedef struct upd_iso_t    upd_iso_t;
-typedef struct upd_file_t   upd_file_t;
-typedef struct upd_driver_t upd_driver_t;
-typedef struct upd_req_t    upd_req_t;
+typedef struct upd_iso_t        upd_iso_t;
+typedef struct upd_file_t       upd_file_t;
+typedef struct upd_file_watch_t upd_file_watch_t;
+typedef struct upd_file_lock_t  upd_file_lock_t;
+typedef struct upd_driver_t     upd_driver_t;
+typedef struct upd_req_t        upd_req_t;
 
 typedef int32_t  upd_iso_status_t;
 typedef uint64_t upd_file_id_t;
@@ -23,9 +25,12 @@ typedef uint32_t upd_req_type_t;
 typedef
 void
 (*upd_file_watch_cb_t)(
-  upd_file_t*      f,
-  upd_file_event_t e,
-  void*            udata);
+  upd_file_watch_t* w);
+
+typedef
+void
+(*upd_file_lock_cb_t)(
+  upd_file_lock_t* l);
 
 
 /*
@@ -117,6 +122,26 @@ struct upd_file_t {
   void*         ctx;
 };
 
+struct upd_file_watch_t {
+  upd_file_t* file;
+
+  upd_file_watch_cb_t cb;
+  void*               udata;
+
+  upd_file_event_t event;
+};
+
+struct upd_file_lock_t {
+  upd_file_t* file;
+
+  upd_file_lock_cb_t cb;
+  void*              udata;
+
+  unsigned ex  : 1;
+  unsigned man : 1;
+  unsigned ok  : 1;
+};
+
 UPD_DECL_FUNC
 upd_file_t*
 upd_file_new(
@@ -142,16 +167,22 @@ upd_file_unref(
 UPD_DECL_FUNC
 bool
 upd_file_watch(
-  upd_file_t*         f,
-  uint64_t*           id,
-  upd_file_watch_cb_t cb,
-  void*               udata);
+  upd_file_watch_t* w);
+
+UPD_DECL_FUNC
+void
+upd_file_unwatch(
+  upd_file_watch_t* w);
 
 UPD_DECL_FUNC
 bool
-upd_file_unwatch(
-  upd_file_t* f,
-  uint64_t    id);
+upd_file_lock(
+  upd_file_lock_t* l);
+
+UPD_DECL_FUNC
+void
+upd_file_unlock(
+  upd_file_lock_t* l);
 
 
 /*
