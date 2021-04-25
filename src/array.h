@@ -40,7 +40,7 @@ static inline bool upd_array_insert(upd_array_t* a, void* p, size_t i) {
   if (HEDLEY_UNLIKELY(!upd_array_resize(a, a->n+1))) {
     return false;
   }
-  memmove(a->p+i+1, a->p+i, a->n-i-1);
+  memmove(a->p+i+1, a->p+i, (a->n-i-1)*sizeof(*a->p));
   a->p[i] = p;
   return true;
 }
@@ -55,7 +55,7 @@ static inline void* upd_array_remove(upd_array_t* a, size_t i) {
   }
 
   void* ptr = a->p[i];
-  memmove(a->p+i, a->p+i+1, a->n-i-1);
+  memmove(a->p+i, a->p+i+1, (a->n-i-1)*sizeof(*a->p));
 
   const bool ret = upd_array_resize(a, a->n-1);
   (void) ret;
