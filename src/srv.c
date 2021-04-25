@@ -9,12 +9,6 @@ srv_conn_cb_(
 
 static
 void
-srv_shutdown_cb_(
-  uv_shutdown_t* shutdown,
-  int            status);
-
-static
-void
 srv_close_cb_(
   uv_handle_t* handle);
 
@@ -65,18 +59,7 @@ upd_srv_t* upd_srv_new_tcp(
 
 void upd_srv_delete(upd_srv_t* srv) {
   upd_array_find_and_remove(&srv->iso->srv, srv);
-
-  uv_shutdown_t* req = upd_iso_stack(srv->iso, sizeof(*req));
-  if (HEDLEY_UNLIKELY(req == NULL)) {
-    uv_close(&srv->uv.handle, srv_close_cb_);
-    return;
-  }
-  *req = (uv_shutdown_t) { .data = srv, };
-  if (HEDLEY_UNLIKELY(0 > uv_shutdown(req, &srv->uv.stream, srv_shutdown_cb_))) {
-    upd_iso_unstack(srv->iso, req);
-    uv_close(&srv->uv.handle, srv_close_cb_);
-    return;
-  }
+  uv_close(&srv->uv.handle, srv_close_cb_);
 }
 
 
@@ -107,15 +90,8 @@ static void srv_conn_cb_(uv_stream_t* stream, int status) {
   upd_iso_msgf(srv->iso, "new conn established\n");
 }
 
-static void srv_shutdown_cb_(uv_shutdown_t* req, int status) {
-  (void) status;
-
-  upd_srv_t* srv = req->data;
-  upd_iso_unstack(srv->iso, req);
-  upd_file_unref(srv->prog);
-  uv_close(&srv->uv.handle, srv_close_cb_);
-}
-
 static void srv_close_cb_(uv_handle_t* handle) {
-  upd_free(&handle);
+  upd_srv_t* srv = (void*) handle;
+  upd_file_unref(srv->prog);
+  upd_free(&srv);
 }

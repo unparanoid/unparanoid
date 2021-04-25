@@ -26,12 +26,18 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
   return iso;
 }
 
+static void iso_run_walk_cb_(uv_handle_t* handle, void* udata) {
+  (void) udata;
+  if (HEDLEY_LIKELY(!uv_is_closing(handle))) {
+    uv_close(handle, NULL);
+  }
+}
 upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
 
-  uv_close((uv_handle_t*) &iso->out, NULL);
+  uv_walk(&iso->loop, iso_run_walk_cb_, NULL);
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
@@ -41,6 +47,7 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   }
   upd_array_clear(&iso->drivers);
 
+  assert(iso->stack.refcnt == 0);
   assert(iso->files.n == 0);
   assert(iso->srv.n   == 0);
   assert(iso->cli.n   == 0);
