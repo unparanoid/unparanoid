@@ -221,7 +221,6 @@ typedef struct upd_req_dir_entry_t {
 } upd_req_dir_entry_t;
 
 struct upd_req_t {
-  upd_iso_t*  iso;
   upd_file_t* file;
 
   upd_req_type_t type;

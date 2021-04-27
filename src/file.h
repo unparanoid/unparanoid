@@ -30,7 +30,7 @@ static inline upd_file_t* upd_file_new(
     .super = {
       .iso    = iso,
       .driver = driver,
-      .id     = ++iso->files_created,
+      .id     = iso->files_created++,
       .refcnt = 1,
     },
   };
