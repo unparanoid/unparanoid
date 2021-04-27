@@ -39,6 +39,7 @@ target_sources(libupd
     src/cli.h
     src/common.h
     src/driver.h
+    src/driver/dir.c
     src/file.h
     src/iso.c
     src/memory.h

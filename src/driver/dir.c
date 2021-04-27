@@ -60,9 +60,10 @@ entry_find_by_file_(
 static
 bool
 entry_find_by_name_(
-  dir_t_*     ctx,
-  size_t*     i,
-  upd_file_t* f);
+  dir_t_*        ctx,
+  size_t*        i,
+  const uint8_t* name,
+  size_t         len);
 
 
 static bool dir_init_(upd_file_t* f) {
@@ -89,12 +90,12 @@ static bool dir_handle_(upd_req_t* req) {
 
   switch (req->type) {
   case UPD_REQ_DIR_LIST:
-    req->dir.entries = (upd_req_dir_entry_t**) ctx->children.ptr;
+    req->dir.entries = (upd_req_dir_entry_t**) ctx->children.p;
     break;
 
   case UPD_REQ_DIR_FIND: {
     size_t i;
-    if (HEDLEY_UNLIKELY_(!entry_find_(ctx, &i, &req->dir.entry))) {
+    if (HEDLEY_UNLIKELY(!entry_find_(ctx, &i, &req->dir.entry))) {
       req->dir.entry = (upd_req_dir_entry_t) {0};
       return false;
     }
@@ -117,7 +118,7 @@ static bool dir_handle_(upd_req_t* req) {
 
   case UPD_REQ_DIR_RM: {
     size_t i;
-    if (HEDLEY_UNLIKELY_(!entry_find_(ctx, &i, &req->dir.entry))) {
+    if (HEDLEY_UNLIKELY(!entry_find_(ctx, &i, &req->dir.entry))) {
       req->dir.entry = (upd_req_dir_entry_t) {0};
       return false;
     }
@@ -155,14 +156,14 @@ static void entry_delete_(upd_req_dir_entry_t* e) {
 }
 
 static bool entry_find_(dir_t_* ctx, size_t* i, const upd_req_dir_entry_t* e) {
-  return req-.dir.entry.file?
+  return e->file?
     entry_find_by_file_(ctx, i, e->file):
     entry_find_by_name_(ctx, i, e->name, e->len);
 }
 
 static bool entry_find_by_file_(dir_t_* ctx, size_t* i, upd_file_t* f) {
   for (*i = 0; *i < ctx->children.n; ++*i) {
-    const upd_req_dir_entry_t* e = ctx->children.p[i];
+    const upd_req_dir_entry_t* e = ctx->children.p[*i];
     if (HEDLEY_UNLIKELY(e->file == f)) {
       return true;
     }
@@ -173,7 +174,7 @@ static bool entry_find_by_file_(dir_t_* ctx, size_t* i, upd_file_t* f) {
 static bool entry_find_by_name_(
     dir_t_* ctx, size_t* i, const uint8_t* name, size_t len) {
   for (*i = 0; *i < ctx->children.n; ++*i) {
-    const upd_req_dir_entry_t* e = ctx->children.p[i];
+    const upd_req_dir_entry_t* e = ctx->children.p[*i];
     if (HEDLEY_UNLIKELY(e->len == len && utf8ncmp(e->name, name, len) == 0)) {
       return true;
     }
