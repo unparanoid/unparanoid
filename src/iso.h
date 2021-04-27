@@ -27,6 +27,7 @@ struct upd_iso_t {
 };
 
 
+/* Application must exit immediately if this function fails. */
 upd_iso_t*
 upd_iso_new(
   size_t stacksz);
