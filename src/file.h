@@ -64,7 +64,7 @@ static inline upd_file_t* upd_file_get(upd_iso_t* iso, upd_file_id_t id) {
     if (HEDLEY_UNLIKELY(f[i]->id == id)) {
       return f[i];
     }
-    if (f[i]->id < id) {
+    if (f[i]->id > id) {
       r = i-1;
     } else {
       l = i+1;

@@ -5,8 +5,6 @@
 
 struct upd_iso_t {
   uv_loop_t loop;
-
-  bool      out_ok;
   uv_tty_t  out;
 
   upd_iso_status_t status;
@@ -77,10 +75,6 @@ static void upd_iso_msg_write_cb_(uv_write_t* req, int status) {
 }
 HEDLEY_NON_NULL(1)
 static inline void upd_iso_msg(upd_iso_t* iso, const uint8_t* msg, uint64_t len) {
-  if (HEDLEY_UNLIKELY(!iso->out_ok)) {
-    return;
-  }
-
   uv_write_t* req = upd_iso_stack(iso, sizeof(*req)+len);
   if (HEDLEY_UNLIKELY(req == NULL)) {
     fprintf(stderr, "msg allocation failure\n");
