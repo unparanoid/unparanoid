@@ -9,6 +9,9 @@
 #endif
 
 
+#define UPD_FILE_ID_ROOT 0
+
+
 typedef struct upd_iso_t        upd_iso_t;
 typedef struct upd_file_t       upd_file_t;
 typedef struct upd_file_watch_t upd_file_watch_t;
@@ -190,6 +193,7 @@ upd_file_unlock(
  */
 #define UPD_REQ_CAT_EACH(f)  \
   f(0x0000, DIR)  \
+  f(0x0002, PROGRAM)  \
   f(0x0001, STREAM)
 
 #define UPD_REQ_TYPE_EACH(f)  \
@@ -198,6 +202,10 @@ upd_file_unlock(
   f(DIR, 0x0020, FIND)  \
   f(DIR, 0x0030, ADD)  \
   f(DIR, 0x0040, RM)  \
+\
+  f(PROGRAM, 0x0000, ACCESS)  \
+  f(PROGRAM, 0x0010, EXEC)  \
+\
   f(STREAM, 0x0000, ACCESS)  \
   f(STREAM, 0x0010, INPUT)  \
   f(STREAM, 0x0020, OUTPUT)
@@ -225,6 +233,10 @@ typedef struct upd_req_dir_entry_t {
   upd_file_t* file;
 } upd_req_dir_entry_t;
 
+typedef struct upd_req_program_access_t {
+  unsigned exec : 1;
+} upd_req_program_access_t;
+
 typedef struct upd_req_stream_access_t {
   unsigned input  : 1;
   unsigned output : 1;
@@ -251,6 +263,10 @@ struct upd_req_t {
       upd_req_dir_entry_t** entries;
       upd_req_dir_entry_t   entry;
     } dir;
+    union {
+      upd_req_program_access_t access;
+      upd_file_t*              exec;
+    } program;
     union {
       upd_req_stream_access_t access;
       upd_req_stream_io_t     io;
