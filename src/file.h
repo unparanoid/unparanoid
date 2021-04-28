@@ -7,7 +7,12 @@ typedef struct upd_file_t_ {
   upd_file_t super;
 
   upd_array_of(upd_file_watch_t*) watch;
-  upd_array_of(upd_file_lock_t*)  lock;
+
+  struct {
+    size_t refcnt;
+    bool   ex;
+    upd_array_of(upd_file_lock_t*) pending;
+  } lock;
 } upd_file_t_;
 
 
@@ -16,6 +21,11 @@ void
 upd_file_trigger(
   upd_file_t*      f,
   upd_file_event_t e);
+
+static inline
+void
+upd_file_unlock_force(
+  upd_file_t_* f);
 
 
 HEDLEY_NON_NULL(1, 2)
@@ -91,7 +101,7 @@ static inline bool upd_file_unref(upd_file_t* f) {
     upd_file_trigger(f, UPD_FILE_DELETE);
     upd_array_clear(&f_->watch);
 
-    assert(!f_->lock.n);
+    assert(!f_->lock.pending.n);
 
     upd_free(&f_);
     return true;
@@ -129,30 +139,46 @@ static inline void upd_file_trigger(upd_file_t* f, upd_file_event_t e) {
 
 HEDLEY_NON_NULL(1)
 HEDLEY_WARN_UNUSED_RESULT
+static inline bool upd_file_try_lock(upd_file_lock_t* l) {
+  upd_file_t_* f = (void*) l->file;
+
+  if (HEDLEY_UNLIKELY(f->lock.refcnt)) {
+    if (HEDLEY_UNLIKELY(f->lock.ex || l->ex || f->lock.pending.n)) {
+      return false;
+    }
+  }
+
+  if (HEDLEY_LIKELY(f->lock.refcnt++ == 0)) {
+    upd_file_ref(&f->super);  /* for locking */
+  }
+
+  f->lock.ex = l->ex;
+
+  const bool man = l->man;
+  l->ok = true;
+
+  /* be careful that the lock may be deleted in this callback */
+  l->cb(l);
+
+  if (HEDLEY_LIKELY(!man)) {
+    upd_file_unlock_force(f);
+  }
+  return true;
+}
+
+HEDLEY_NON_NULL(1)
+HEDLEY_WARN_UNUSED_RESULT
 static inline bool upd_file_lock(upd_file_lock_t* l) {
   upd_file_t_* f = (void*) l->file;
 
-  bool imm = true;
-  if (HEDLEY_LIKELY(f->lock.n)) {
-    imm = !l->ex;
-    for (size_t i = 0; imm && i < f->lock.n; ++i) {
-      upd_file_lock_t* k = f->lock.p[i];
-      imm = !k->ex;
-    }
+  if (HEDLEY_LIKELY(upd_file_try_lock(l))) {
+    return true;
   }
-
   l->ok = false;
-  if (HEDLEY_UNLIKELY(!upd_array_insert(&f->lock, l, SIZE_MAX))) {
+  if (HEDLEY_UNLIKELY(!upd_array_insert(&f->lock.pending, l, SIZE_MAX))) {
     return false;
   }
-  upd_file_ref(&f->super);
-  if (HEDLEY_LIKELY(imm)) {
-    l->ok = true;
-    l->cb(l);
-    if (!l->man) {
-      upd_file_unlock(l);
-    }
-  }
+  upd_file_ref(&f->super);  /* for queing */
   return true;
 }
 
@@ -176,63 +202,38 @@ HEDLEY_NON_NULL(1)
 static inline void upd_file_unlock(upd_file_lock_t* l) {
   upd_file_t_* f = (void*) l->file;
 
-  size_t i;
-  if (HEDLEY_UNLIKELY(!upd_array_find(&f->lock, &i, l))) {
-    return;
-  }
-
-  bool cancel = i && l->ex;
-  for (size_t j = 0; !cancel && j < i; ++j) {
-    upd_file_lock_t* k = f->lock.p[j];
-    if (HEDLEY_UNLIKELY(k->ex)) {
-      cancel = true;
-    }
-  }
-  upd_array_remove(&f->lock, i);
-
-  const bool deleted = upd_file_unref(&f->super);
-
-  if (HEDLEY_UNLIKELY(cancel)) {
+  if (HEDLEY_LIKELY(upd_array_find_and_remove(&f->lock.pending, l))) {
     l->ok = false;
     l->cb(l);
+    upd_file_unref(&f->super);  /* for dequeing */
+    return;
+  }
+  assert(l->man);
+  upd_file_unlock_force(f);
+}
+
+HEDLEY_NON_NULL(1)
+static inline void upd_file_unlock_force(upd_file_t_* f) {
+  assert(f->lock.refcnt);
+  if (HEDLEY_UNLIKELY(--f->lock.refcnt)) {
     return;
   }
 
-  if (HEDLEY_UNLIKELY(deleted)) {
-    return;
-  }
-  if (HEDLEY_UNLIKELY(l->ex)) {
+  upd_file_unref(&f->super);  /* for unlocking */
+
+  if (HEDLEY_UNLIKELY(f->lock.ex)) {
     upd_file_trigger(&f->super, UPD_FILE_UPDATE);
   }
-  if (HEDLEY_UNLIKELY(!f->lock.n)) {
-    return;
+
+  upd_array_t* pen = &f->lock.pending;
+
+  upd_file_lock_t* k;
+  while (k = upd_array_remove(pen, 0), k && upd_file_try_lock(k)) {
+    upd_file_unref(&f->super);  /* for dequeing */
   }
-
-  upd_file_lock_t* next = f->lock.p[0];
-  if (HEDLEY_UNLIKELY(!l->ex && !next->ex)) {
-    return;
-  }
-
-  bool first = true;
-  for (;;) {
-    upd_file_lock_t* k = NULL;
-    for (size_t j = 0; j < f->lock.n; ++j) {
-      k = f->lock.p[j];
-      if (!k->ok) break;
-      k = NULL;
-    }
-    if (!k) break;
-
-    if (HEDLEY_LIKELY(first || !k->ex)) {
-      k->ok = true;
-      k->cb(k);
-      if (HEDLEY_UNLIKELY(!k->man)) {
-        upd_file_unlock(k);
-      }
-    }
-    if (HEDLEY_UNLIKELY(k->ex)) break;
-
-    first = false;
+  if (HEDLEY_UNLIKELY(k && !upd_array_insert(&f->lock.pending, k, 0))) {
+    k->ok = false;
+    k->cb(k);
   }
 }
 
