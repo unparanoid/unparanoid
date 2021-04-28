@@ -5,6 +5,12 @@
 
 
 static
+bool
+cli_try_parse_(
+  upd_cli_t* cli);
+
+
+static
 void
 cli_alloc_cb_(
   uv_handle_t* handle,
@@ -17,6 +23,11 @@ cli_read_cb_(
   uv_stream_t*    stream,
   ssize_t         n,
   const uv_buf_t* buf);
+
+static
+void
+cli_parse_cb_(
+  upd_req_t* req);
 
 static
 void
@@ -78,6 +89,25 @@ void upd_cli_delete(upd_cli_t* cli) {
 }
 
 
+static bool cli_try_parse_(upd_cli_t* cli) {
+  if (HEDLEY_LIKELY(cli->parsing || !cli->buf.size)) {
+    return true;
+  }
+  cli->parsing = true;
+
+  return upd_req_with_dup(&(upd_req_t) {
+      .file = cli->inout,
+      .type = UPD_REQ_STREAM_INPUT,
+      .stream = { .io = {
+        .size = cli->buf.size,
+        .buf  = cli->buf.ptr,
+      }, },
+      .udata = cli,
+      .cb    = cli_parse_cb_,
+    });
+}
+
+
 static void cli_alloc_cb_(uv_handle_t* handle, size_t n, uv_buf_t* buf) {
   upd_cli_t* cli = (void*) handle;
 
@@ -105,9 +135,25 @@ static void cli_read_cb_(uv_stream_t* stream, ssize_t n, const uv_buf_t* buf) {
     upd_cli_delete(cli);
     return;
   }
+  cli->buf.size += n;
+  if (HEDLEY_UNLIKELY(!cli_try_parse_(cli))) {
+    upd_cli_delete(cli);
+    return;
+  }
+}
 
-  /* TODO */
-  upd_iso_msgf(cli->iso, "recv\n");
+static void cli_parse_cb_(upd_req_t* req) {
+  upd_iso_t* iso = req->file->iso;
+  upd_cli_t* cli = req->udata;
+
+  const size_t consumed = req->stream.io.size;
+  upd_iso_unstack(iso, req);
+
+  assert(cli->buf.size >= consumed);
+  cli->buf.size -= consumed;
+  memmove(cli->buf.ptr, cli->buf.ptr+consumed, cli->buf.size);
+
+  cli_try_parse_(cli);
 }
 
 static void cli_shutdown_cb_(uv_shutdown_t* req, int status) {

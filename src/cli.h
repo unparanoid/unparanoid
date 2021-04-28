@@ -8,8 +8,8 @@ struct upd_cli_t {
 
   upd_iso_t* iso;
 
-  upd_file_t* in;
-  upd_file_t* out;
+  upd_file_t* inout;
+  bool        parsing;
 
   struct {
     size_t   size;

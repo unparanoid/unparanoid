@@ -189,14 +189,18 @@ upd_file_unlock(
  * ---- REQUEST INTERFACE ----
  */
 #define UPD_REQ_CAT_EACH(f)  \
-  f(0x0000, DIR)
+  f(0x0000, DIR)  \
+  f(0x0001, STREAM)
 
 #define UPD_REQ_TYPE_EACH(f)  \
   f(DIR, 0x0000, ACCESS)  \
   f(DIR, 0x0010, LIST)  \
   f(DIR, 0x0020, FIND)  \
   f(DIR, 0x0030, ADD)  \
-  f(DIR, 0x0040, RM)
+  f(DIR, 0x0040, RM)  \
+  f(STREAM, 0x0000, ACCESS)  \
+  f(STREAM, 0x0010, INPUT)  \
+  f(STREAM, 0x0020, OUTPUT)
 
 enum {
 # define each_(i, N) UPD_REQ_##N = i,
@@ -221,6 +225,16 @@ typedef struct upd_req_dir_entry_t {
   upd_file_t* file;
 } upd_req_dir_entry_t;
 
+typedef struct upd_req_stream_access_t {
+  unsigned input  : 1;
+  unsigned output : 1;
+} upd_req_stream_access_t;
+
+typedef struct upd_req_stream_io_t {
+  size_t   size;
+  uint8_t* buf;
+} upd_req_stream_io_t;
+
 struct upd_req_t {
   upd_file_t* file;
 
@@ -237,6 +251,10 @@ struct upd_req_t {
       upd_req_dir_entry_t** entries;
       upd_req_dir_entry_t   entry;
     } dir;
+    union {
+      upd_req_stream_access_t access;
+      upd_req_stream_io_t     io;
+    } stream;
   };
 };
 
