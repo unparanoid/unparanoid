@@ -192,10 +192,11 @@ upd_file_unlock(
   f(0x0000, DIR)
 
 #define UPD_REQ_TYPE_EACH(f)  \
-  f(DIR, 0x0000, LIST)  \
-  f(DIR, 0x0010, FIND)  \
-  f(DIR, 0x0020, ADD)  \
-  f(DIR, 0x0030, RM)
+  f(DIR, 0x0000, ACCESS)  \
+  f(DIR, 0x0010, LIST)  \
+  f(DIR, 0x0020, FIND)  \
+  f(DIR, 0x0030, ADD)  \
+  f(DIR, 0x0040, RM)
 
 enum {
 # define each_(i, N) UPD_REQ_##N = i,

@@ -89,6 +89,15 @@ static bool dir_handle_(upd_req_t* req) {
   dir_t_* ctx = req->file->ctx;
 
   switch (req->type) {
+  case UPD_REQ_DIR_ACCESS:
+    req->dir.access = (upd_req_dir_access_t) {
+      .list = true,
+      .find = true,
+      .add  = true,
+      .rm   = true,
+    };
+    break;
+
   case UPD_REQ_DIR_LIST:
     req->dir.entries = (upd_req_dir_entry_t**) ctx->children.p;
     break;
