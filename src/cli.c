@@ -170,6 +170,7 @@ ABORT:
 
 static void cli_lock_cb_(upd_file_lock_t* l) {
   upd_cli_t* cli = l->udata;
+  upd_iso_unstack(cli->iso, l);
 
   const bool add = upd_req_with_dup(&(upd_req_t) {
       .file = cli->dir,
@@ -190,6 +191,7 @@ static void cli_lock_cb_(upd_file_lock_t* l) {
 
 static void cli_add_cb_(upd_req_t* req) {
   upd_cli_t* cli = req->udata;
+  upd_iso_unstack(cli->iso, req);
 
   const int err = uv_read_start(&cli->uv.stream, cli_alloc_cb_, cli_read_cb_);
   if (HEDLEY_UNLIKELY(err < 0)) {

@@ -44,7 +44,7 @@ static void upd_test_driver_null_deinit_(upd_file_t* f) {
 }
 static bool upd_test_driver_null_handle_(upd_req_t* req) {
   (void) req;
-  return true;
+  return false;
 }
 static const upd_driver_t upd_test_driver_null_ = {
   .name   = (uint8_t*) "upd.test.driver.null",
