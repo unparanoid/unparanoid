@@ -231,6 +231,7 @@ typedef struct upd_req_dir_entry_t {
   uint8_t*    name;
   size_t      len;
   upd_file_t* file;
+  bool        weakref;
 } upd_req_dir_entry_t;
 
 typedef struct upd_req_program_access_t {

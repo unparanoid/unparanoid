@@ -46,11 +46,6 @@ cli_parse_cb_(
 
 static
 void
-cli_rm_cb_(
-  upd_req_t* req);
-
-static
-void
 cli_shutdown_cb_(
   uv_shutdown_t* req,
   int            status);
@@ -97,17 +92,6 @@ upd_cli_t* upd_cli_new_tcp(upd_srv_t* srv) {
 
 void upd_cli_delete(upd_cli_t* cli) {
   upd_array_find_and_remove(&cli->iso->cli, cli);
-
-  const bool rm = upd_req_with_dup(&(upd_req_t) {
-      .file  = cli->dir,
-      .type  = UPD_REQ_DIR_RM,
-      .dir   = { .entry = {
-        .file = cli->inout,
-      }, },
-      .udata = cli,
-      .cb    = cli_rm_cb_,
-    });
-  (void) rm;
 
   uv_shutdown_t* req = upd_iso_stack(cli->iso, sizeof(*req));
   if (HEDLEY_UNLIKELY(req == NULL)) {
@@ -176,9 +160,10 @@ static void cli_lock_cb_(upd_file_lock_t* l) {
       .file = cli->dir,
       .type = UPD_REQ_DIR_ADD,
       .dir  = { .entry = {
-        .file = cli->inout,
-        .name = (uint8_t*) "test",
-        .len  = 4,
+        .file    = cli->inout,
+        .name    = (uint8_t*) "test",
+        .len     = 4,
+        .weakref = true,
       }, },
       .udata = cli,
       .cb    = cli_add_cb_,
@@ -191,17 +176,25 @@ static void cli_lock_cb_(upd_file_lock_t* l) {
 
 static void cli_add_cb_(upd_req_t* req) {
   upd_cli_t* cli = req->udata;
+
+  const bool ok = req->dir.entry.file;
   upd_iso_unstack(cli->iso, req);
+
+  if (HEDLEY_UNLIKELY(!ok)) {
+    goto ABORT;
+  }
 
   const int err = uv_read_start(&cli->uv.stream, cli_alloc_cb_, cli_read_cb_);
   if (HEDLEY_UNLIKELY(err < 0)) {
-    upd_cli_delete(cli);
-    return;
+    goto ABORT;
   }
   if (HEDLEY_UNLIKELY(!upd_array_insert(&cli->iso->cli, cli, SIZE_MAX))) {
-    upd_cli_delete(cli);
-    return;
+    goto ABORT;
   }
+  return;
+
+ABORT:
+  upd_cli_delete(cli);
 }
 
 static void cli_alloc_cb_(uv_handle_t* handle, size_t n, uv_buf_t* buf) {
@@ -252,10 +245,6 @@ static void cli_parse_cb_(upd_req_t* req) {
   memmove(cli->buf.ptr, cli->buf.ptr+consumed, cli->buf.size);
 
   cli_try_parse_(cli);
-}
-
-static void cli_rm_cb_(upd_req_t* req) {
-  upd_iso_unstack(req->file->iso, req);
 }
 
 static void cli_shutdown_cb_(uv_shutdown_t* req, int status) {

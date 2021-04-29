@@ -113,9 +113,10 @@ static void srv_lock_dir_cb_(upd_file_lock_t* l) {
       .file = l->file,
       .type = UPD_REQ_DIR_ADD,
       .dir  = { .entry = {
-        .file = srv->dir,
-        .name = (uint8_t*) srv->name,
-        .len  = utf8size_lazy(srv->name),
+        .file    = srv->dir,
+        .name    = (uint8_t*) srv->name,
+        .len     = utf8size_lazy(srv->name),
+        .weakref = true,
       }, },
       .udata = srv,
       .cb    = srv_add_cb_,
