@@ -12,12 +12,17 @@ cli_try_parse_(
 
 static
 void
+cli_lock_for_exec_cb_(
+  upd_file_lock_t* l);
+
+static
+void
 cli_exec_cb_(
   upd_req_t* req);
 
 static
 void
-cli_lock_cb_(
+cli_lock_for_add_cb_(
   upd_file_lock_t* l);
 
 static
@@ -62,8 +67,9 @@ upd_cli_t* upd_cli_new_tcp(upd_srv_t* srv) {
     return NULL;
   }
   *cli = (upd_cli_t) {
-    .iso = srv->iso,
-    .dir = srv->dir,
+    .iso  = srv->iso,
+    .dir  = srv->dir,
+    .prog = srv->prog,
   };
 
   if (HEDLEY_UNLIKELY(0 > uv_tcp_init(&cli->iso->loop, &cli->uv.tcp))) {
@@ -72,18 +78,20 @@ upd_cli_t* upd_cli_new_tcp(upd_srv_t* srv) {
   }
 
   upd_file_ref(cli->dir);
+  upd_file_ref(cli->prog);
 
   if (HEDLEY_UNLIKELY(0 > uv_accept(&srv->uv.stream, &cli->uv.stream))) {
     upd_cli_delete(cli);
     return NULL;
   }
-  const bool exec = upd_req_with_dup(&(upd_req_t) {
-      .file  = srv->prog,
-      .type  = UPD_REQ_PROGRAM_EXEC,
+
+  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
+      .file  = cli->dir,
+      .ex    = true,
       .udata = cli,
-      .cb    = cli_exec_cb_,
+      .cb    = cli_lock_for_exec_cb_,
     });
-  if (HEDLEY_UNLIKELY(!exec)) {
+  if (HEDLEY_UNLIKELY(!lock)) {
     upd_cli_delete(cli);
     return NULL;
   }
@@ -127,6 +135,31 @@ static bool cli_try_parse_(upd_cli_t* cli) {
 }
 
 
+static void cli_lock_for_exec_cb_(upd_file_lock_t* l) {
+  upd_cli_t* cli = l->udata;
+
+  const bool lock = l->ok;
+  upd_iso_unstack(cli->iso, l);
+
+  if (HEDLEY_UNLIKELY(!lock)) {
+    goto ABORT;
+  }
+
+  const bool exec = upd_req_with_dup(&(upd_req_t) {
+      .file  = cli->prog,
+      .type  = UPD_REQ_PROGRAM_EXEC,
+      .udata = cli,
+      .cb    = cli_exec_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!exec)) {
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  upd_cli_delete(cli);
+}
+
 static void cli_exec_cb_(upd_req_t* req) {
   upd_iso_t* iso = req->file->iso;
   upd_cli_t* cli = req->udata;
@@ -141,7 +174,7 @@ static void cli_exec_cb_(upd_req_t* req) {
       .file  = cli->dir,
       .ex    = true,
       .udata = cli,
-      .cb    = cli_lock_cb_,
+      .cb    = cli_lock_for_add_cb_,
     });
   if (HEDLEY_UNLIKELY(!lock)) {
     goto ABORT;
@@ -152,9 +185,15 @@ ABORT:
   upd_cli_delete(cli);
 }
 
-static void cli_lock_cb_(upd_file_lock_t* l) {
+static void cli_lock_for_add_cb_(upd_file_lock_t* l) {
   upd_cli_t* cli = l->udata;
+
+  const bool lock = l->ok;
   upd_iso_unstack(cli->iso, l);
+
+  if (HEDLEY_UNLIKELY(!lock)) {
+    goto ABORT;
+  }
 
   const bool add = upd_req_with_dup(&(upd_req_t) {
       .file = cli->dir,
@@ -169,9 +208,12 @@ static void cli_lock_cb_(upd_file_lock_t* l) {
       .cb    = cli_add_cb_,
     });
   if (HEDLEY_UNLIKELY(!add)) {
-    upd_cli_delete(cli);
-    return;
+    goto ABORT;
   }
+  return;
+
+ABORT:
+  upd_cli_delete(cli);
 }
 
 static void cli_add_cb_(upd_req_t* req) {
@@ -260,6 +302,7 @@ static void cli_close_cb_(uv_handle_t* handle) {
   upd_cli_t* cli = (void*) handle;
 
   upd_file_unref(cli->dir);
+  upd_file_unref(cli->prog);
   if (HEDLEY_LIKELY(cli->inout)) {
     upd_file_unref(cli->inout);
   }
