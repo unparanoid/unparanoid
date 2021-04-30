@@ -12,10 +12,10 @@ struct upd_cli_t {
   upd_file_t*      prog;
   upd_file_t*      inout;
   upd_file_watch_t watch;
-  bool             parsing;
 
   struct {
     size_t   size;
+    size_t   parsing;
     uint8_t* ptr;
   } buf;
 };

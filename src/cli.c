@@ -117,10 +117,10 @@ void upd_cli_delete(upd_cli_t* cli) {
 
 
 static bool cli_try_parse_(upd_cli_t* cli) {
-  if (HEDLEY_LIKELY(cli->parsing || !cli->buf.size)) {
+  if (HEDLEY_LIKELY(cli->buf.parsing || !cli->buf.size)) {
     return true;
   }
-  cli->parsing = true;
+  cli->buf.parsing = cli->buf.size;
 
   return upd_req_with_dup(&(upd_req_t) {
       .file = cli->inout,
@@ -280,13 +280,17 @@ static void cli_parse_cb_(upd_req_t* req) {
   const size_t consumed = req->stream.io.size;
 
   upd_iso_unstack(iso, req);
-  cli->parsing = false;
+
+  const bool retry = cli->buf.parsing != cli->buf.size;
+  cli->buf.parsing = 0;
 
   assert(cli->buf.size >= consumed);
   cli->buf.size -= consumed;
   memmove(cli->buf.ptr, cli->buf.ptr+consumed, cli->buf.size);
 
-  cli_try_parse_(cli);
+  if (HEDLEY_UNLIKELY(retry)) {
+    cli_try_parse_(cli);
+  }
 }
 
 static void cli_shutdown_cb_(uv_shutdown_t* req, int status) {
