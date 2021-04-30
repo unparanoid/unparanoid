@@ -10,7 +10,7 @@ struct upd_cli_t {
 
   upd_file_t*      dir;
   upd_file_t*      prog;
-  upd_file_t*      inout;
+  upd_file_t*      io;
   upd_file_watch_t watch;
 
   struct {
