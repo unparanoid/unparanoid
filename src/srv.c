@@ -90,7 +90,6 @@ static bool srv_create_dir_(upd_srv_t* srv) {
   const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
       .file  = upd_file_get(srv->iso, UPD_FILE_ID_ROOT),
       .ex    = true,
-      .man   = true,
       .udata = srv,
       .cb    = srv_lock_dir_cb_,
     });

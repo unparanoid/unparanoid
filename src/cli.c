@@ -113,7 +113,6 @@ upd_cli_t* upd_cli_new_tcp(upd_srv_t* srv) {
 
   const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
       .file  = cli->dir,
-      .man   = true,
       .udata = cli,
       .cb    = cli_lock_for_exec_cb_,
     });
@@ -151,7 +150,6 @@ static bool cli_try_parse_(upd_cli_t* cli) {
   return upd_file_lock_with_dup(&(upd_file_lock_t) {
       .file  = cli->io,
       .ex    = true,
-      .man   = true,
       .udata = cli,
       .cb    = cli_lock_for_input_cb_,
     });
@@ -209,7 +207,6 @@ static void cli_exec_cb_(upd_req_t* req) {
   const bool ok = upd_file_lock_with_dup(&(upd_file_lock_t) {
       .file  = cli->dir,
       .ex    = true,
-      .man   = true,
       .udata = cli,
       .cb    = cli_lock_for_add_cb_,
     });
@@ -372,7 +369,6 @@ static void cli_watch_cb_(upd_file_watch_t* w) {
     const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
         .file  = cli->io,
         .ex    = true,
-        .man   = true,
         .udata = cli,
         .cb    = cli_lock_for_output_cb_,
       });

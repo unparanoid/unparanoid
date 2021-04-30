@@ -435,7 +435,6 @@ static void session_find_cb_(upd_req_pathfind_t* pf) {
   upd_file_ref(ss->prog);
   ss->lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
       .file  = ss->prog,
-      .man   = true,
       .udata = ss,
       .cb    = session_lock_for_exec_cb_,
     });
@@ -530,7 +529,6 @@ static void session_watch_cb_(upd_file_watch_t* w) {
     ss->lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
         .file  = ss->io,
         .ex    = true,
-        .man   = true,
         .udata = ss,
         .cb    = session_lock_for_output_cb_,
       });

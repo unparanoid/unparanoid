@@ -140,9 +140,8 @@ struct upd_file_lock_t {
   upd_file_lock_cb_t cb;
   void*              udata;
 
-  unsigned ex  : 1;
-  unsigned man : 1;
-  unsigned ok  : 1;
+  unsigned ex : 1;
+  unsigned ok : 1;
 };
 
 UPD_DECL_FUNC

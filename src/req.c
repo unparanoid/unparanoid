@@ -48,7 +48,6 @@ static void pathfind_(upd_req_pathfind_t* pf) {
 
   pf->lock = (upd_file_lock_t) {
     .file  = pf->base,
-    .man   = true,
     .udata = pf,
     .cb    = pathfind_lock_cb_,
   };

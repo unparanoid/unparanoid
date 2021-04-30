@@ -64,7 +64,6 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     .lock = {
       .file = root,
       .ex   = true,
-      .man  = true,
       .cb   = iso_setup_lock_cb_,
     },
     .iso = iso,

@@ -22,11 +22,6 @@ upd_file_trigger(
   upd_file_t*      f,
   upd_file_event_t e);
 
-static inline
-void
-upd_file_unlock_force(
-  upd_file_t_* f);
-
 
 HEDLEY_NON_NULL(1, 2)
 static inline upd_file_t* upd_file_new(
@@ -153,16 +148,10 @@ static inline bool upd_file_try_lock(upd_file_lock_t* l) {
   }
 
   f->lock.ex = l->ex;
-
-  const bool man = l->man;
   l->ok = true;
 
   /* be careful that the lock may be deleted in this callback */
   l->cb(l);
-
-  if (HEDLEY_LIKELY(!man)) {
-    upd_file_unlock_force(f);
-  }
   return true;
 }
 
@@ -208,14 +197,10 @@ static inline void upd_file_unlock(upd_file_lock_t* l) {
     upd_file_unref(&f->super);  /* for dequeing */
     return;
   }
-  if (HEDLEY_LIKELY(l->ok)) {
-    assert(l->man);
-    upd_file_unlock_force(f);
+  if (HEDLEY_UNLIKELY(!l->ok)) {
+    return;
   }
-}
 
-HEDLEY_NON_NULL(1)
-static inline void upd_file_unlock_force(upd_file_t_* f) {
   assert(f->lock.refcnt);
   if (HEDLEY_UNLIKELY(--f->lock.refcnt)) {
     return;
@@ -274,7 +259,6 @@ static void upd_test_file(void) {
 # define lock_(N)  \
   locks[N] = &(upd_file_lock_t) {  \
       .file  = f,  \
-      .man   = true,  \
       .udata = &expects[N],  \
       .cb    = upd_test_file_lock_cb_,  \
     };  \
@@ -283,7 +267,6 @@ static void upd_test_file(void) {
   locks[N] = &(upd_file_lock_t) {  \
       .file  = f,  \
       .ex    = true,  \
-      .man   = true,  \
       .udata = &expects[N],  \
       .cb    = upd_test_file_lock_cb_,  \
     };  \
