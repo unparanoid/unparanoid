@@ -208,8 +208,10 @@ static inline void upd_file_unlock(upd_file_lock_t* l) {
     upd_file_unref(&f->super);  /* for dequeing */
     return;
   }
-  assert(l->man);
-  upd_file_unlock_force(f);
+  if (HEDLEY_LIKELY(l->ok)) {
+    assert(l->man);
+    upd_file_unlock_force(f);
+  }
 }
 
 HEDLEY_NON_NULL(1)
@@ -220,10 +222,6 @@ static inline void upd_file_unlock_force(upd_file_t_* f) {
   }
 
   upd_file_unref(&f->super);  /* for unlocking */
-
-  if (HEDLEY_UNLIKELY(f->lock.ex)) {
-    upd_file_trigger(&f->super, UPD_FILE_UPDATE);
-  }
 
   upd_array_t* pen = &f->lock.pending;
 
@@ -256,6 +254,7 @@ static void upd_test_file(void) {
     upd_test.iso, dname, utf8size_lazy(dname));
   assert(f);
 
+
   bool wexpect = false;
   upd_file_watch_t w = {
     .file  = f,
@@ -263,6 +262,11 @@ static void upd_test_file(void) {
     .udata = &wexpect,
   };
   assert(upd_file_watch(&w));
+
+  wexpect = true;
+  upd_file_trigger(f, UPD_FILE_UPDATE);
+  assert(!wexpect);
+
 
   bool             expects[32] = { false, };
   upd_file_lock_t* locks[32]   = { NULL,  };
@@ -312,10 +316,8 @@ static void upd_test_file(void) {
   assert(!expects[4]);
 
   expects[3] = true;
-  wexpect    = true;
   upd_file_unlock(locks[2]);
   assert(!expects[3]);
-  assert(!wexpect);
 
   expects[6] = true;  /* cancel */
   upd_file_unlock(locks[6]);
@@ -323,11 +325,9 @@ static void upd_test_file(void) {
 
   expects[5] = true;
   expects[7] = true;
-  wexpect    = true;
   upd_file_unlock(locks[3]);
   assert(!expects[5]);
   assert(!expects[7]);
-  assert(!wexpect);
 
   upd_file_unlock(locks[5]);
   upd_file_unlock(locks[7]);
