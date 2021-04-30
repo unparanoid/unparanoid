@@ -1,6 +1,14 @@
 #include "common.h"
 
 
+typedef struct setup_t_ {
+  upd_file_lock_t lock;
+
+  upd_iso_t* iso;
+  size_t     refcnt;
+} setup_t_;
+
+
 static const char* root_dirs_[] = {
   "prog",  /* for program   */
   "io",    /* for io stream */
@@ -9,12 +17,12 @@ static const char* root_dirs_[] = {
 
 static
 void
-iso_init_lock_cb_(
-  upd_file_lock_t* l);
+iso_setup_lock_cb_(
+  upd_file_lock_t* lock);
 
 static
 void
-iso_init_add_dir_cb_(
+iso_setup_add_dir_cb_(
   upd_req_t* req);
 
 
@@ -47,12 +55,21 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
   }
   assert(root->id == UPD_FILE_ROOT);
 
-  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
+  setup_t_* setup = upd_iso_stack(iso, sizeof(*setup));
+  if (HEDLEY_UNLIKELY(setup == NULL)) {
+    return NULL;
+  }
+
+  *setup = (setup_t_) {
+    .lock = {
       .file = root,
-      .cb   = iso_init_lock_cb_,
       .ex   = true,
-    });
-  if (HEDLEY_UNLIKELY(!lock)) {
+      .man  = true,
+      .cb   = iso_setup_lock_cb_,
+    },
+    .iso = iso,
+  };
+  if (HEDLEY_UNLIKELY(!upd_file_lock(&setup->lock))) {
     return NULL;
   }
   return iso;
@@ -102,13 +119,17 @@ void upd_iso_close_all_conn(upd_iso_t* iso) {
 }
 
 
-static void iso_init_lock_cb_(upd_file_lock_t* l) {
-  upd_iso_t* iso = l->file->iso;
+static void iso_setup_unref_(setup_t_* setup) {
+  if (HEDLEY_UNLIKELY(--setup->refcnt == 0)) {
+    upd_file_unlock(&setup->lock);
+    upd_iso_unstack(setup->iso, setup);
+  }
+}
+static void iso_setup_lock_cb_(upd_file_lock_t* lock) {
+  setup_t_*  setup = (void*) lock;
+  upd_iso_t* iso   = setup->iso;
 
-  const bool ok = l->ok;
-  upd_iso_unstack(iso, l);
-
-  if (HEDLEY_UNLIKELY(!ok)) {
+  if (HEDLEY_UNLIKELY(!lock->ok)) {
     upd_iso_msgf(iso, "cannot setup iso since failure of acquiring lock\n");
     return;
   }
@@ -116,11 +137,13 @@ static void iso_init_lock_cb_(upd_file_lock_t* l) {
   assert(iso->files.n);
   upd_file_t* root = iso->files.p[0];
 
+  ++setup->refcnt;
   for (size_t i = 0; i < sizeof(root_dirs_)/sizeof(root_dirs_[0]); ++i) {
     upd_file_t* dir = upd_file_new(iso, &upd_driver_dir);
     if (HEDLEY_UNLIKELY(dir == NULL)) {
       continue;
     }
+    ++setup->refcnt;
     const bool add = upd_req_with_dup(&(upd_req_t) {
         .file = root,
         .type = UPD_REQ_DIR_ADD,
@@ -129,15 +152,18 @@ static void iso_init_lock_cb_(upd_file_lock_t* l) {
           .name = (uint8_t*) root_dirs_[i],
           .len  = utf8size_lazy(root_dirs_[i]),
         }, },
-        .cb = iso_init_add_dir_cb_,
+        .udata = setup,
+        .cb    = iso_setup_add_dir_cb_,
       });
     if (HEDLEY_UNLIKELY(!add)) {
+      iso_setup_unref_(setup);
       continue;
     }
   }
+  iso_setup_unref_(setup);
 }
-
-static void iso_init_add_dir_cb_(upd_req_t* req) {
+static void iso_setup_add_dir_cb_(upd_req_t* req) {
   upd_file_unref(req->dir.entry.file);
+  iso_setup_unref_(req->udata);
   upd_iso_unstack(req->file->iso, req);
 }
