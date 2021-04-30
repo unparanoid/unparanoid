@@ -19,7 +19,9 @@
 
 
 #include "memory.h"
+
 #include "array.h"
+#include "buf.h"
 
 
 typedef struct upd_srv_t upd_srv_t;
