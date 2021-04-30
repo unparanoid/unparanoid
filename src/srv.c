@@ -90,6 +90,7 @@ static bool srv_create_dir_(upd_srv_t* srv) {
   const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
       .file  = upd_file_get(srv->iso, UPD_FILE_ID_ROOT),
       .ex    = true,
+      .man   = true,
       .udata = srv,
       .cb    = srv_lock_dir_cb_,
     });
@@ -103,10 +104,7 @@ static bool srv_create_dir_(upd_srv_t* srv) {
 static void srv_lock_dir_cb_(upd_file_lock_t* l) {
   upd_srv_t* srv = l->udata;
 
-  const bool ok = l->ok;
-  upd_iso_unstack(l->file->iso, l);
-
-  if (HEDLEY_UNLIKELY(!ok)) {
+  if (HEDLEY_UNLIKELY(!l->ok)) {
     goto ABORT;
   }
   const bool add = upd_req_with_dup(&(upd_req_t) {
@@ -118,7 +116,7 @@ static void srv_lock_dir_cb_(upd_file_lock_t* l) {
         .len     = utf8size_lazy(srv->name),
         .weakref = true,
       }, },
-      .udata = srv,
+      .udata = l,
       .cb    = srv_add_cb_,
     });
   if (HEDLEY_UNLIKELY(!add)) {
@@ -127,15 +125,21 @@ static void srv_lock_dir_cb_(upd_file_lock_t* l) {
   return;
 
 ABORT:
+  upd_file_unlock(l);
+  upd_iso_unstack(srv->iso, l);
   upd_srv_delete(srv);
 }
 
 static void srv_add_cb_(upd_req_t* req) {
-  upd_iso_t* iso = req->file->iso;
-  upd_srv_t* srv = req->udata;
+  upd_file_lock_t* lock = req->udata;
+  upd_iso_t*       iso  = req->file->iso;
+  upd_srv_t*       srv  = lock->udata;
 
   const bool ok = req->dir.entry.file;
   upd_iso_unstack(iso, req);
+
+  upd_file_unlock(lock);
+  upd_iso_unstack(iso, lock);
 
   if (HEDLEY_UNLIKELY(!ok)) {
     goto ABORT;

@@ -53,6 +53,7 @@ static inline void* upd_iso_stack(upd_iso_t* iso, uint64_t len) {
   iso->stack.used += len;
   ++iso->stack.refcnt;
 
+  VALGRIND_MALLOCLIKE_BLOCK(ret, len, 0, 0);
   return ret;
 }
 
@@ -61,6 +62,7 @@ static inline void upd_iso_unstack(upd_iso_t* iso, void* ptr) {
   (void) ptr;
   assert(iso->stack.refcnt);
 
+  VALGRIND_FREELIKE_BLOCK(ptr, 0);
   if (--iso->stack.refcnt == 0) {
     iso->stack.used = 0;
   }
