@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
 
   uv_timer_t timer = {0};
   assert(0 <= uv_timer_init(&upd_test.iso->loop, &timer));
-  assert(0 <= uv_timer_start(&timer, timer_cb_, 2000, 0));
+  assert(0 <= uv_timer_start(&timer, timer_cb_, 10000, 0));
 
   printf("starting isolated machine...\n");
   assert(upd_iso_run(upd_test.iso) != UPD_ISO_PANIC);

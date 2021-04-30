@@ -30,10 +30,7 @@ upd_srv_delete(
 
 #if defined(UPD_TEST)
 static void upd_test_srv(void) {
-  const uint8_t* dname = (void*) "upd.test.driver.null";
-
-  upd_file_t* f = upd_file_new_from_driver_name(
-    upd_test.iso, dname, utf8size_lazy(dname));
+  upd_file_t* f = upd_file_new(upd_test.iso, &upd_driver_program_parallelism);
   assert(f);
 
   upd_srv_t* srv = upd_srv_new_tcp(

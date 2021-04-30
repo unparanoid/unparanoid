@@ -4,6 +4,7 @@
 
 
 extern const upd_driver_t upd_driver_dir;
+extern const upd_driver_t upd_driver_program_parallelism;
 
 
 HEDLEY_NON_NULL(1, 2)
