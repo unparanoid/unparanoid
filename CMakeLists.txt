@@ -64,6 +64,7 @@ target_sources(libupd
 )
 target_link_libraries(libupd
   PUBLIC
+    cwalk
     hedley
     PkgConfig::UV
     PkgConfig::YAML

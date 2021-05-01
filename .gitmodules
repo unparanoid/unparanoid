@@ -4,3 +4,6 @@
 [submodule "thirdparty/utf8.h"]
 	path = thirdparty/utf8.h
 	url = https://github.com/sheredom/utf8.h
+[submodule "thirdparty/cwalk"]
+	path = thirdparty/cwalk
+	url = https://github.com/likle/cwalk

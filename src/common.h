@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <cwalk.h>
 #include <hedley.h>
 #include <utf8.h>
 #include <uv.h>
@@ -17,6 +18,9 @@
 #define UPD_DECL_FUNC static inline
 #include <libupd.h>
 #undef UPD_DECL_FUNC
+
+
+#define UPD_PATH_MAX 256
 
 
 #include "memory.h"

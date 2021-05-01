@@ -32,8 +32,7 @@ static void timer_cb_(uv_timer_t* timer) {
 }
 
 int main(int argc, char** argv) {
-  (void) argc;
-  (void) argv;
+  argv = uv_setup_args(argc, argv);
 
   upd_test.iso = upd_iso_new(1024*1024);
   assert(upd_test.iso);

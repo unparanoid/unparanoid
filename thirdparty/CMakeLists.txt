@@ -1,5 +1,10 @@
 set(BUILD_TESTING OFF)
 
+
+# ---- cwalk (https://github.com/likle/cwalk) ----
+add_subdirectory(cwalk)
+
+
 # ---- hedley (https://github.com/nemequ/hedley) ----
 add_library(hedley INTERFACE)
 target_include_directories(hedley SYSTEM

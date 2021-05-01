@@ -16,6 +16,12 @@ static const char* root_dirs_[] = {
 
 
 static
+bool
+iso_get_paths_(
+  upd_iso_t* iso);
+
+
+static
 void
 iso_setup_lock_cb_(
   upd_file_lock_t* lock);
@@ -40,6 +46,10 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
       .ptr  = (uint8_t*) (iso+1),
     },
   };
+
+  if (HEDLEY_UNLIKELY(!iso_get_paths_(iso))) {
+    return NULL;
+  }
 
   if (HEDLEY_UNLIKELY(0 > uv_loop_init(&iso->loop))) {
     return NULL;
@@ -85,7 +95,9 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
     return UPD_ISO_PANIC;
   }
 
+  upd_iso_close_all_conn(iso);
   uv_walk(&iso->loop, iso_run_walk_cb_, NULL);
+
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
@@ -115,6 +127,28 @@ void upd_iso_close_all_conn(upd_iso_t* iso) {
   while (iso->cli.n) {
     upd_cli_delete(iso->cli.p[0]);
   }
+}
+
+
+static bool iso_get_paths_(upd_iso_t* iso) {
+  size_t len = UPD_PATH_MAX;
+  const bool exepath = 0 <= uv_exepath((char*) iso->path.runtime, &len);
+  if (HEDLEY_UNLIKELY(!exepath || len >= UPD_PATH_MAX)) {
+    return false;
+  }
+  cwk_path_get_dirname((char*) iso->path.runtime, &len);
+  iso->path.runtime[len] = 0;
+  cwk_path_normalize(
+    (char*) iso->path.runtime, (char*) iso->path.runtime, UPD_PATH_MAX);
+
+  len = UPD_PATH_MAX;
+  const bool cwd = 0 <= uv_cwd((char*) iso->path.working, &len);
+  if (HEDLEY_UNLIKELY(!cwd || len >= UPD_PATH_MAX)) {
+    return false;
+  }
+  cwk_path_normalize(
+    (char*) iso->path.working, (char*) iso->path.working, UPD_PATH_MAX);
+  return true;
 }
 
 

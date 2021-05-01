@@ -2,8 +2,7 @@
 
 
 int main(int argc, char** argv) {
-  (void) argc;
-  (void) argv;
+  argv = uv_setup_args(argc, argv);
 
   for (;;) {
     printf(

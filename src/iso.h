@@ -22,6 +22,11 @@ struct upd_iso_t {
     size_t   refcnt;
     uint8_t* ptr;
   } stack;
+
+  struct {
+    uint8_t runtime[UPD_PATH_MAX];
+    uint8_t working[UPD_PATH_MAX];
+  } path;
 };
 
 
