@@ -2,8 +2,10 @@ cmake_minimum_required(VERSION 3.18)
 
 project(unparanoid C)
 
+
 # ---- include external deps ----
 include(CTest)
+include(TestBigEndian)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(UV   REQUIRED IMPORTED_TARGET libuv)
@@ -12,6 +14,13 @@ pkg_check_modules(YAML REQUIRED IMPORTED_TARGET yaml-0.1)
 pkg_check_modules(VALGRIND valgrind)
 
 add_subdirectory(thirdparty)
+
+
+# ---- env check ----
+TEST_BIG_ENDIAN(IS_BIG_ENDIAN)
+if(IS_BIG_ENDIAN)
+  message(ERROR "big endian is not supported")
+endif()
 
 
 # ---- core library ----

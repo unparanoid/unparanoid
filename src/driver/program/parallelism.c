@@ -1,6 +1,9 @@
 #include "common.h"
 
 
+/* This program works well on only little-endian machine. =) */
+
+
 #define SESSION_BUFFER_MAX_ (1024*1024*8)  /* = 8 MiB */
 #define OUTPUT_BUFFER_MAX_  (1024*1024*8)  /* = 8 MiB */
 
@@ -20,7 +23,7 @@ struct ctx_t_ {
 };
 
 struct session_t_ {
-  uint32_t id;
+  uint16_t id;
   ctx_t_*  ctx;
 
   upd_file_t*      prog;
@@ -98,7 +101,7 @@ static
 void
 stream_output_pipe_(
   ctx_t_*        ctx,
-  uint32_t       id,
+  uint16_t       id,
   const uint8_t* buf,
   size_t         n);
 
@@ -107,7 +110,7 @@ static
 void
 stream_add_session_(
   ctx_t_*        ctx,
-  uint32_t       id,
+  uint16_t       id,
   const uint8_t* name,
   size_t         len);
 
@@ -115,7 +118,7 @@ static
 session_t_*
 stream_find_session_(
   ctx_t_*  ctx,
-  uint32_t id);
+  uint16_t id);
 
 
 static
@@ -253,18 +256,18 @@ static bool stream_input_(upd_req_t* req) {
   upd_req_stream_io_t* io  = &req->stream.io;
   const uint8_t*       buf = io->buf;
 
-  while (io->size >= 2) {
-    const uint8_t id = buf[0];
-    const uint8_t sz = buf[1];
+  while (io->size >= 4) {
+    const uint8_t id = (buf[1] << 8) | buf[0];
+    const uint8_t sz = (buf[3] << 8) | buf[2];
 
-    const size_t whole = 2 + sz;
+    const size_t whole = 4 + sz;
     if (HEDLEY_UNLIKELY(io->size < whole)) {
       break;
     }
 
     session_t_* ss = stream_find_session_(ctx, id);
     if (HEDLEY_UNLIKELY(!ss)) {
-      stream_add_session_(ctx, id, buf+2, sz);
+      stream_add_session_(ctx, id, buf+4, sz);
       goto SKIP;
     }
     if (HEDLEY_UNLIKELY(sz == 0)) {
@@ -272,7 +275,7 @@ static bool stream_input_(upd_req_t* req) {
       goto SKIP;
     }
 
-    if (HEDLEY_UNLIKELY(!upd_buf_append(&ss->buf, buf+2, sz))) {
+    if (HEDLEY_UNLIKELY(!upd_buf_append(&ss->buf, buf+4, sz))) {
       upd_iso_msgf(iso, "session buffer allocation failure\n");
       session_delete_(ss);
       goto SKIP;
@@ -290,15 +293,21 @@ SKIP:
 }
 
 static void stream_output_pipe_(
-    ctx_t_* ctx, uint32_t id, const uint8_t* buf, size_t n) {
-  assert(id <= UINT8_MAX);
-  assert(n  <= UINT8_MAX);
+    ctx_t_* ctx, uint16_t id, const uint8_t* buf, size_t n) {
+  if (HEDLEY_UNLIKELY(n > UINT16_MAX)) {
+    while (n) {
+      const size_t part = n > UINT16_MAX? UINT16_MAX: n;
+      stream_output_pipe_(ctx, id, buf, part);
+      n -= part;
+    }
+    return;
+  }
 
   const size_t prev_size = ctx->buf.size;
 
   const bool append =
-    upd_buf_append(&ctx->buf, (uint8_t*) &id, 1) &&
-    upd_buf_append(&ctx->buf, (uint8_t*) &n,  1) &&
+    upd_buf_append(&ctx->buf, (uint8_t*) &id, 2) &&
+    upd_buf_append(&ctx->buf, (uint8_t*) &n,  2) &&
     upd_buf_append(&ctx->buf, buf, n);
   if (HEDLEY_UNLIKELY(!append)) {
     upd_buf_drop_tail(&ctx->buf, ctx->buf.size - prev_size);
@@ -310,7 +319,7 @@ static void stream_output_pipe_(
 
 
 static void stream_add_session_(
-    ctx_t_* ctx, uint32_t id, const uint8_t* name, size_t len) {
+    ctx_t_* ctx, uint16_t id, const uint8_t* name, size_t len) {
   if (HEDLEY_UNLIKELY(stream_find_session_(ctx, id))) {
     goto ABORT;
   }
@@ -343,7 +352,7 @@ ABORT:
   stream_output_pipe_(ctx, id, NULL, 0);
 }
 
-static session_t_* stream_find_session_(ctx_t_* ctx, uint32_t id) {
+static session_t_* stream_find_session_(ctx_t_* ctx, uint16_t id) {
   for (size_t i = 0; i < ctx->sessions.n; ++i) {
     session_t_* ss = ctx->sessions.p[i];
     if (HEDLEY_UNLIKELY(ss->id == id)) {
@@ -399,7 +408,6 @@ static bool session_input_pipe_(session_t_* ss) {
   if (HEDLEY_UNLIKELY(ss->parsing || !ss->buf.size)) {
     return true;
   }
-
   ss->parsing = ss->buf.size;
 
   upd_file_ref(ss->ctx->file);
