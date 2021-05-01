@@ -9,6 +9,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(UV   REQUIRED IMPORTED_TARGET libuv)
 pkg_check_modules(YAML REQUIRED IMPORTED_TARGET yaml-0.1)
 
+pkg_check_modules(VALGRIND valgrind)
+
 add_subdirectory(thirdparty)
 
 
@@ -25,6 +27,7 @@ target_compile_options(libupd
 target_include_directories(libupd SYSTEM
   PUBLIC
     include
+    "${VALGRIND_INCLUDE_DIRS}"
 )
 target_include_directories(libupd
   PUBLIC

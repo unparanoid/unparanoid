@@ -11,7 +11,7 @@
 #include <utf8.h>
 #include <uv.h>
 #include <yaml.h>
-#include <valgrind/valgrind.h>
+#include <valgrind.h>
 
 
 #define UPD_DECL_FUNC static inline
