@@ -1,6 +1,12 @@
 #include "common.h"
 
 
+static
+void
+config_apply_cb_(
+  upd_config_apply_t* ap);
+
+
 int main(int argc, char** argv) {
   argv = uv_setup_args(argc, argv);
 
@@ -19,7 +25,18 @@ int main(int argc, char** argv) {
     }
 
     upd_iso_msgf(iso, "building isolated machine...\n");
-    /* TODO */
+
+    upd_config_apply_t* config = upd_iso_stack(iso, sizeof(*config));
+    if (HEDLEY_UNLIKELY(iso == NULL)) {
+      fprintf(stderr, "isolated machine config context allocation failure\n");
+      return EXIT_FAILURE;
+    }
+    *config = (upd_config_apply_t) {
+      .iso = iso,
+      .cb  = config_apply_cb_,
+    };
+    utf8cpy(config->path, iso->path.working);
+    upd_config_apply(config);
 
     const upd_iso_status_t status = upd_iso_run(iso);
 
@@ -36,4 +53,9 @@ int main(int argc, char** argv) {
       continue;
     }
   }
+}
+
+
+static void config_apply_cb_(upd_config_apply_t* ap) {
+  upd_iso_unstack(ap->iso, ap);
 }
