@@ -7,3 +7,6 @@
 [submodule "thirdparty/cwalk"]
 	path = thirdparty/cwalk
 	url = https://github.com/likle/cwalk
+[submodule "thirdparty/picohttpparser"]
+	path = thirdparty/picohttpparser
+	url = https://github.com/h2o/picohttpparser

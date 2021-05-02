@@ -68,6 +68,7 @@ target_link_libraries(libupd
   PUBLIC
     cwalk
     hedley
+    picohttpparser
     PkgConfig::UV
     PkgConfig::YAML
     utf8.h

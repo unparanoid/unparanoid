@@ -9,6 +9,7 @@
 
 #include <cwalk.h>
 #include <hedley.h>
+#include <picohttpparser.h>
 #include <utf8.h>
 #include <uv.h>
 #include <yaml.h>
