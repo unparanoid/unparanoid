@@ -16,13 +16,6 @@ typedef struct upd_file_t_ {
 } upd_file_t_;
 
 
-static inline
-void
-upd_file_trigger(
-  upd_file_t*      f,
-  upd_file_event_t e);
-
-
 HEDLEY_NON_NULL(1, 2)
 static inline upd_file_t* upd_file_new(
     upd_iso_t* iso, const upd_driver_t* driver) {

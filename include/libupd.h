@@ -9,9 +9,6 @@
 #endif
 
 
-#define UPD_FILE_ID_ROOT 0
-
-
 typedef struct upd_iso_t        upd_iso_t;
 typedef struct upd_file_t       upd_file_t;
 typedef struct upd_file_watch_t upd_file_watch_t;
@@ -107,8 +104,7 @@ upd_driver_lookup(
 /*
  * ---- FILE INTERFACE ----
  */
-#define UPD_FILE_INVALID UINT64_MAX
-#define UPD_FILE_ROOT    0
+#define UPD_FILE_ID_ROOT 0
 
 enum {
   /* upd_file_event_t */
@@ -175,6 +171,12 @@ UPD_DECL_FUNC
 void
 upd_file_unwatch(
   upd_file_watch_t* w);
+
+UPD_DECL_FUNC
+void
+upd_file_trigger(
+  upd_file_t*      f,
+  upd_file_event_t e);
 
 UPD_DECL_FUNC
 bool

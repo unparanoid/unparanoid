@@ -63,7 +63,7 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
   if (HEDLEY_UNLIKELY(root == NULL)) {
     return NULL;
   }
-  assert(root->id == UPD_FILE_ROOT);
+  assert(root->id == UPD_FILE_ID_ROOT);
 
   setup_t_* setup = upd_iso_stack(iso, sizeof(*setup));
   if (HEDLEY_UNLIKELY(setup == NULL)) {
