@@ -358,7 +358,10 @@ static void cli_input_cb_(upd_req_t* req) {
   upd_iso_unstack(cli->iso, lock);
 
   if (HEDLEY_UNLIKELY(retry)) {
-    cli_try_parse_(cli);
+    if (HEDLEY_UNLIKELY(!cli_try_parse_(cli))) {
+      upd_cli_delete(cli);
+      return;
+    }
   }
 }
 
