@@ -30,13 +30,17 @@ upd_srv_delete(
 
 #if defined(UPD_TEST)
 static void upd_test_srv(void) {
-  upd_file_t* f = upd_file_new(upd_test.iso, &upd_driver_program_parallelism);
-  assert(f);
+  upd_file_t* parallelism = upd_file_new(upd_test.iso, &upd_driver_program_parallelism);
+  assert(parallelism);
+  upd_file_t* http = upd_file_new(upd_test.iso, &upd_driver_program_http);
+  assert(http);
 
-  upd_srv_t* srv = upd_srv_new_tcp(
-    upd_test.iso, f, (uint8_t*) "0.0.0.0", 9999);
-  assert(srv);
+  assert(upd_srv_new_tcp(
+    upd_test.iso, parallelism, (uint8_t*) "0.0.0.0", 9999));
+  assert(upd_srv_new_tcp(
+    upd_test.iso, http, (uint8_t*) "0.0.0.0", 8080));
 
-  upd_file_unref(f);
+  upd_file_unref(parallelism);
+  upd_file_unref(http);
 }
 #endif

@@ -55,6 +55,7 @@ target_sources(libupd
     src/config.h
     src/driver.h
     src/driver/dir.c
+    src/driver/program/http.c
     src/driver/program/parallelism.c
     src/file.h
     src/iso.c
