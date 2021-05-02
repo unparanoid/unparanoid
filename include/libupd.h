@@ -194,8 +194,9 @@ upd_file_unlock(
  */
 #define UPD_REQ_CAT_EACH(f)  \
   f(0x0000, DIR)  \
+  f(0x0001, BIN)  \
   f(0x0002, PROGRAM)  \
-  f(0x0001, STREAM)
+  f(0x0003, STREAM)
 
 #define UPD_REQ_TYPE_EACH(f)  \
   f(DIR, 0x0000, ACCESS)  \
@@ -203,6 +204,10 @@ upd_file_unlock(
   f(DIR, 0x0020, FIND)  \
   f(DIR, 0x0030, ADD)  \
   f(DIR, 0x0040, RM)  \
+\
+  f(BIN, 0x0000, ACCESS)  \
+  f(BIN, 0x0001, READ)  \
+  f(BIN, 0x0002, WRITE)  \
 \
   f(PROGRAM, 0x0000, ACCESS)  \
   f(PROGRAM, 0x0010, EXEC)  \
@@ -235,6 +240,17 @@ typedef struct upd_req_dir_entry_t {
   bool        weakref;
 } upd_req_dir_entry_t;
 
+typedef struct upd_req_bin_access_t {
+  unsigned read  : 1;
+  unsigned write : 1;
+} upd_req_bin_access_t;
+
+typedef struct upd_req_bin_rw_t {
+  size_t   offset;
+  size_t   size;
+  uint8_t* buf;
+} upd_req_bin_rw_t;
+
 typedef struct upd_req_program_access_t {
   unsigned exec : 1;
 } upd_req_program_access_t;
@@ -265,6 +281,10 @@ struct upd_req_t {
       upd_req_dir_entry_t** entries;
       upd_req_dir_entry_t   entry;
     } dir;
+    union {
+      upd_req_bin_access_t access;
+      upd_req_bin_rw_t     rw;
+    } bin;
     union {
       upd_req_program_access_t access;
       upd_file_t*              exec;
