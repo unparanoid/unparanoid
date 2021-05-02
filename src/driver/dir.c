@@ -118,6 +118,18 @@ static bool dir_handle_(upd_req_t* req) {
   } break;
 
   case UPD_REQ_DIR_ADD: {
+    upd_req_dir_entry_t* re = &req->dir.entry;
+
+    /* TODO: validate the filename */
+
+    size_t i;
+    const bool duplicated =
+      (re->len  && entry_find_by_name_(ctx, &i, re->name, re->len)) ||
+      (re->file && entry_find_by_file_(ctx, &i, re->file));
+    if (HEDLEY_UNLIKELY(duplicated)) {
+      return false;
+    }
+
     entry_t_* e = entry_dup_(&req->dir.entry, ctx);
 
     req->dir.entry = (upd_req_dir_entry_t) {0};
