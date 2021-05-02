@@ -211,6 +211,9 @@ static bool stream_init_(upd_file_t* f) {
 
 static void stream_deinit_(upd_file_t* f) {
   ctx_t_* ctx = f->ctx;
+  while (ctx->sessions.n) {
+    session_delete_(ctx->sessions.p[0]);
+  }
   upd_free(&ctx);
 }
 
