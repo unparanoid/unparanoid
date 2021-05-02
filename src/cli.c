@@ -226,13 +226,17 @@ static void cli_lock_for_add_cb_(upd_file_lock_t* l) {
     goto ABORT;
   }
 
+  uint8_t name[32];
+  const size_t namelen = snprintf(
+    (char*) name, sizeof(name), "%"PRIuPTR, (uintptr_t) cli);
+
   const bool add = upd_req_with_dup(&(upd_req_t) {
       .file = cli->dir,
       .type = UPD_REQ_DIR_ADD,
       .dir  = { .entry = {
         .file    = cli->io,
-        .name    = (uint8_t*) "test",
-        .len     = 4,
+        .name    = name,
+        .len     = namelen,
         .weakref = true,
       }, },
       .udata = l,
