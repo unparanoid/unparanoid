@@ -191,6 +191,16 @@ void
 wsock_watch_cb_(
   upd_file_watch_t* w);
 
+static
+void
+wsock_lock_for_output_cb_(
+  upd_file_lock_t* lock);
+
+static
+void
+wsock_output_cb_(
+  upd_req_t* req);
+
 
 static bool prog_init_(upd_file_t* f) {
   (void) f;
@@ -722,22 +732,23 @@ static void wsock_lock_for_input_cb_(upd_file_lock_t* lock) {
     goto EXIT;
   }
 
+  size_t         rem = io->size;
   const uint8_t* buf = io->buf;
   bool           end = false;
 
-  while (io->size) {
+  while (rem) {
     wsock_t w = {0};
 
-    const size_t header = wsock_decode(&w, buf, io->size);
-    if (!header || io->size < header+w.payload_len) {
+    const size_t header = wsock_decode(&w, buf, rem);
+    if (!header || rem < header+w.payload_len) {
       break;
     }
 
     const uint8_t* body  = buf + header;
     const size_t   whole = header + w.payload_len;
 
-    buf      += whole;
-    io->size -= whole;
+    buf += whole;
+    rem -= whole;
 
     switch (w.opcode) {
     case WSOCK_OPCODE_CONT:
@@ -754,10 +765,6 @@ static void wsock_lock_for_input_cb_(upd_file_lock_t* lock) {
     } break;
 
     case WSOCK_OPCODE_CLOSE:
-      stream_output_wsock_(ctx, &(wsock_t) {
-          .opcode = WSOCK_OPCODE_CLOSE,
-          .fin    = true,
-        }, NULL);
       end = true;
       goto EXIT;
 
@@ -769,17 +776,6 @@ static void wsock_lock_for_input_cb_(upd_file_lock_t* lock) {
           .fin         = true,
           .mask        = w.mask,
         }, body);
-      if (HEDLEY_UNLIKELY(!sent)) {
-        end = true;
-        goto EXIT;
-      }
-    } break;
-
-    case WSOCK_OPCODE_PONG: {
-      const bool sent = stream_output_wsock_(ctx, &(wsock_t) {
-          .opcode = WSOCK_OPCODE_CLOSE,
-          .fin    = true,
-        }, NULL);
       if (HEDLEY_UNLIKELY(!sent)) {
         end = true;
         goto EXIT;
@@ -820,6 +816,8 @@ EXIT:
     upd_iso_unstack(ctx->file->iso, lock);
     upd_file_unref(ctx->file);
   }
+
+  io->size = io->size - rem;
   req->cb(req);  /* We don't need io->buf anymore. :) */
 }
 
@@ -840,7 +838,70 @@ static void wsock_watch_cb_(upd_file_watch_t* w) {
   http_t_* ctx = w->udata;
 
   if (HEDLEY_LIKELY(w->event == UPD_FILE_UPDATE)) {
-    /* TODO */
-    upd_iso_msgf(ctx->file->iso, "wsock output\n");
+    upd_file_ref(ctx->file);
+    const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
+        .file  = ctx->ws,
+        .ex    = true,
+        .udata = ctx,
+        .cb    = wsock_lock_for_output_cb_,
+      });
+    if (HEDLEY_UNLIKELY(!lock)) {
+      stream_end_(ctx);
+      upd_file_unref(ctx->file);
+    }
   }
+}
+
+static void wsock_lock_for_output_cb_(upd_file_lock_t* lock) {
+  http_t_* ctx = lock->udata;
+
+  if (HEDLEY_UNLIKELY(!lock->ok)) {
+    goto ABORT;
+  }
+  const bool output = upd_req_with_dup(&(upd_req_t) {
+      .file  = ctx->ws,
+      .type  = UPD_REQ_STREAM_OUTPUT,
+      .udata = lock,
+      .cb    = wsock_output_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!output)) {
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  stream_end_(ctx);
+
+  upd_file_unlock(lock);
+  upd_iso_unstack(ctx->file->iso, lock);
+
+  upd_file_unref(ctx->file);
+}
+
+static void wsock_output_cb_(upd_req_t* req) {
+  upd_file_lock_t* lock = req->udata;
+  http_t_*         ctx  = lock->udata;
+
+  const upd_req_stream_io_t io = req->stream.io;
+  upd_iso_unstack(ctx->file->iso, req);
+
+  if (HEDLEY_UNLIKELY(!io.size)) {
+    goto EXIT;
+  }
+
+  const bool output = stream_output_wsock_(ctx, &(wsock_t) {
+      .payload_len = io.size,
+      .fin         = true,
+      .opcode      = WSOCK_OPCODE_BIN,
+    }, io.buf);
+  if (HEDLEY_UNLIKELY(!output)) {
+    stream_end_(ctx);
+    goto EXIT;
+  }
+
+EXIT:
+  upd_file_unlock(lock);
+  upd_iso_unstack(ctx->file->iso, lock);
+
+  upd_file_unref(ctx->file);
 }
