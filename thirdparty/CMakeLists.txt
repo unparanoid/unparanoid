@@ -34,3 +34,7 @@ target_include_directories(utf8.h SYSTEM
 target_sources(utf8.h
   INTERFACE utf8.h/utf8.h
 )
+
+
+# ---- wsock.h (https://github.com/falsycat/wsock.h) ----
+add_subdirectory(wsock.h)
