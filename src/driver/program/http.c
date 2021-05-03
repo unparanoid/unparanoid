@@ -754,7 +754,9 @@ static void wsock_lock_for_input_cb_(upd_file_lock_t* lock) {
     case WSOCK_OPCODE_CONT:
     case WSOCK_OPCODE_TEXT:
     case WSOCK_OPCODE_BIN: {
-      if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->wsbuf, body, w.payload_len))) {
+      const bool append =
+        !w.payload_len || upd_buf_append(&ctx->wsbuf, body, w.payload_len);
+      if (HEDLEY_UNLIKELY(!append)) {
         end = true;
         goto EXIT;
       }

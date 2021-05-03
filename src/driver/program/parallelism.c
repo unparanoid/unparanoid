@@ -28,13 +28,10 @@ struct session_t_ {
 
   upd_file_t*      prog;
   upd_file_t*      io;
-  upd_file_lock_t* lock;
   upd_file_watch_t watch;
 
   size_t    parsing;
   upd_buf_t buf;
-
-  bool deleted;
 };
 
 
@@ -149,6 +146,16 @@ session_exec_cb_(
 
 static
 void
+session_lock_for_input_cb_(
+  upd_file_lock_t* lock);
+
+static
+void
+session_input_cb_(
+  upd_req_t* req);
+
+static
+void
 session_watch_cb_(
   upd_file_watch_t* w);
 
@@ -256,15 +263,17 @@ static bool stream_input_(upd_req_t* req) {
   upd_iso_t* iso = req->file->iso;
   ctx_t_*    ctx = req->file->ctx;
 
-  upd_req_stream_io_t* io  = &req->stream.io;
-  const uint8_t*       buf = io->buf;
+  upd_req_stream_io_t* io = &req->stream.io;
 
-  while (io->size >= 4) {
+  size_t         rem = io->size;
+  const uint8_t* buf = io->buf;
+
+  while (rem >= 4) {
     const uint8_t id = (buf[1] << 8) | buf[0];
     const uint8_t sz = (buf[3] << 8) | buf[2];
 
     const size_t whole = 4 + sz;
-    if (HEDLEY_UNLIKELY(io->size < whole)) {
+    if (HEDLEY_UNLIKELY(rem < whole)) {
       break;
     }
 
@@ -289,9 +298,10 @@ static bool stream_input_(upd_req_t* req) {
     }
 
 SKIP:
-    buf      += whole;
-    io->size -= whole;
+    buf += whole;
+    rem -= whole;
   }
+  io->size = io->size - rem;
   return true;
 }
 
@@ -367,10 +377,6 @@ static session_t_* stream_find_session_(ctx_t_* ctx, uint16_t id) {
 
 
 static void session_delete_(session_t_* ss) {
-  if (HEDLEY_UNLIKELY(ss->parsing)) {
-    ss->deleted = true;
-    return;
-  }
   if (HEDLEY_UNLIKELY(!upd_array_find_and_remove(&ss->ctx->sessions, ss))) {
     return;
   }
@@ -383,30 +389,6 @@ static void session_delete_(session_t_* ss) {
   upd_free(&ss);
 }
 
-static void session_input_pipe_cb_(upd_req_t* req) {
-  session_t_* ss = req->udata;
-
-  const upd_req_stream_io_t* io = &req->stream.io;
-
-  const bool retry = ss->parsing != ss->buf.size;
-
-  ss->parsing   = 0;
-  ss->buf.size -= io->size;
-  memmove(ss->buf.ptr, ss->buf.ptr+io->size, ss->buf.size);
-
-  if (HEDLEY_UNLIKELY(retry)) {
-    if (HEDLEY_UNLIKELY(!session_input_pipe_(ss))) {
-      session_delete_(ss);
-      goto EXIT;
-    }
-  }
-
-EXIT:
-  if (HEDLEY_UNLIKELY(ss->deleted)) {
-    session_delete_(ss);
-  }
-  upd_file_unref(ss->ctx->file);
-}
 static bool session_input_pipe_(session_t_* ss) {
   if (HEDLEY_UNLIKELY(ss->parsing || !ss->buf.size)) {
     return true;
@@ -414,17 +396,13 @@ static bool session_input_pipe_(session_t_* ss) {
   ss->parsing = ss->buf.size;
 
   upd_file_ref(ss->ctx->file);
-  const bool ok = upd_req_with_dup(&(upd_req_t) {
-      .file = ss->io,
-      .type = UPD_REQ_STREAM_INPUT,
-      .stream = { .io = {
-        .buf  = ss->buf.ptr,
-        .size = ss->buf.size,
-      }, },
+  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
+      .file  = ss->io,
+      .ex    = true,
       .udata = ss,
-      .cb    = session_input_pipe_cb_,
+      .cb    = session_lock_for_input_cb_,
     });
-  if (HEDLEY_UNLIKELY(!ok)) {
+  if (HEDLEY_UNLIKELY(!lock)) {
     upd_file_unref(ss->ctx->file);
     return false;
   }
@@ -444,12 +422,12 @@ static void session_find_cb_(upd_req_pathfind_t* pf) {
   }
 
   upd_file_ref(ss->prog);
-  ss->lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
+  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
       .file  = ss->prog,
       .udata = ss,
       .cb    = session_lock_for_exec_cb_,
     });
-  if (HEDLEY_UNLIKELY(!ss->lock)) {
+  if (HEDLEY_UNLIKELY(!lock)) {
     upd_file_unref(ss->prog);
     goto ABORT;
   }
@@ -472,7 +450,7 @@ static void session_lock_for_exec_cb_(upd_file_lock_t* lock) {
   const bool exec = upd_req_with_dup(&(upd_req_t) {
       .file  = ss->prog,
       .type  = UPD_REQ_PROGRAM_EXEC,
-      .udata = ss,
+      .udata = lock,
       .cb    = session_exec_cb_,
     });
   if (HEDLEY_UNLIKELY(!exec)) {
@@ -490,11 +468,12 @@ ABORT:
 }
 
 static void session_exec_cb_(upd_req_t* req) {
-  session_t_* ss  = req->udata;
-  ctx_t_*     ctx = ss->ctx;
+  upd_file_lock_t* lock = req->udata;
+  session_t_*      ss   = lock->udata;
+  ctx_t_*          ctx  = ss->ctx;
 
-  upd_file_unlock(ss->lock);
-  upd_iso_unstack(ctx->file->iso, ss->lock);
+  upd_file_unlock(lock);
+  upd_iso_unstack(ctx->file->iso, lock);
 
   ss->io = req->program.exec;
   upd_iso_unstack(ctx->file->iso, req);
@@ -518,6 +497,7 @@ static void session_exec_cb_(upd_req_t* req) {
     upd_file_unref(ss->io);
     goto ABORT;
   }
+  upd_file_unref(ctx->file);
   return;
 
 ABORT:
@@ -527,32 +507,95 @@ ABORT:
   upd_file_unref(ctx->file);
 }
 
+static void session_lock_for_input_cb_(upd_file_lock_t* lock) {
+  session_t_* ss  = lock->udata;
+  ctx_t_*     ctx = ss->ctx;
+
+  if (HEDLEY_UNLIKELY(!lock->ok)) {
+    goto ABORT;
+  }
+
+  const bool ok = upd_req_with_dup(&(upd_req_t) {
+      .file = ss->io,
+      .type = UPD_REQ_STREAM_INPUT,
+      .stream = { .io = {
+        .buf  = ss->buf.ptr,
+        .size = ss->buf.size,
+      }, },
+      .udata = lock,
+      .cb    = session_input_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!ok)) {
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  upd_file_unlock(lock);
+  upd_iso_unstack(ctx->file->iso, lock);
+
+  session_delete_(ss);
+  upd_file_unref(ctx->file);
+}
+
+static void session_input_cb_(upd_req_t* req) {
+  upd_file_lock_t* lock = req->udata;
+  session_t_*      ss   = lock->udata;
+  ctx_t_*          ctx  = ss->ctx;
+
+  upd_file_unlock(lock);
+  upd_iso_unstack(ctx->file->iso, lock);
+
+  const upd_req_stream_io_t io = req->stream.io;
+  upd_iso_unstack(ctx->file->iso, req);
+
+  const bool retry = ss->parsing != ss->buf.size;
+
+  ss->parsing   = 0;
+  ss->buf.size -= io.size;
+  memmove(ss->buf.ptr, ss->buf.ptr+io.size, ss->buf.size);
+
+  if (HEDLEY_UNLIKELY(retry)) {
+    if (HEDLEY_UNLIKELY(!session_input_pipe_(ss))) {
+      session_delete_(ss);
+      goto EXIT;
+    }
+  }
+
+EXIT:
+  upd_file_unref(ctx->file);
+}
+
 static void session_watch_cb_(upd_file_watch_t* w) {
-  session_t_* ss = w->udata;
+  session_t_* ss  = w->udata;
+  ctx_t_*     ctx = ss->ctx;
 
   switch (w->event) {
   case UPD_FILE_DELETE:
-    HEDLEY_UNREACHABLE();
     assert(false);
+    HEDLEY_UNREACHABLE();
     return;
 
-  case UPD_FILE_UPDATE:
-    ss->lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
+  case UPD_FILE_UPDATE: {
+    upd_file_ref(ctx->file);
+    const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
         .file  = ss->io,
         .ex    = true,
         .udata = ss,
         .cb    = session_lock_for_output_cb_,
       });
-    if (HEDLEY_UNLIKELY(!ss->lock)) {
+    if (HEDLEY_UNLIKELY(!lock)) {
+      upd_file_unref(ctx->file);
       session_delete_(ss);
       return;
     }
-    return;
+  } return;
   }
 }
 
 static void session_lock_for_output_cb_(upd_file_lock_t* lock) {
-  session_t_* ss = lock->udata;
+  session_t_* ss  = lock->udata;
+  ctx_t_*     ctx = ss->ctx;
 
   if (HEDLEY_UNLIKELY(!lock->ok)) {
     goto ABORT;
@@ -560,7 +603,7 @@ static void session_lock_for_output_cb_(upd_file_lock_t* lock) {
   const bool output = upd_req_with_dup(&(upd_req_t) {
       .file  = ss->io,
       .type  = UPD_REQ_STREAM_OUTPUT,
-      .udata = ss,
+      .udata = lock,
       .cb    = session_output_cb_,
     });
   if (HEDLEY_UNLIKELY(!output)) {
@@ -569,20 +612,25 @@ static void session_lock_for_output_cb_(upd_file_lock_t* lock) {
   return;
 
 ABORT:
-  upd_file_unlock(ss->lock);
-  upd_iso_unstack(ss->ctx->file->iso, lock);
+  upd_file_unlock(lock);
+  upd_iso_unstack(ctx->file->iso, lock);
   session_delete_(ss);
+  upd_file_unref(ctx->file);
 }
 
 static void session_output_cb_(upd_req_t* req) {
-  session_t_* ss = req->udata;
+  upd_file_lock_t* lock = req->udata;
+  session_t_*      ss   = lock->udata;
+  ctx_t_*          ctx  = ss->ctx;
 
   const upd_req_stream_io_t io = req->stream.io;
-  upd_iso_unstack(ss->ctx->file->iso, req);
+  upd_iso_unstack(ctx->file->iso, req);
 
   if (HEDLEY_LIKELY(io.size)) {
-    stream_output_pipe_(ss->ctx, ss->id, io.buf, io.size);
+    stream_output_pipe_(ctx, ss->id, io.buf, io.size);
   }
-  upd_file_unlock(ss->lock);
-  upd_iso_unstack(ss->ctx->file->iso, ss->lock);
+  upd_file_unlock(lock);
+  upd_iso_unstack(ctx->file->iso, lock);
+
+  upd_file_unref(ctx->file);
 }
