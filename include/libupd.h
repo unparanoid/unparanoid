@@ -56,6 +56,11 @@ upd_iso_unstack(
   void*      ptr);
 
 UPD_DECL_FUNC
+uint64_t
+upd_iso_now(
+  upd_iso_t* iso);
+
+UPD_DECL_FUNC
 void
 upd_iso_msg(
   upd_iso_t*     iso,
@@ -120,7 +125,10 @@ struct upd_file_t {
 
   upd_file_id_t id;
   uint64_t      refcnt;
-  void*         ctx;
+
+  uint64_t last_update;
+
+  void* ctx;
 };
 
 struct upd_file_watch_t {

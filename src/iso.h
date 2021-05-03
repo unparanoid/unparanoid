@@ -73,6 +73,11 @@ static inline void upd_iso_unstack(upd_iso_t* iso, void* ptr) {
   }
 }
 
+HEDLEY_NON_NULL(1)
+static inline uint64_t upd_iso_now(upd_iso_t* iso) {
+  return uv_now(&iso->loop);
+}
+
 static void upd_iso_msg_write_cb_(uv_write_t* req, int status) {
   upd_iso_unstack(req->data, req);
   if (HEDLEY_UNLIKELY(status < 0)) {

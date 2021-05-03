@@ -116,6 +116,12 @@ static inline void upd_file_unwatch(upd_file_watch_t* w) {
 
 HEDLEY_NON_NULL(1)
 static inline void upd_file_trigger(upd_file_t* f, upd_file_event_t e) {
+  switch (e) {
+  case UPD_FILE_UPDATE:
+    f->last_update = upd_iso_now(f->iso);
+    break;
+  }
+
   upd_file_t_* f_ = (void*) f;
   for (size_t i = 0; i < f_->watch.n; ++i) {
     upd_file_watch_t* w = f_->watch.p[i];
