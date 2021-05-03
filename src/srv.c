@@ -89,6 +89,12 @@ upd_srv_t* upd_srv_new_tcp(
 
 void upd_srv_delete(upd_srv_t* srv) {
   upd_array_find_and_remove(&srv->iso->srv, srv);
+
+  if (HEDLEY_LIKELY(srv->dir)) {
+    upd_file_unref(srv->dir);
+  }
+  upd_file_unref(srv->prog);
+
   uv_close(&srv->uv.handle, srv_close_cb_);
 }
 
@@ -243,9 +249,5 @@ static void srv_conn_cb_(uv_stream_t* stream, int status) {
 
 static void srv_close_cb_(uv_handle_t* handle) {
   upd_srv_t* srv = (void*) handle;
-  if (HEDLEY_LIKELY(srv->dir)) {
-    upd_file_unref(srv->dir);
-  }
-  upd_file_unref(srv->prog);
   upd_free(&srv);
 }

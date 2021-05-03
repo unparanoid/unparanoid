@@ -126,6 +126,13 @@ upd_cli_t* upd_cli_new_tcp(upd_srv_t* srv) {
 void upd_cli_delete(upd_cli_t* cli) {
   upd_array_find_and_remove(&cli->iso->cli, cli);
 
+  upd_file_unref(cli->dir);
+  upd_file_unref(cli->prog);
+  if (HEDLEY_LIKELY(cli->io)) {
+    upd_file_unwatch(&cli->watch);
+    upd_file_unref(cli->io);
+  }
+
   uv_shutdown_t* req = upd_iso_stack(cli->iso, sizeof(*req));
   if (HEDLEY_UNLIKELY(req == NULL)) {
     uv_close(&cli->uv.handle, cli_close_cb_);
@@ -460,11 +467,5 @@ static void cli_shutdown_cb_(uv_shutdown_t* req, int status) {
 
 static void cli_close_cb_(uv_handle_t* handle) {
   upd_cli_t* cli = (void*) handle;
-
-  upd_file_unref(cli->dir);
-  upd_file_unref(cli->prog);
-  if (HEDLEY_LIKELY(cli->io)) {
-    upd_file_unref(cli->io);
-  }
   upd_free(&cli);
 }

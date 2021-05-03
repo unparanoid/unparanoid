@@ -252,6 +252,7 @@ static void stream_deinit_(upd_file_t* f) {
 
   if (HEDLEY_UNLIKELY(ctx->ws)) {
     upd_file_unref(ctx->ws);
+    upd_file_unwatch(&ctx->wswatch);
   }
   upd_buf_clear(&ctx->wsbuf);
 
