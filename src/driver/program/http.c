@@ -1,6 +1,11 @@
 #include "common.h"
 
 
+#define WSOCK_NONCE_IN_SIZE_  24
+#define WSOCK_NONCE_OUT_SIZE_ 28
+#define WSOCK_NONCE_PREFIX_   "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
 typedef enum http_state_t_ {
   REQUEST_,
   RESPONSE_,
@@ -11,7 +16,6 @@ typedef enum http_state_t_ {
 
 typedef struct http_t_  http_t_;
 typedef struct req_t_   req_t_;
-typedef struct wsock_t_ wsock_t_;
 
 struct http_t_ {
   upd_file_t*   file;
@@ -39,11 +43,6 @@ struct req_t_ {
   size_t headers_cnt;
 
   upd_file_t* file;
-};
-
-struct wsock_t_ {
-  http_t_*   ctx;
-  upd_req_t* req;
 };
 
 
@@ -165,6 +164,19 @@ req_exec_cb_(
 
 
 static
+const struct phr_header*
+req_find_header_(
+  const req_t_* req,
+  const char*   name);
+
+static
+bool
+req_calc_wsock_nonce_(
+  uint8_t       out[WSOCK_NONCE_OUT_SIZE_],
+  const req_t_* req);
+
+
+static
 void
 wsock_lock_for_input_cb_(
   upd_file_lock_t* lock);
@@ -227,6 +239,12 @@ static bool stream_init_(upd_file_t* f) {
 
 static void stream_deinit_(upd_file_t* f) {
   http_t_* ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(ctx->ws)) {
+    upd_file_unref(ctx->ws);
+  }
+  upd_buf_clear(&ctx->wsbuf);
+
   upd_buf_clear(&ctx->out);
   upd_free(&ctx);
 }
@@ -408,14 +426,12 @@ static void req_pathfind_cb_(upd_req_pathfind_t* pf) {
   }
 
   /* check if the client requests wsock */
-  for (size_t i = 0; i < req->headers_cnt; ++i) {
-    const struct phr_header* h = &req->headers[i];
-
+  const struct phr_header* upgrade = req_find_header_(req, "Upgrade");
+  if (HEDLEY_UNLIKELY(upgrade != NULL)) {
     const bool match =
-      h->name_len  == 7 && utf8ncmp(h->name, "Upgrade", 7) == 0 &&
-      h->value_len == 9 && utf8ncasecmp(h->value, "websocket", 9) == 0;
-
-    if (HEDLEY_UNLIKELY(match)) {
+      upgrade->value_len == 9 &&
+      utf8ncasecmp(upgrade->value, "websocket", 9) == 0;
+    if (HEDLEY_LIKELY(match)) {
       const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
           .file  = req->file,
           .udata = req,
@@ -612,6 +628,12 @@ static void req_exec_cb_(upd_req_t* req) {
     goto EXIT;
   }
 
+  uint8_t nonce[WSOCK_NONCE_OUT_SIZE_+1] = {0};
+  if (HEDLEY_UNLIKELY(!req_calc_wsock_nonce_(nonce, hreq))) {
+    stream_output_http_error_(ctx, 400, "wsock nonce failure");
+    goto EXIT;
+  }
+
   ctx->wswatch = (upd_file_watch_t) {
     .file  = ctx->ws,
     .udata = ctx,
@@ -627,8 +649,8 @@ static void req_exec_cb_(upd_req_t* req) {
     "HTTP/1.1 101 Switching Protocols\r\n"
     "Upgrade: websocket\r\n"
     "Connection: upgrade\r\n"
-    "Sec-WebSocket-Accept: test\r\n"
-    "\r\n");
+    "Sec-WebSocket-Accept: %s\r\n"
+    "\r\n", nonce);
 
   const bool header = upd_buf_append(&ctx->out, temp, len);
   if (HEDLEY_UNLIKELY(!header)) {
@@ -636,6 +658,8 @@ static void req_exec_cb_(upd_req_t* req) {
     goto EXIT;
   }
   upd_file_trigger(ctx->file, UPD_FILE_UPDATE);
+
+  ctx->state = WSOCK_;
 
 EXIT:
   upd_file_unlock(lock);
@@ -645,6 +669,45 @@ EXIT:
   upd_iso_unstack(ctx->file->iso, hreq);
 
   upd_file_unref(ctx->file);
+}
+
+
+static const struct phr_header* req_find_header_(
+    const req_t_* req, const char* name) {
+  const size_t namelen = utf8size_lazy(name);
+
+  for (size_t i = 0; i < req->headers_cnt; ++i) {
+    const struct phr_header* h = &req->headers[i];
+    const bool match =
+      h->name_len == namelen && utf8ncmp(h->name, name, namelen) == 0;
+    if (HEDLEY_UNLIKELY(match)) {
+      return h;
+    }
+  }
+  return NULL;
+}
+
+static bool req_calc_wsock_nonce_(
+    uint8_t out[WSOCK_NONCE_OUT_SIZE_], const req_t_* req) {
+  const struct phr_header* h = req_find_header_(req, "Sec-WebSocket-Key");
+  if (HEDLEY_UNLIKELY(h == NULL || h->value_len != WSOCK_NONCE_IN_SIZE_)) {
+    return NULL;
+  }
+
+  uint8_t hashed[SHA1_BLOCK_SIZE];
+  SHA1_CTX sha1;
+  sha1_init(&sha1);
+  sha1_update(&sha1, (uint8_t*) h->value, WSOCK_NONCE_IN_SIZE_);
+  sha1_update(&sha1,
+    (uint8_t*) WSOCK_NONCE_PREFIX_, sizeof(WSOCK_NONCE_PREFIX_)-1);
+  sha1_final(&sha1, hashed);
+
+  const size_t outsz = base64_encode(hashed, NULL, sizeof(hashed), false);
+  if (HEDLEY_UNLIKELY(outsz != WSOCK_NONCE_OUT_SIZE_)) {
+    return false;
+  }
+  base64_encode(hashed, out, sizeof(hashed), false);
+  return true;
 }
 
 
