@@ -13,3 +13,6 @@
 [submodule "thirdparty/wsock.h"]
 	path = thirdparty/wsock.h
 	url = https://github.com/falsycat/wsock.h
+[submodule "thirdparty/crypto-algorithms"]
+	path = thirdparty/crypto-algorithms
+	url = https://github.com/B-Con/crypto-algorithms

@@ -67,6 +67,7 @@ target_sources(libupd
 )
 target_link_libraries(libupd
   PUBLIC
+    crypto-algorithms
     cwalk
     hedley
     picohttpparser
