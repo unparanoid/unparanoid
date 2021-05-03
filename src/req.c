@@ -32,7 +32,6 @@ static void pathfind_(upd_req_pathfind_t* pf) {
   while (pf->len && pf->path[0] == '/') {
     ++pf->path;
     --pf->len;
-    pf->base = NULL;
   }
   pf->term = 0;
   while (pf->term < pf->len && pf->path[pf->term] != '/') {
