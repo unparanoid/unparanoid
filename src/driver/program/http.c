@@ -9,8 +9,19 @@ typedef enum http_state_t_ {
 } http_state_t_;
 
 
-typedef struct http_t_ http_t_;
-typedef struct req_t_  req_t_;
+typedef struct http_t_  http_t_;
+typedef struct req_t_   req_t_;
+typedef struct wsock_t_ wsock_t_;
+
+struct http_t_ {
+  upd_file_t*   file;
+  http_state_t_ state;
+  upd_buf_t     out;
+
+  upd_file_t*      ws;
+  upd_file_watch_t wswatch;
+  upd_buf_t        wsbuf;
+};
 
 struct req_t_ {
   http_t_*   ctx;
@@ -30,11 +41,9 @@ struct req_t_ {
   upd_file_t* file;
 };
 
-struct http_t_ {
-  upd_file_t*   file;
-  http_state_t_ state;
-  upd_buf_t     in;
-  upd_buf_t     out;
+struct wsock_t_ {
+  http_t_*   ctx;
+  upd_req_t* req;
 };
 
 
@@ -94,6 +103,18 @@ static const upd_driver_t stream_driver_ = {
 
 static
 bool
+stream_output_wsock_(
+  http_t_*       ctx,
+  const wsock_t* ws,
+  const uint8_t* body);
+
+static
+void
+stream_end_(
+  http_t_* ctx);
+
+static
+bool
 stream_parse_req_(
   http_t_*   ctx,
   upd_req_t* req);
@@ -131,6 +152,32 @@ static
 void
 req_read_cb_(
   upd_req_t* req);
+
+static
+void
+req_lock_for_exec_cb_(
+  upd_file_lock_t* lock);
+
+static
+void
+req_exec_cb_(
+  upd_req_t* req);
+
+
+static
+void
+wsock_lock_for_input_cb_(
+  upd_file_lock_t* lock);
+
+static
+void
+wsock_input_cb_(
+  upd_req_t* req);
+
+static
+void
+wsock_watch_cb_(
+  upd_file_watch_t* w);
 
 
 static bool prog_init_(upd_file_t* f) {
@@ -180,6 +227,7 @@ static bool stream_init_(upd_file_t* f) {
 
 static void stream_deinit_(upd_file_t* f) {
   http_t_* ctx = f->ctx;
+  upd_buf_clear(&ctx->out);
   upd_free(&ctx);
 }
 
@@ -199,7 +247,8 @@ static bool stream_handle_(upd_req_t* req) {
     case REQUEST_:
       return stream_parse_req_(ctx, req);
     case RESPONSE_:
-      return upd_buf_append(&ctx->in, req->stream.io.buf, req->stream.io.size);
+      req->stream.io.size = 0;
+      return true;
     case WSOCK_:
       return stream_pipe_wsock_input_(ctx, req);
     default:
@@ -229,9 +278,26 @@ static bool stream_handle_(upd_req_t* req) {
 }
 
 
-static void stream_end_(http_t_* ctx) {
-  ctx->state = END_;
+static bool stream_output_wsock_(
+    http_t_* ctx, const wsock_t* ws, const uint8_t* body) {
+  const size_t header = wsock_encode_size(ws);
+  const size_t whole  = header + ws->payload_len;
+
+  uint8_t* ptr = upd_buf_append(&ctx->out, NULL, whole);
+  if (HEDLEY_UNLIKELY(ptr == NULL)) {
+    return false;
+  }
+  wsock_encode(ptr, ws);
+  memcpy(ptr+header, body, ws->payload_len);
   upd_file_trigger(ctx->file, UPD_FILE_UPDATE);
+  return true;
+}
+
+static void stream_end_(http_t_* ctx) {
+  if (HEDLEY_LIKELY(ctx->state != END_)) {
+    ctx->state = END_;
+    upd_file_trigger(ctx->file, UPD_FILE_UPDATE);
+  }
 }
 
 static bool stream_parse_req_(http_t_* ctx, upd_req_t* req) {
@@ -297,10 +363,18 @@ static bool stream_parse_req_(http_t_* ctx, upd_req_t* req) {
 }
 
 static bool stream_pipe_wsock_input_(http_t_* ctx, upd_req_t* req) {
-  (void) ctx;
-  (void) req;
-  /* TODO */
-  return false;
+  upd_file_ref(ctx->file);
+  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
+      .file  = ctx->ws,
+      .ex    = true,
+      .udata = req,
+      .cb    = wsock_lock_for_input_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!lock)) {
+    upd_file_unref(ctx->file);
+    return false;
+  }
+  return true;
 }
 
 static bool stream_output_http_error_(
@@ -333,7 +407,27 @@ static void req_pathfind_cb_(upd_req_pathfind_t* pf) {
     goto ABORT;
   }
 
-  /* TODO: check upgrade header */
+  /* check if the client requests wsock */
+  for (size_t i = 0; i < req->headers_cnt; ++i) {
+    const struct phr_header* h = &req->headers[i];
+
+    const bool match =
+      h->name_len  == 7 && utf8ncmp(h->name, "Upgrade", 7) == 0 &&
+      h->value_len == 9 && utf8ncasecmp(h->value, "websocket", 9) == 0;
+
+    if (HEDLEY_UNLIKELY(match)) {
+      const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
+          .file  = req->file,
+          .udata = req,
+          .cb    = req_lock_for_exec_cb_,
+        });
+      if (HEDLEY_UNLIKELY(!lock)) {
+        stream_output_http_error_(ctx, 500, "lock context allocation failure");
+        goto ABORT;
+      }
+      return;
+    }
+  }
 
   const bool access = upd_req_with_dup(&(upd_req_t) {
       .file  = req->file,
@@ -397,8 +491,7 @@ static void req_lock_for_read_cb_(upd_file_lock_t* lock) {
     "Content-type: text/plain\r\n"
     "\r\n");
 
-  const bool header =
-    upd_buf_append(&ctx->out, temp, len);
+  const bool header = upd_buf_append(&ctx->out, temp, len);
   if (HEDLEY_UNLIKELY(!header)) {
     stream_output_http_error_(ctx, 500, "buffer allocation failure");
     goto ABORT;
@@ -473,4 +566,218 @@ FINALIZE:
 
   stream_end_(ctx);
   upd_file_unref(ctx->file);
+}
+
+static void req_lock_for_exec_cb_(upd_file_lock_t* lock) {
+  req_t_*  req = lock->udata;
+  http_t_* ctx = req->ctx;
+
+  if (HEDLEY_UNLIKELY(!lock->ok)) {
+    stream_output_http_error_(ctx, 409, "lock failure");
+    goto ABORT;
+  }
+
+  const bool exec = upd_req_with_dup(&(upd_req_t) {
+      .file  = req->file,
+      .type  = UPD_REQ_PROGRAM_EXEC,
+      .udata = lock,
+      .cb    = req_exec_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!exec)) {
+    stream_output_http_error_(ctx, 403, "refused exec request");
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  upd_file_unlock(lock);
+  upd_iso_unstack(ctx->file->iso, lock);
+
+  req->req->cb(req->req);
+  upd_iso_unstack(ctx->file->iso, req);
+
+  upd_file_unref(ctx->file);
+}
+
+static void req_exec_cb_(upd_req_t* req) {
+  upd_file_lock_t* lock = req->udata;
+  req_t_*          hreq = lock->udata;
+  http_t_*         ctx  = hreq->ctx;
+
+  ctx->ws = req->program.exec;
+  upd_iso_unstack(ctx->file->iso, req);
+
+  if (HEDLEY_UNLIKELY(ctx->ws == NULL)) {
+    stream_output_http_error_(ctx, 403, "exec failure");
+    goto EXIT;
+  }
+
+  ctx->wswatch = (upd_file_watch_t) {
+    .file  = ctx->ws,
+    .udata = ctx,
+    .cb    = wsock_watch_cb_,
+  };
+  if (HEDLEY_UNLIKELY(!upd_file_watch(&ctx->wswatch))) {
+    stream_output_http_error_(ctx, 403, "watch failure");
+    goto EXIT;
+  }
+
+  uint8_t temp[1024];
+  const size_t len = snprintf((char*) temp, sizeof(temp),
+    "HTTP/1.1 101 Switching Protocols\r\n"
+    "Upgrade: websocket\r\n"
+    "Connection: upgrade\r\n"
+    "Sec-WebSocket-Accept: test\r\n"
+    "\r\n");
+
+  const bool header = upd_buf_append(&ctx->out, temp, len);
+  if (HEDLEY_UNLIKELY(!header)) {
+    stream_output_http_error_(ctx, 500, "buffer allocation failure");
+    goto EXIT;
+  }
+  upd_file_trigger(ctx->file, UPD_FILE_UPDATE);
+
+EXIT:
+  upd_file_unlock(lock);
+  upd_iso_unstack(ctx->file->iso, lock);
+
+  hreq->req->cb(hreq->req);
+  upd_iso_unstack(ctx->file->iso, hreq);
+
+  upd_file_unref(ctx->file);
+}
+
+
+static void wsock_lock_for_input_cb_(upd_file_lock_t* lock) {
+  upd_req_t*           req = lock->udata;
+  http_t_*             ctx = req->file->ctx;
+  upd_req_stream_io_t* io  = &req->stream.io;
+
+  const size_t prev_size = ctx->wsbuf.size;
+
+  if (HEDLEY_UNLIKELY(!lock->ok || ctx->state != WSOCK_)) {
+    goto EXIT;
+  }
+
+  const uint8_t* buf = io->buf;
+  bool           end = false;
+
+  while (io->size) {
+    wsock_t w = {0};
+
+    const size_t header = wsock_decode(&w, buf, io->size);
+    if (!header || io->size < header+w.payload_len) {
+      break;
+    }
+
+    const uint8_t* body  = buf + header;
+    const size_t   whole = header + w.payload_len;
+
+    buf      += whole;
+    io->size -= whole;
+
+    switch (w.opcode) {
+    case WSOCK_OPCODE_CONT:
+    case WSOCK_OPCODE_TEXT:
+    case WSOCK_OPCODE_BIN: {
+      if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->wsbuf, body, w.payload_len))) {
+        end = true;
+        goto EXIT;
+      }
+      if (HEDLEY_UNLIKELY(w.mask)) {
+        const size_t head = ctx->wsbuf.size - w.payload_len;
+        wsock_mask(ctx->wsbuf.ptr+head, w.payload_len, w.mask_key);
+      }
+    } break;
+
+    case WSOCK_OPCODE_CLOSE:
+      stream_output_wsock_(ctx, &(wsock_t) {
+          .opcode = WSOCK_OPCODE_CLOSE,
+          .fin    = true,
+        }, NULL);
+      end = true;
+      goto EXIT;
+
+    case WSOCK_OPCODE_PING: {
+      const bool sent = stream_output_wsock_(ctx, &(wsock_t) {
+          .payload_len = w.payload_len,
+          .mask_key    = w.mask_key,
+          .opcode      = WSOCK_OPCODE_PONG,
+          .fin         = true,
+          .mask        = w.mask,
+        }, body);
+      if (HEDLEY_UNLIKELY(!sent)) {
+        end = true;
+        goto EXIT;
+      }
+    } break;
+
+    case WSOCK_OPCODE_PONG: {
+      const bool sent = stream_output_wsock_(ctx, &(wsock_t) {
+          .opcode = WSOCK_OPCODE_CLOSE,
+          .fin    = true,
+        }, NULL);
+      if (HEDLEY_UNLIKELY(!sent)) {
+        end = true;
+        goto EXIT;
+      }
+    } break;
+
+    default:
+      end = true;
+      goto EXIT;
+    }
+  }
+
+  bool try_input;
+EXIT:
+  try_input = ctx->wsbuf.size != prev_size;
+  if (HEDLEY_LIKELY(try_input)) {
+    lock->udata = ctx;
+    const bool input = upd_req_with_dup(&(upd_req_t) {
+        .file = ctx->ws,
+        .type = UPD_REQ_STREAM_INPUT,
+        .stream = { .io = {
+          .size = ctx->wsbuf.size,
+          .buf  = ctx->wsbuf.ptr,
+        }, },
+        .udata = lock,
+        .cb    = wsock_input_cb_,
+      });
+    if (HEDLEY_UNLIKELY(!input)) {
+      try_input = false;
+      end       = true;
+    }
+  }
+  if (HEDLEY_UNLIKELY(end)) {
+    stream_end_(ctx);
+  }
+  if (HEDLEY_UNLIKELY(!try_input)) {
+    upd_file_unlock(lock);
+    upd_iso_unstack(ctx->file->iso, lock);
+    upd_file_unref(ctx->file);
+  }
+  req->cb(req);  /* We don't need io->buf anymore. :) */
+}
+
+static void wsock_input_cb_(upd_req_t* req) {
+  upd_file_lock_t* lock = req->udata;
+  http_t_*         ctx  = lock->udata;
+
+  upd_buf_drop_head(&ctx->wsbuf, req->stream.io.size);
+  upd_iso_unstack(ctx->file->iso, req);
+
+  upd_file_unlock(lock);
+  upd_iso_unstack(ctx->file->iso, lock);
+
+  upd_file_unref(ctx->file);
+}
+
+static void wsock_watch_cb_(upd_file_watch_t* w) {
+  http_t_* ctx = w->udata;
+
+  if (HEDLEY_LIKELY(w->event == UPD_FILE_UPDATE)) {
+    /* TODO */
+    upd_iso_msgf(ctx->file->iso, "wsock output\n");
+  }
 }

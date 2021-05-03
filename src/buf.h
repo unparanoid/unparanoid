@@ -18,7 +18,7 @@ static inline void upd_buf_clear(upd_buf_t* buf) {
 }
 
 HEDLEY_NON_NULL(1)
-static inline const uint8_t* upd_buf_append(
+static inline uint8_t* upd_buf_append(
     upd_buf_t* buf, const uint8_t* ptr, size_t size) {
   if (HEDLEY_UNLIKELY(buf->max && buf->max < buf->size+size)) {
     return NULL;

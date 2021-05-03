@@ -73,6 +73,7 @@ target_link_libraries(libupd
     PkgConfig::UV
     PkgConfig::YAML
     utf8.h
+    wsock.h
 )
 
 

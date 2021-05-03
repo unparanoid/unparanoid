@@ -14,6 +14,7 @@
 #include <uv.h>
 #include <yaml.h>
 #include <valgrind.h>
+#include <wsock.h>
 
 
 #define UPD_DECL_FUNC static inline
