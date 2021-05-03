@@ -26,10 +26,17 @@ static const test_t_ tests_[] = {
 upd_test_t upd_test = {0};
 
 
-static void timer_cb_(uv_timer_t* timer) {
-  (void) timer;
-  upd_iso_exit(upd_test.iso, UPD_ISO_SHUTDOWN);
-}
+static
+uintmax_t
+get_wait_time_(
+  void);
+
+
+static
+void
+timer_cb_(
+  uv_timer_t* timer);
+
 
 int main(int argc, char** argv) {
   argv = uv_setup_args(argc, argv);
@@ -46,10 +53,33 @@ int main(int argc, char** argv) {
 
   uv_timer_t timer = {0};
   assert(0 <= uv_timer_init(&upd_test.iso->loop, &timer));
-  assert(0 <= uv_timer_start(&timer, timer_cb_, 10000, 0));
+  assert(0 <= uv_timer_start(&timer, timer_cb_, get_wait_time_(), 0));
 
   printf("starting isolated machine...\n");
   assert(upd_iso_run(upd_test.iso) != UPD_ISO_PANIC);
   printf("isolated machine exited normally\n");
   return EXIT_SUCCESS;
+}
+
+
+static uintmax_t get_wait_time_(void) {
+  static const uintmax_t default_ = 1000;
+
+  const char* env = getenv("UPDTEST_WAIT");
+  if (env == NULL) {
+    return default_;
+  }
+
+  char* end;
+  const uintmax_t t = strtoumax(env, &end, 10);
+  if (HEDLEY_UNLIKELY(t == 0 || t == UINTMAX_MAX)) {
+    return default_;
+  }
+  return t;
+}
+
+
+static void timer_cb_(uv_timer_t* timer) {
+  (void) timer;
+  upd_iso_exit(upd_test.iso, UPD_ISO_SHUTDOWN);
 }
