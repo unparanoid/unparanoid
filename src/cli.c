@@ -140,6 +140,7 @@ void upd_cli_delete(upd_cli_t* cli) {
   }
   cli->deleted = true;
   cli_unref_(cli);
+  upd_array_find_and_remove(&cli->iso->cli, cli);
 }
 
 
@@ -148,8 +149,6 @@ static void cli_unref_(upd_cli_t* cli) {
   if (HEDLEY_UNLIKELY(--cli->refcnt)) {
     return;
   }
-
-  upd_array_find_and_remove(&cli->iso->cli, cli);
 
   upd_file_unref(cli->dir);
   upd_file_unref(cli->prog);

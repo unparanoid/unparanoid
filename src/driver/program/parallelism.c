@@ -246,8 +246,10 @@ static bool stream_handle_(upd_req_t* req) {
       .size = ctx->buf.size,
       .buf  = ctx->buf.ptr,
     };
+    upd_buf_t oldbuf = ctx->buf;
+    ctx->buf = (upd_buf_t) {0};
     req->cb(req);
-    upd_buf_clear(&ctx->buf);
+    upd_buf_clear(&oldbuf);
     return true;
 
   default:
