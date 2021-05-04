@@ -13,6 +13,9 @@ struct upd_cli_t {
   upd_file_t*      io;
   upd_file_watch_t watch;
 
+  bool   deleted;
+  size_t refcnt;
+
   struct {
     size_t   size;
     size_t   parsing;

@@ -5,6 +5,16 @@
 
 
 static
+void
+cli_unref_(
+  upd_cli_t* cli);
+
+static
+bool
+cli_read_start_(
+  upd_cli_t* cli);
+
+static
 bool
 cli_try_parse_(
   upd_cli_t* cli);
@@ -93,9 +103,10 @@ upd_cli_t* upd_cli_new_tcp(upd_srv_t* srv) {
     return NULL;
   }
   *cli = (upd_cli_t) {
-    .iso  = srv->iso,
-    .dir  = srv->dir,
-    .prog = srv->prog,
+    .iso    = srv->iso,
+    .dir    = srv->dir,
+    .prog   = srv->prog,
+    .refcnt = 1,
   };
 
   if (HEDLEY_UNLIKELY(0 > uv_tcp_init(&cli->iso->loop, &cli->uv.tcp))) {
@@ -124,6 +135,20 @@ upd_cli_t* upd_cli_new_tcp(upd_srv_t* srv) {
 }
 
 void upd_cli_delete(upd_cli_t* cli) {
+  if (HEDLEY_LIKELY(cli->deleted)) {
+    return;
+  }
+  cli->deleted = true;
+  cli_unref_(cli);
+}
+
+
+static void cli_unref_(upd_cli_t* cli) {
+  assert(cli->refcnt);
+  if (HEDLEY_UNLIKELY(--cli->refcnt)) {
+    return;
+  }
+
   upd_array_find_and_remove(&cli->iso->cli, cli);
 
   upd_file_unref(cli->dir);
@@ -147,19 +172,32 @@ void upd_cli_delete(upd_cli_t* cli) {
   }
 }
 
+static bool cli_read_start_(upd_cli_t* cli) {
+  return 0 <= uv_read_start(&cli->uv.stream, cli_alloc_cb_, cli_read_cb_);
+}
 
 static bool cli_try_parse_(upd_cli_t* cli) {
   if (HEDLEY_LIKELY(cli->buf.parsing || !cli->buf.size)) {
     return true;
   }
+  if (HEDLEY_UNLIKELY(0 > uv_read_stop(&cli->uv.stream))) {
+    return false;
+  }
+
   cli->buf.parsing = cli->buf.size;
 
-  return upd_file_lock_with_dup(&(upd_file_lock_t) {
+  ++cli->refcnt;
+  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
       .file  = cli->io,
       .ex    = true,
       .udata = cli,
       .cb    = cli_lock_for_input_cb_,
     });
+  if (HEDLEY_UNLIKELY(!lock)) {
+    cli_unref_(cli);
+    return false;
+  }
+  return true;
 }
 
 
@@ -319,6 +357,11 @@ static void cli_read_cb_(uv_stream_t* stream, ssize_t n, const uv_buf_t* buf) {
     upd_cli_delete(cli);
     return;
   }
+
+  if (HEDLEY_UNLIKELY(!cli_read_start_(cli))) {
+    upd_cli_delete(cli);
+    return;
+  }
 }
 
 static void cli_lock_for_input_cb_(upd_file_lock_t* lock) {
@@ -346,6 +389,8 @@ static void cli_lock_for_input_cb_(upd_file_lock_t* lock) {
 ABORT:
   upd_file_unlock(lock);
   upd_iso_unstack(cli->iso, lock);
+
+  cli_unref_(cli);
   upd_cli_delete(cli);
 }
 
@@ -371,15 +416,16 @@ static void cli_input_cb_(upd_req_t* req) {
   if (HEDLEY_UNLIKELY(retry)) {
     if (HEDLEY_UNLIKELY(!cli_try_parse_(cli))) {
       upd_cli_delete(cli);
-      return;
     }
   }
+  cli_unref_(cli);
 }
 
 static void cli_watch_cb_(upd_file_watch_t* w) {
   upd_cli_t* cli = w->udata;
 
   if (HEDLEY_LIKELY(w->event == UPD_FILE_UPDATE)) {
+    ++cli->refcnt;
     const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
         .file  = cli->io,
         .ex    = true,
@@ -387,6 +433,7 @@ static void cli_watch_cb_(upd_file_watch_t* w) {
         .cb    = cli_lock_for_output_cb_,
       });
     if (HEDLEY_UNLIKELY(!lock)) {
+      cli_unref_(cli);
       upd_cli_delete(cli);
       return;
     }
@@ -414,6 +461,8 @@ static void cli_lock_for_output_cb_(upd_file_lock_t* lock) {
 ABORT:
   upd_file_unlock(lock);
   upd_iso_unstack(cli->iso, lock);
+
+  cli_unref_(cli);
   upd_cli_delete(cli);
 }
 
@@ -422,38 +471,46 @@ static void cli_output_cb_(upd_req_t* req) {
   upd_cli_t*       cli  = lock->udata;
   upd_iso_t*       iso  = cli->iso;
 
-  const upd_req_stream_io_t* io = &req->stream.io;
+  const upd_req_stream_io_t io = req->stream.io;
+  upd_iso_unstack(iso, req);
 
-  uv_write_t* write = upd_iso_stack(iso, sizeof(*write)+io->size);
-  if (HEDLEY_UNLIKELY(write == NULL)) {
-    upd_cli_delete(cli);
-    goto EXIT;
+  if (HEDLEY_UNLIKELY(!io.size)) {
+    goto ABORT;
   }
-  memcpy(write+1, io->buf, io->size);
 
-  const uv_buf_t buf = uv_buf_init((char*) (write+1), io->size);
+  uv_write_t* write = upd_iso_stack(iso, sizeof(*write)+io.size);
+  if (HEDLEY_UNLIKELY(write == NULL)) {
+    goto ABORT;
+  }
+  memcpy(write+1, io.buf, io.size);
+
+  const uv_buf_t buf = uv_buf_init((char*) (write+1), io.size);
 
   *write = (uv_write_t) { .data = cli, };
   const bool ok = 0 <= uv_write(write, &cli->uv.stream, &buf, 1, cli_write_cb_);
   if (HEDLEY_UNLIKELY(!ok)) {
-    upd_cli_delete(cli);
-    goto EXIT;
+    goto ABORT;
   }
 
-EXIT:
-  upd_iso_unstack(iso, req);
   upd_file_unlock(lock);
-  upd_iso_unstack(iso, lock);
+  upd_iso_unstack(cli->iso, lock);
+  return;
+
+ABORT:
+  upd_file_unlock(lock);
+  upd_iso_unstack(cli->iso, lock);
+  cli_unref_(cli);
+  upd_cli_delete(cli);
 }
 
 static void cli_write_cb_(uv_write_t* req, int status) {
   upd_cli_t* cli = req->data;
-
   upd_iso_unstack(cli->iso, req);
 
   if (HEDLEY_UNLIKELY(status < 0)) {
     upd_cli_delete(cli);
   }
+  cli_unref_(cli);
 }
 
 static void cli_shutdown_cb_(uv_shutdown_t* req, int status) {
