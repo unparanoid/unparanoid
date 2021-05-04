@@ -50,8 +50,12 @@ upd_iso_close_all_conn(
 HEDLEY_NON_NULL(1)
 HEDLEY_WARN_UNUSED_RESULT
 static inline void* upd_iso_stack(upd_iso_t* iso, uint64_t len) {
-  if (HEDLEY_UNLIKELY(iso->stack.used+len > iso->stack.size)) {
-    return NULL;
+  if (HEDLEY_UNLIKELY(iso->stack.used+len > iso->stack.size || len > 1024*4)) {
+    void* ptr = NULL;
+    if (HEDLEY_UNLIKELY(!upd_malloc(&ptr, len))) {
+      return NULL;
+    }
+    return ptr;
   }
 
   void* ret = iso->stack.ptr + iso->stack.used;
@@ -65,8 +69,16 @@ static inline void* upd_iso_stack(upd_iso_t* iso, uint64_t len) {
 HEDLEY_NON_NULL(1)
 static inline void upd_iso_unstack(upd_iso_t* iso, void* ptr) {
   (void) ptr;
-  assert(iso->stack.refcnt);
 
+  void* begin = iso->stack.ptr;
+  void* end   = iso->stack.ptr + iso->stack.size;
+
+  if (HEDLEY_UNLIKELY(ptr < begin || end <= ptr)) {
+    upd_free(&ptr);
+    return;
+  }
+
+  assert(iso->stack.refcnt);
   VALGRIND_FREELIKE_BLOCK(ptr, 0);
   if (--iso->stack.refcnt == 0) {
     iso->stack.used = 0;
