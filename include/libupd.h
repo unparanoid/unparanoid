@@ -250,6 +250,11 @@ typedef struct upd_req_dir_entry_t {
   bool        weakref;
 } upd_req_dir_entry_t;
 
+typedef struct upd_req_dir_entries_t {
+  upd_req_dir_entry_t** p;
+  size_t                n;
+} upd_req_dir_entries_t;
+
 typedef struct upd_req_bin_access_t {
   unsigned read  : 1;
   unsigned write : 1;
@@ -288,8 +293,8 @@ struct upd_req_t {
   union {
     union {
       upd_req_dir_access_t  access;
-      upd_req_dir_entry_t** entries;
       upd_req_dir_entry_t   entry;
+      upd_req_dir_entries_t entries;
     } dir;
     union {
       upd_req_bin_access_t access;

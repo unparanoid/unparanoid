@@ -105,7 +105,10 @@ static bool dir_handle_(upd_req_t* req) {
     break;
 
   case UPD_REQ_DIR_LIST:
-    req->dir.entries = (upd_req_dir_entry_t**) ctx->children.p;
+    req->dir.entries = (upd_req_dir_entries_t) {
+      .n = ctx->children.n,
+      .p = (upd_req_dir_entry_t**) ctx->children.p,
+    };
     break;
 
   case UPD_REQ_DIR_FIND: {
