@@ -46,5 +46,6 @@ typedef struct upd_cli_t upd_cli_t;
 #include "config.h"
 #include "driver.h"
 #include "file.h"
+#include "hash.h"
 #include "req.h"
 #include "srv.h"

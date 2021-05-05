@@ -270,23 +270,26 @@ static void cli_lock_for_add_cb_(upd_file_lock_t* l) {
     goto ABORT;
   }
 
-  uint8_t name[32];
-  const size_t namelen = snprintf(
-    (char*) name, sizeof(name), "%"PRIuPTR, (uintptr_t) cli);
+  upd_req_t* req = upd_iso_stack(cli->iso, sizeof(*req)+UPD_HASH_OUT_SIZE);
+  if (HEDLEY_UNLIKELY(req == NULL)) {
+    goto ABORT;
+  }
+  *req = (upd_req_t) {
+    .file = cli->dir,
+    .type = UPD_REQ_DIR_ADD,
+    .dir  = { .entry = {
+      .file    = cli->io,
+      .name    = (uint8_t*) (req+1),
+      .len     = UPD_HASH_OUT_SIZE,
+      .weakref = true,
+    }, },
+    .udata = l,
+    .cb    = cli_add_cb_,
+  };
+  upd_hash_ptr((uint8_t*) (req+1), cli);
 
-  const bool add = upd_req_with_dup(&(upd_req_t) {
-      .file = cli->dir,
-      .type = UPD_REQ_DIR_ADD,
-      .dir  = { .entry = {
-        .file    = cli->io,
-        .name    = name,
-        .len     = namelen,
-        .weakref = true,
-      }, },
-      .udata = l,
-      .cb    = cli_add_cb_,
-    });
-  if (HEDLEY_UNLIKELY(!add)) {
+  if (HEDLEY_UNLIKELY(!upd_req(req))) {
+    upd_iso_unstack(cli->iso, req);
     goto ABORT;
   }
   return;
