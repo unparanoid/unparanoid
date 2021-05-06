@@ -31,6 +31,7 @@
 
 #include "array.h"
 #include "buf.h"
+#include "map.h"
 
 
 typedef struct upd_srv_t upd_srv_t;
