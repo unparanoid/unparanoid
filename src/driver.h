@@ -35,6 +35,26 @@ static inline const upd_driver_t* upd_driver_lookup(
   return NULL;
 }
 
+HEDLEY_NON_NULL(1)
+static inline const upd_driver_t* upd_driver_select(
+    upd_iso_t*                      iso,
+    const uint8_t*                  path,
+    upd_map_of(const upd_driver_t*) extmap) {
+  size_t      len;
+  const char* ext;
+
+  const bool has_ext = cwk_path_get_extension((char*) path, &ext, &len);
+  if (HEDLEY_UNLIKELY(!has_ext || !len)) {
+    return NULL;
+  }
+  --len;
+  ++ext;
+
+  const upd_driver_t* d =
+    extmap? upd_map_get(&extmap, (uint8_t*) ext, len): NULL;
+  return d? d: upd_map_get(&iso->extmap, (uint8_t*) ext, len);
+}
+
 
 #if defined(UPD_TEST)
 static bool upd_test_driver_null_init_(upd_file_t* f) {
@@ -63,5 +83,8 @@ static void upd_test_driver(void) {
   const upd_driver_t* d =
     upd_driver_lookup(upd_test.iso, dname, utf8size_lazy(dname));
   assert(d == &upd_test_driver_null_);
+
+  assert(upd_map_set(&upd_test.iso->extmap, (uint8_t*) "testest", 7, (void*) d));
+  assert(upd_driver_select(upd_test.iso, (uint8_t*) "hello.testest", NULL) == d);
 }
 #endif

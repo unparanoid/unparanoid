@@ -14,6 +14,8 @@ struct upd_iso_t {
   upd_array_of(upd_srv_t*)          srv;
   upd_array_of(upd_cli_t*)          cli;
 
+  upd_map_of(const upd_driver_t*) extmap;
+
   size_t files_created;
 
   struct {
