@@ -8,6 +8,8 @@ typedef struct upd_file_t_ {
 
   upd_array_of(upd_file_watch_t*) watch;
 
+  uv_fs_poll_t* poll;
+
   struct {
     size_t refcnt;
     bool   ex;
@@ -16,32 +18,24 @@ typedef struct upd_file_t_ {
 } upd_file_t_;
 
 
+HEDLEY_NON_NULL(1)
+upd_file_t*
+upd_file_new_from_npath(
+  upd_iso_t*          iso,
+  const upd_driver_t* driver,
+  const uint8_t*      npath,
+  size_t              len);
+
+HEDLEY_NON_NULL(1)
+void
+upd_file_delete(
+  upd_file_t* f);
+
+
 HEDLEY_NON_NULL(1, 2)
 static inline upd_file_t* upd_file_new(
     upd_iso_t* iso, const upd_driver_t* driver) {
-  upd_file_t_* f = NULL;
-  if (HEDLEY_UNLIKELY(!upd_malloc(&f, sizeof(*f)))) {
-    return NULL;
-  }
-
-  *f = (upd_file_t_) {
-    .super = {
-      .iso    = iso,
-      .driver = driver,
-      .id     = iso->files_created++,
-      .refcnt = 1,
-    },
-  };
-  if (HEDLEY_UNLIKELY(!driver->init(&f->super))) {
-    upd_free(&f);
-    return NULL;
-  }
-
-  if (HEDLEY_UNLIKELY(!upd_array_insert(&iso->files, f, SIZE_MAX))) {
-    upd_free(&f);
-    return NULL;
-  }
-  return &f->super;
+  return upd_file_new_from_npath(iso, driver, NULL, 0);
 }
 
 HEDLEY_NON_NULL(1)
@@ -81,17 +75,7 @@ HEDLEY_NON_NULL(1)
 static inline bool upd_file_unref(upd_file_t* f) {
   assert(f->refcnt);
   if (HEDLEY_UNLIKELY(!--f->refcnt)) {
-    upd_file_t_* f_ = (void*) f;
-
-    upd_array_find_and_remove(&f->iso->files, f);
-    f->driver->deinit(f);
-
-    upd_file_trigger(f, UPD_FILE_DELETE);
-    upd_array_clear(&f_->watch);
-
-    assert(!f_->lock.pending.n);
-
-    upd_free(&f_);
+    upd_file_delete(f);
     return true;
   }
   return false;

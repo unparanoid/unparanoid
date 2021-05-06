@@ -115,13 +115,17 @@ upd_driver_lookup(
 
 enum {
   /* upd_file_event_t */
-  UPD_FILE_DELETE = 0x00,
-  UPD_FILE_UPDATE = 0x01,
+  UPD_FILE_DELETE   = 0x00,
+  UPD_FILE_UPDATE   = 0x01,
+  UPD_FILE_DELETE_N = 0x10,
+  UPD_FILE_UPDATE_N = 0x11,
 };
 
 struct upd_file_t {
   upd_iso_t*          iso;
   const upd_driver_t* driver;
+
+  uint8_t* npath;
 
   upd_file_id_t id;
   uint64_t      refcnt;
