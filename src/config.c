@@ -197,7 +197,7 @@ static void config_parse_server_(upd_config_apply_t* ap, yaml_node_t* node) {
     *pf = (server_pathfind_t_) {
       .super = {
         .iso  = ap->iso,
-        .path = name,
+        .path = (uint8_t*) name,
         .len  = namelen,
         .cb   = config_parse_server_pathfind_cb_,
       },

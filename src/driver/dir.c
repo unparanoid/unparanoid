@@ -113,11 +113,11 @@ static bool dir_handle_(upd_req_t* req) {
 
   case UPD_REQ_DIR_FIND: {
     size_t i;
-    if (HEDLEY_UNLIKELY(!entry_find_(ctx, &i, &req->dir.entry))) {
+    if (HEDLEY_LIKELY(entry_find_(ctx, &i, &req->dir.entry))) {
+      req->dir.entry = *(upd_req_dir_entry_t*) ctx->children.p[i];
+    } else {
       req->dir.entry = (upd_req_dir_entry_t) {0};
-      return false;
     }
-    req->dir.entry = *(upd_req_dir_entry_t*) ctx->children.p[i];
   } break;
 
   case UPD_REQ_DIR_ADD: {

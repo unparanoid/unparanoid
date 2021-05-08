@@ -10,9 +10,11 @@ struct upd_req_pathfind_t {
   upd_iso_t*  iso;
   upd_file_t* base;
 
-  const uint8_t* path;
-  size_t         len;
-  size_t         term;
+  uint8_t* path;
+  size_t   len;
+  size_t   term;
+
+  bool create;
 
   upd_req_t       req;
   upd_file_lock_t lock;
@@ -77,18 +79,18 @@ static inline upd_req_pathfind_t* upd_req_pathfind_with_dup(
 
 #if defined(UPD_TEST)
 static void upd_test_req_pathfind_cb_(upd_req_pathfind_t* pf) {
-  assert(pf->len  == 0);
-  assert(pf->base == pf->udata);
+  assert(pf->len == 0);
   upd_iso_unstack(pf->iso, pf);
 }
 static void upd_test_req(void) {
-  const uint8_t* path_root = (uint8_t*) "/";
+  uint8_t* path_root = (void*) "/hello/world";
   assert(upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
-      .iso   = upd_test.iso,
-      .path  = path_root,
-      .len   = utf8size_lazy(path_root),
-      .udata = upd_file_get(upd_test.iso, UPD_FILE_ID_ROOT),
-      .cb    = upd_test_req_pathfind_cb_,
+      .iso    = upd_test.iso,
+      .path   = path_root,
+      .len    = utf8size_lazy(path_root),
+      .create = true,
+      .udata  = upd_file_get(upd_test.iso, UPD_FILE_ID_ROOT),
+      .cb     = upd_test_req_pathfind_cb_,
     }));
 }
 #endif

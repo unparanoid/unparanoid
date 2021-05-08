@@ -351,7 +351,7 @@ static void stream_add_session_(
   upd_file_ref(ctx->file);
   const bool ok = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
       .iso   = ctx->file->iso,
-      .path  = name,
+      .path  = (uint8_t*) name,
       .len   = utf8nsize_lazy(name, len),
       .udata = ss,
       .cb    = session_find_cb_,
