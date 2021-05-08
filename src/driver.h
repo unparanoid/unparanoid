@@ -4,6 +4,8 @@
 
 
 extern const upd_driver_t upd_driver_dir;
+extern const upd_driver_t upd_driver_syncdir;
+
 extern const upd_driver_t upd_driver_program_http;
 extern const upd_driver_t upd_driver_program_parallelism;
 

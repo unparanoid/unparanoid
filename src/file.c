@@ -45,7 +45,7 @@ upd_file_t* upd_file_new_from_npath(
       upd_free(&f);
       return NULL;
     }
-    if (HEDLEY_UNLIKELY(!uv_fs_poll_init(&iso->loop, f->poll))) {
+    if (HEDLEY_UNLIKELY(0 > uv_fs_poll_init(&iso->loop, f->poll))) {
       upd_free(&f->poll);
       upd_free(&f);
       return NULL;
@@ -63,6 +63,11 @@ upd_file_t* upd_file_new_from_npath(
 
   if (HEDLEY_UNLIKELY(!driver->init(&f->super))) {
     uv_close((uv_handle_t*) &f->poll, file_poll_close_cb_);
+
+    /* driver->init could add new watcher */
+    upd_file_trigger(&f->super, UPD_FILE_DELETE);
+    upd_array_clear(&f->watch);
+
     upd_free(&f);
     return NULL;
   }
