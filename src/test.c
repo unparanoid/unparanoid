@@ -19,6 +19,7 @@ static const test_t_ tests_[] = {
   { "memory", upd_test_memory, },
   { "driver", upd_test_driver, },
   { "file",   upd_test_file, },
+  { "path",   upd_test_path, },
   { "req",    upd_test_req, },
   { "srv",    upd_test_srv, },
 };

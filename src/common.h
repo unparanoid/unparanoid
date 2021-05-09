@@ -24,14 +24,12 @@
 #undef UPD_DECL_FUNC
 
 
-#define UPD_PATH_MAX 256
-
-
 #include "memory.h"
 
 #include "array.h"
 #include "buf.h"
 #include "map.h"
+#include "path.h"
 
 
 typedef struct upd_srv_t upd_srv_t;
