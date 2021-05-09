@@ -282,6 +282,7 @@ static void config_parse_sync_(upd_config_apply_t* ap, yaml_node_t* node) {
 
     const uint8_t* name    = key->data.scalar.value;
     const size_t   namelen = key->data.scalar.length;
+    const size_t   dirlen  = upd_path_dirname((uint8_t*) name, namelen);
 
     if (HEDLEY_UNLIKELY(!val || val->type != YAML_SCALAR_NODE)) {
       upd_iso_msgf(ap->iso,
@@ -293,10 +294,6 @@ static void config_parse_sync_(upd_config_apply_t* ap, yaml_node_t* node) {
 
     const uint8_t* value    = val->data.scalar.value;
     const size_t   valuelen = val->data.scalar.length;
-
-    size_t dirlen = namelen;
-    while (dirlen && name[--dirlen] == '/');
-    while (dirlen && name[--dirlen] != '/');
 
     task_t_* task = upd_iso_stack(ap->iso, sizeof(*task));
     if (HEDLEY_UNLIKELY(task == NULL)) {
