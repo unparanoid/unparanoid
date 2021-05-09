@@ -54,11 +54,8 @@ target_sources(libupd
     src/common.h
     src/config.c
     src/config.h
+    src/driver.c
     src/driver.h
-    src/driver/dir.c
-    src/driver/program/http.c
-    src/driver/program/parallelism.c
-    src/driver/syncdir.c
     src/file.c
     src/file.h
     src/hash.h
@@ -69,6 +66,14 @@ target_sources(libupd
     src/req.h
     src/srv.c
     src/srv.h
+
+    src/driver/dir.c
+    src/driver/syncdir.c
+
+    src/driver/dev/duktape.c
+
+    src/driver/program/http.c
+    src/driver/program/parallelism.c
 )
 target_link_libraries(libupd
   PUBLIC

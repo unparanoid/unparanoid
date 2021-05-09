@@ -14,8 +14,16 @@ typedef struct upd_driver_rule_t {
 extern const upd_driver_t upd_driver_dir;
 extern const upd_driver_t upd_driver_syncdir;
 
+extern const upd_driver_t upd_driver_dev_duktape;
+
 extern const upd_driver_t upd_driver_program_http;
 extern const upd_driver_t upd_driver_program_parallelism;
+
+
+HEDLEY_NON_NULL(1)
+void
+upd_driver_setup_iso(
+  upd_iso_t* iso);
 
 
 /* Callee takes the ownership. */

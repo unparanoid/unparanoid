@@ -13,8 +13,9 @@ static const struct {
   const char* name;
   uint64_t    id;
 } root_dirs_[] = {
-  { "prog", UPD_FILE_ID_PROG, },
+  { "dev",  UPD_FILE_ID_DEV,  },
   { "io",   UPD_FILE_ID_IO,   },
+  { "prog", UPD_FILE_ID_PROG, },
 };
 
 
@@ -172,6 +173,8 @@ static bool iso_get_paths_(upd_iso_t* iso) {
 static void iso_setup_unref_(setup_t_* setup) {
   if (HEDLEY_UNLIKELY(--setup->refcnt == 0)) {
     upd_file_unlock(&setup->lock);
+
+    upd_driver_setup_iso(setup->iso);
     upd_iso_unstack(setup->iso, setup);
   }
 }
