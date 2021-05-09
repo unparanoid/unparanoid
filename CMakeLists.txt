@@ -62,7 +62,6 @@ target_sources(libupd
     src/file.h
     src/hash.h
     src/iso.c
-    src/map.h
     src/memory.h
     src/path.h
     src/req.c
