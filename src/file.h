@@ -32,6 +32,15 @@ upd_file_delete(
   upd_file_t* f);
 
 
+HEDLEY_NON_NULL(1, 2, 3)
+bool
+upd_file_normalize_npath(
+  upd_iso_t*     iso,
+  uint8_t**      dst,
+  size_t*        len,
+  const uint8_t* src);
+
+
 HEDLEY_NON_NULL(1, 2)
 static inline upd_file_t* upd_file_new(
     upd_iso_t* iso, const upd_driver_t* driver) {
