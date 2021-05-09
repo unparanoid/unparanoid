@@ -62,7 +62,9 @@ upd_file_t* upd_file_new_from_npath(
   }
 
   if (HEDLEY_UNLIKELY(!driver->init(&f->super))) {
-    uv_close((uv_handle_t*) &f->poll, file_poll_close_cb_);
+    if (f->super.npath) {
+      uv_close((uv_handle_t*) &f->poll, file_poll_close_cb_);
+    }
 
     /* driver->init could add new watcher */
     upd_file_trigger(&f->super, UPD_FILE_DELETE);
