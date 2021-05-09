@@ -122,8 +122,9 @@ static bool dir_handle_(upd_req_t* req) {
 
   case UPD_REQ_DIR_ADD: {
     upd_req_dir_entry_t* re = &req->dir.entry;
-
-    /* TODO: validate the filename */
+    if (HEDLEY_UNLIKELY(!upd_path_validate_name(re->name, re->len))) {
+      return false;
+    }
 
     size_t i;
     const bool duplicated =
