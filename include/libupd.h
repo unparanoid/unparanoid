@@ -210,7 +210,7 @@ upd_file_unlock(
 #define UPD_REQ_CAT_EACH(f)  \
   f(0x0000, DIR)  \
   f(0x0001, BIN)  \
-  f(0x0002, PROGRAM)  \
+  f(0x0002, PROG)  \
   f(0x0003, STREAM)
 
 #define UPD_REQ_TYPE_EACH(f)  \
@@ -224,8 +224,8 @@ upd_file_unlock(
   f(BIN, 0x0001, READ)  \
   f(BIN, 0x0002, WRITE)  \
 \
-  f(PROGRAM, 0x0000, ACCESS)  \
-  f(PROGRAM, 0x0010, EXEC)  \
+  f(PROG, 0x0000, ACCESS)  \
+  f(PROG, 0x0010, EXEC)  \
 \
   f(STREAM, 0x0000, ACCESS)  \
   f(STREAM, 0x0010, INPUT)  \
@@ -271,9 +271,9 @@ typedef struct upd_req_bin_rw_t {
   uint8_t* buf;
 } upd_req_bin_rw_t;
 
-typedef struct upd_req_program_access_t {
+typedef struct upd_req_prog_access_t {
   unsigned exec : 1;
-} upd_req_program_access_t;
+} upd_req_prog_access_t;
 
 typedef struct upd_req_stream_access_t {
   unsigned input  : 1;
@@ -306,9 +306,9 @@ struct upd_req_t {
       upd_req_bin_rw_t     rw;
     } bin;
     union {
-      upd_req_program_access_t access;
-      upd_file_t*              exec;
-    } program;
+      upd_req_prog_access_t access;
+      upd_file_t*           exec;
+    } prog;
     union {
       upd_req_stream_access_t access;
       upd_req_stream_io_t     io;

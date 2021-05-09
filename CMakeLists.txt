@@ -72,8 +72,8 @@ target_sources(libupd
 
     src/driver/dev/duktape.c
 
-    src/driver/program/http.c
-    src/driver/program/parallelism.c
+    src/driver/prog/http.c
+    src/driver/prog/parallelism.c
 )
 target_link_libraries(libupd
   PUBLIC

@@ -209,7 +209,7 @@ static void cli_lock_for_exec_cb_(upd_file_lock_t* l) {
 
   const bool exec = upd_req_with_dup(&(upd_req_t) {
       .file  = cli->prog,
-      .type  = UPD_REQ_PROGRAM_EXEC,
+      .type  = UPD_REQ_PROG_EXEC,
       .udata = l,
       .cb    = cli_exec_cb_,
     });
@@ -229,7 +229,7 @@ static void cli_exec_cb_(upd_req_t* req) {
   upd_file_lock_t* lock = req->udata;
   upd_cli_t*       cli  = lock->udata;
 
-  cli->io = req->program.exec;
+  cli->io = req->prog.exec;
   upd_iso_unstack(iso, req);
 
   upd_file_unlock(lock);

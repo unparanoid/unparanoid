@@ -237,7 +237,7 @@ static void iso_setup_lock_cb_(upd_file_lock_t* lock) {
   upd_file_t* prog = upd_file_get(iso, UPD_FILE_ID_PROG);
 # define install_(name) do {  \
     const bool ok = iso_setup_install_(  \
-      setup, prog, &upd_driver_program_##name, "upd."#name);  \
+      setup, prog, &upd_driver_prog_##name, "upd."#name);  \
     if (HEDLEY_UNLIKELY(!ok)) {  \
       upd_iso_msgf(iso, "failed to install program, 'upd."#name"'\n");  \
       goto EXIT;  \

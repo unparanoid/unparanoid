@@ -30,9 +30,9 @@ upd_srv_delete(
 
 #if defined(UPD_TEST)
 static void upd_test_srv(void) {
-  upd_file_t* parallelism = upd_file_new(upd_test.iso, &upd_driver_program_parallelism);
+  upd_file_t* parallelism = upd_file_new(upd_test.iso, &upd_driver_prog_parallelism);
   assert(parallelism);
-  upd_file_t* http = upd_file_new(upd_test.iso, &upd_driver_program_http);
+  upd_file_t* http = upd_file_new(upd_test.iso, &upd_driver_prog_http);
   assert(http);
 
   assert(upd_srv_new_tcp(

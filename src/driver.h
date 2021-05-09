@@ -16,8 +16,8 @@ extern const upd_driver_t upd_driver_syncdir;
 
 extern const upd_driver_t upd_driver_dev_duktape;
 
-extern const upd_driver_t upd_driver_program_http;
-extern const upd_driver_t upd_driver_program_parallelism;
+extern const upd_driver_t upd_driver_prog_http;
+extern const upd_driver_t upd_driver_prog_parallelism;
 
 
 HEDLEY_NON_NULL(1)

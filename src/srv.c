@@ -109,7 +109,7 @@ static void srv_lock_for_access_cb_(upd_file_lock_t* lock) {
 
   const bool access = upd_req_with_dup(&(upd_req_t) {
       .file  = srv->prog,
-      .type  = UPD_REQ_PROGRAM_ACCESS,
+      .type  = UPD_REQ_PROG_ACCESS,
       .cb    = srv_access_cb_,
       .udata = lock,
     });
@@ -129,7 +129,7 @@ static void srv_access_cb_(upd_req_t* req) {
   upd_file_lock_t* lock = req->udata;
   upd_srv_t*       srv  = lock->udata;
 
-  const bool executable = req->program.access.exec;
+  const bool executable = req->prog.access.exec;
   upd_iso_unstack(srv->iso, req);
 
   upd_file_unlock(lock);

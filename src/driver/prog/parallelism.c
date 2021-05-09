@@ -50,10 +50,10 @@ bool
 prog_handle_(
   upd_req_t* req);
 
-const upd_driver_t upd_driver_program_parallelism = {
-  .name = (uint8_t*) "upd.program.parallelism",
+const upd_driver_t upd_driver_prog_parallelism = {
+  .name = (uint8_t*) "upd.prog.parallelism",
   .cats = (upd_req_cat_t[]) {
-    UPD_REQ_PROGRAM,
+    UPD_REQ_PROG,
     0,
   },
   .init   = prog_init_,
@@ -78,7 +78,7 @@ stream_handle_(
   upd_req_t* req);
 
 static const upd_driver_t stream_driver_ = {
-  .name = (uint8_t*) "upd.program.parallelism.stream",
+  .name = (uint8_t*) "upd.prog.parallelism.stream",
   .cats = (upd_req_cat_t[]) {
     UPD_REQ_STREAM,
     0,
@@ -183,17 +183,17 @@ static bool prog_handle_(upd_req_t* req) {
   upd_iso_t* iso = req->file->iso;
 
   switch (req->type) {
-  case UPD_REQ_PROGRAM_ACCESS:
-    req->program.access = (upd_req_program_access_t) {
+  case UPD_REQ_PROG_ACCESS:
+    req->prog.access = (upd_req_prog_access_t) {
       .exec = true,
     };
     break;
-  case UPD_REQ_PROGRAM_EXEC: {
+  case UPD_REQ_PROG_EXEC: {
     upd_file_t* f = upd_file_new(iso, &stream_driver_);
     if (HEDLEY_UNLIKELY(f == NULL)) {
       return false;
     }
-    req->program.exec = f;
+    req->prog.exec = f;
   } break;
   default:
     return false;
@@ -451,7 +451,7 @@ static void session_lock_for_exec_cb_(upd_file_lock_t* lock) {
 
   const bool exec = upd_req_with_dup(&(upd_req_t) {
       .file  = ss->prog,
-      .type  = UPD_REQ_PROGRAM_EXEC,
+      .type  = UPD_REQ_PROG_EXEC,
       .udata = lock,
       .cb    = session_exec_cb_,
     });
@@ -477,7 +477,7 @@ static void session_exec_cb_(upd_req_t* req) {
   upd_file_unlock(lock);
   upd_iso_unstack(ctx->file->iso, lock);
 
-  ss->io = req->program.exec;
+  ss->io = req->prog.exec;
   upd_iso_unstack(ctx->file->iso, req);
 
   if (HEDLEY_UNLIKELY(ss->io == NULL)) {
