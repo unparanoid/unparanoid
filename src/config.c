@@ -24,6 +24,8 @@ typedef struct task_t_ {
 
       const uint8_t* npath;
       size_t         nlen;
+
+      yaml_node_t* rules;
     } sync;
   };
 } task_t_;
@@ -284,16 +286,13 @@ static void config_parse_sync_(upd_config_apply_t* ap, yaml_node_t* node) {
     const size_t   namelen = key->data.scalar.length;
     const size_t   dirlen  = upd_path_dirname((uint8_t*) name, namelen);
 
-    if (HEDLEY_UNLIKELY(!val || val->type != YAML_SCALAR_NODE)) {
+    if (HEDLEY_UNLIKELY(!val || val->type != YAML_MAPPING_NODE)) {
       upd_iso_msgf(ap->iso,
-        "scalar expected for value of '%.*s': %s (%zu:%zu)\n",
+        "mapping expected for value of '%.*s': %s (%zu:%zu)\n",
         (int) namelen, name,
         ap->path, node->start_mark.line, node->start_mark.column);
       continue;
     }
-
-    const uint8_t* value    = val->data.scalar.value;
-    const size_t   valuelen = val->data.scalar.length;
 
     task_t_* task = upd_iso_stack(ap->iso, sizeof(*task));
     if (HEDLEY_UNLIKELY(task == NULL)) {
@@ -309,10 +308,61 @@ static void config_parse_sync_(upd_config_apply_t* ap, yaml_node_t* node) {
         .upath   = name,
         .ulen    = namelen,
         .uoffset = dirlen,
-        .npath   = value,
-        .nlen    = valuelen,
       },
     };
+
+    yaml_node_pair_t* itr = val->data.mapping.pairs.start;
+    yaml_node_pair_t* end = val->data.mapping.pairs.top;
+    for (; itr < end; ++itr) {
+      yaml_node_t* key = yaml_document_get_node(&ap->doc, itr->key);
+      yaml_node_t* val = yaml_document_get_node(&ap->doc, itr->value);
+      if (HEDLEY_UNLIKELY(!key || key->type != YAML_SCALAR_NODE)) {
+        upd_iso_msgf(ap->iso, "yaml fatal error: %s (%zu:%zu)\n",
+          ap->path, node->start_mark.line, node->start_mark.column);
+        continue;
+      }
+
+      const uint8_t* name    = key->data.scalar.value;
+      const size_t   namelen = key->data.scalar.length;
+
+#     define nameq_(v) (utf8ncmp(name, v, namelen) == 0 && v[namelen] == 0)
+
+      if (nameq_("npath")) {
+        if (HEDLEY_UNLIKELY(!val || val->type != YAML_SCALAR_NODE)) {
+          upd_iso_msgf(ap->iso,
+            "scalar expected for 'npath' field: %s (%zu:%zu)\n",
+            ap->path, node->start_mark.line, node->start_mark.column);
+          continue;
+        }
+        task->sync.npath = val->data.scalar.value;
+        task->sync.nlen  = val->data.scalar.length;
+
+      } else if (nameq_("rules")) {
+        if (HEDLEY_UNLIKELY(!val || val->type != YAML_MAPPING_NODE)) {
+          upd_iso_msgf(ap->iso,
+            "mapping expected for 'npath' field: %s (%zu:%zu)\n",
+            ap->path, node->start_mark.line, node->start_mark.column);
+          continue;
+        }
+        task->sync.rules = val;
+
+      } else {
+        upd_iso_msgf(ap->iso, "unknown field '%.*s': %s (%zu:%zu)\n",
+          (int) namelen, name,
+          ap->path, node->start_mark.line, node->start_mark.column);
+        continue;
+      }
+
+#     undef nameq_
+    }
+
+    if (HEDLEY_UNLIKELY(task->sync.nlen == 0 || task->sync.rules == NULL)) {
+      upd_iso_unstack(ap->iso, task);
+      upd_iso_msgf(ap->iso,
+        "requires 'npath' and 'rules' field: %s (%zu:%zu)\n",
+        ap->path, node->start_mark.line, node->start_mark.column);
+      continue;
+    }
 
     ++ap->refcnt;
     const bool pf = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
@@ -418,6 +468,63 @@ static void config_parse_sync_lock_for_add_cb_(upd_file_lock_t* lock) {
       ap->path, node->start_mark.line, node->start_mark.column);
     goto ABORT;
   }
+
+  upd_array_of(upd_driver_rule_t*) rules = {0};
+
+  yaml_node_pair_t* itr = task->sync.rules->data.mapping.pairs.start;
+  yaml_node_pair_t* end = task->sync.rules->data.mapping.pairs.top;
+  for (; itr < end; ++itr) {
+    yaml_node_t* key = yaml_document_get_node(&ap->doc, itr->key);
+    yaml_node_t* val = yaml_document_get_node(&ap->doc, itr->value);
+
+    if (HEDLEY_UNLIKELY(!key || key->type != YAML_SCALAR_NODE)) {
+      upd_iso_msgf(ap->iso, "yaml fatal error: %s (%zu:%zu)\n",
+        ap->path, node->start_mark.line, node->start_mark.column);
+      continue;
+    }
+    if (HEDLEY_UNLIKELY(!val || val->type != YAML_SCALAR_NODE)) {
+      upd_iso_msgf(ap->iso,
+        "scalar expected for driver name: %s (%zu:%zu)\n",
+        ap->path, key->start_mark.line, key->start_mark.column);
+      continue;
+    }
+
+    const upd_driver_t* driver = upd_driver_lookup(
+      ap->iso, val->data.scalar.value, val->data.scalar.length);
+    if (HEDLEY_UNLIKELY(driver == NULL)) {
+      upd_iso_msgf(ap->iso,
+        "unknown driver '%.*s': %s (%zu:%zu)\n",
+        (int) val->data.scalar.length, val->data.scalar.value,
+        ap->path, key->start_mark.line, key->start_mark.column);
+      continue;
+    }
+
+    const size_t tail = key->data.scalar.length + 1;
+
+    upd_driver_rule_t* r = NULL;
+    if (HEDLEY_UNLIKELY(!upd_malloc(&r, sizeof(*r)+tail))) {
+      upd_iso_msgf(ap->iso,
+        "driver rule allocation failure: %s (%zu:%zu)\n",
+        ap->path, key->start_mark.line, key->start_mark.column);
+      break;
+    }
+    *r = (upd_driver_rule_t) {
+      .ext    = (uint8_t*) (r+1),
+      .len    = key->data.scalar.length,
+      .driver = driver,
+    };
+    utf8ncpy(r->ext, key->data.scalar.value, r->len);
+    r->ext[r->len] = 0;
+
+    if (HEDLEY_UNLIKELY(!upd_array_insert(&rules, r, SIZE_MAX))) {
+      upd_free(&r);
+      upd_iso_msgf(ap->iso,
+        "driver rule insertion failure: %s (%zu:%zu)\n",
+        ap->path, key->start_mark.line, key->start_mark.column);
+      break;
+    }
+  }
+  upd_driver_syncdir_set_rules(f, &rules);  /* ownership moves */
 
   const bool add = upd_req_with_dup(&(upd_req_t) {
       .file = lock->file,

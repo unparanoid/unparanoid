@@ -3,11 +3,27 @@
 #include "common.h"
 
 
+typedef struct upd_driver_rule_t {
+  uint8_t* ext;
+  size_t   len;
+
+  const upd_driver_t* driver;
+} upd_driver_rule_t;
+
+
 extern const upd_driver_t upd_driver_dir;
 extern const upd_driver_t upd_driver_syncdir;
 
 extern const upd_driver_t upd_driver_program_http;
 extern const upd_driver_t upd_driver_program_parallelism;
+
+
+/* Callee takes the ownership. */
+HEDLEY_NON_NULL(1)
+void
+upd_driver_syncdir_set_rules(
+  upd_file_t*                             file,
+  const upd_array_of(upd_driver_rule_t*)* rules);
 
 
 HEDLEY_NON_NULL(1, 2)
@@ -39,9 +55,8 @@ static inline const upd_driver_t* upd_driver_lookup(
 
 HEDLEY_NON_NULL(1)
 static inline const upd_driver_t* upd_driver_select(
-    upd_iso_t*                      iso,
-    const uint8_t*                  path,
-    upd_map_of(const upd_driver_t*) extmap) {
+    const upd_array_of(upd_driver_rule_t*)* rules,
+    const uint8_t*                          path) {
   size_t      len;
   const char* ext;
 
@@ -52,9 +67,14 @@ static inline const upd_driver_t* upd_driver_select(
   --len;
   ++ext;
 
-  const upd_driver_t* d =
-    extmap? upd_map_get(&extmap, (uint8_t*) ext, len): NULL;
-  return d? d: upd_map_get(&iso->extmap, (uint8_t*) ext, len);
+  for (size_t i = 0; i < rules->n; ++i) {
+    const upd_driver_rule_t* r = rules->p[i];
+
+    if (HEDLEY_UNLIKELY(r->len == len && utf8ncmp(ext, r->ext, len) == 0)) {
+      return r->driver;
+    }
+  }
+  return NULL;
 }
 
 
@@ -85,8 +105,5 @@ static void upd_test_driver(void) {
   const upd_driver_t* d =
     upd_driver_lookup(upd_test.iso, dname, utf8size_lazy(dname));
   assert(d == &upd_test_driver_null_);
-
-  assert(upd_map_set(&upd_test.iso->extmap, (uint8_t*) "testest", 7, (void*) d));
-  assert(upd_driver_select(upd_test.iso, (uint8_t*) "hello.testest", NULL) == d);
 }
 #endif

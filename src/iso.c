@@ -133,7 +133,6 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   assert(iso->cli.n   == 0);
 
   const upd_iso_status_t ret = iso->status;
-  upd_map_clear(&iso->extmap);
   upd_free(&iso);
   return ret;
 }

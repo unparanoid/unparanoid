@@ -1,8 +1,9 @@
 #include "common.h"
 
 
-typedef struct ctx_t_  ctx_t_;
-typedef struct task_t_ task_t_;
+typedef struct ctx_t_    ctx_t_;
+typedef struct task_t_   task_t_;
+typedef struct drvmap_t_ drvmap_t_;
 
 struct ctx_t_ {
   upd_file_t*      file;
@@ -12,7 +13,8 @@ struct ctx_t_ {
 
   upd_array_of(upd_req_dir_entity_t*) children;
 
-  task_t_* last_task;
+  task_t_*   last_task;
+  drvmap_t_* drvmap;
 };
 
 struct task_t_ {
@@ -25,6 +27,11 @@ struct task_t_ {
   void
   (*cb)(
     task_t_* task);
+};
+
+struct drvmap_t_ {
+  size_t refcnt;
+  upd_array_of(upd_driver_rule_t*) rules;
 };
 
 
@@ -53,6 +60,13 @@ const upd_driver_t upd_driver_syncdir = {
   .deinit = syncdir_deinit_,
   .handle = syncdir_handle_,
 };
+
+
+static
+void
+syncdir_inherit_drvmap_(
+  ctx_t_*    ctx,
+  drvmap_t_* drvmap);
 
 
 static
@@ -104,17 +118,6 @@ static bool syncdir_init_(upd_file_t* file) {
     return false;
   }
   file->ctx = ctx;
-
-  const bool sync = task_queue_with_dup_(&(task_t_) {
-      .ctx = ctx,
-      .cb  = task_sync_n2u_cb_,
-    });
-  if (HEDLEY_UNLIKELY(!sync)) {
-    file->ctx = NULL;
-    upd_free(&ctx);
-    return false;
-  }
-
   return true;
 }
 
@@ -126,6 +129,17 @@ static void syncdir_deinit_(upd_file_t* file) {
     upd_free(&e);
   }
   upd_array_clear(&ctx->children);
+
+  if (HEDLEY_LIKELY(ctx->drvmap)) {
+    if (HEDLEY_UNLIKELY(--ctx->drvmap->refcnt == 0)) {
+      for (size_t i = 0; i < ctx->drvmap->rules.n; ++i) {
+        upd_free(&ctx->drvmap->rules.p[i]);
+      }
+      upd_array_clear(&ctx->drvmap->rules);
+      upd_free(&ctx->drvmap);
+    }
+  }
+
   upd_free(&ctx);
 }
 
@@ -167,6 +181,45 @@ static bool syncdir_handle_(upd_req_t* req) {
 FINALIZE:
   req->cb(req);
   return true;
+}
+
+
+void upd_driver_syncdir_set_rules(
+    upd_file_t* file, const upd_array_of(upd_driver_rule_t*)* rules) {
+  assert(file->driver == &upd_driver_syncdir);
+
+  ctx_t_* ctx = file->ctx;
+  assert(ctx->drvmap == NULL);
+
+  if (HEDLEY_UNLIKELY(!upd_malloc(&ctx->drvmap, sizeof(*ctx->drvmap)))) {
+    return;
+  }
+  *ctx->drvmap = (drvmap_t_) {
+    .refcnt = 1,
+    .rules  = *rules,
+  };
+  task_queue_with_dup_(&(task_t_) {
+      .ctx = ctx,
+      .cb  = task_sync_n2u_cb_,
+    });
+}
+
+static void syncdir_inherit_drvmap_(ctx_t_* ctx, drvmap_t_* drvmap) {
+  if (HEDLEY_UNLIKELY(drvmap == NULL)) {
+    return;
+  }
+
+  ++drvmap->refcnt;
+  ctx->drvmap = drvmap;
+
+  const bool sync = task_queue_with_dup_(&(task_t_) {
+      .ctx = ctx,
+      .cb  = task_sync_n2u_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!sync)) {
+    --drvmap->refcnt;
+    return;
+  }
 }
 
 
@@ -226,10 +279,13 @@ static bool task_unref_(task_t_* task) {
 static void task_sync_n2u_cb_(task_t_* task) {
   ctx_t_* ctx = task->ctx;
 
+  if (HEDLEY_UNLIKELY(ctx->drvmap == NULL)) {
+    goto ABORT;
+  }
+
   uv_fs_t* fsreq = upd_iso_stack(ctx->file->iso, sizeof(*fsreq));
   if (HEDLEY_UNLIKELY(fsreq == NULL)) {
-    task_unref_(task);
-    return;
+    goto ABORT;
   }
   *fsreq = (uv_fs_t) { .data = task, };
 
@@ -238,9 +294,12 @@ static void task_sync_n2u_cb_(task_t_* task) {
     loop, fsreq, (char*) ctx->file->npath, 0, task_sync_n2u_scandir_cb_);
   if (HEDLEY_UNLIKELY(!scandir)) {
     upd_iso_unstack(ctx->file->iso, fsreq);
-    task_unref_(task);
-    return;
+    goto ABORT;
   }
+  return;
+
+ABORT:
+  task_unref_(task);
 }
 
 static void task_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
@@ -299,7 +358,7 @@ static void task_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
 
       const upd_driver_t* d =
         dir? &upd_driver_syncdir:
-        upd_driver_select(ctx->file->iso, (uint8_t*) path, NULL);
+        upd_driver_select(&ctx->drvmap->rules, (uint8_t*) path);
       if (HEDLEY_UNLIKELY(d == NULL)) {
         upd_iso_msgf(ctx->file->iso, "no suitable driver found for '%s'\n", path);
         upd_iso_unstack(ctx->file->iso, path);
@@ -310,6 +369,9 @@ static void task_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
       upd_iso_unstack(ctx->file->iso, path);
       if (HEDLEY_UNLIKELY(f == NULL)) {
         continue;
+      }
+      if (dir) {
+        syncdir_inherit_drvmap_(f->ctx, ctx->drvmap);
       }
 
       const size_t         len = utf8size_lazy(ne.name);
