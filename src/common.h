@@ -9,6 +9,7 @@
 
 #include <base64.h>
 #include <cwalk.h>
+#include <duktape.h>
 #include <hedley.h>
 #include <picohttpparser.h>
 #include <sha1.h>

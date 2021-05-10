@@ -8,8 +8,9 @@ include(CTest)
 include(TestBigEndian)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(UV   REQUIRED IMPORTED_TARGET libuv)
-pkg_check_modules(YAML REQUIRED IMPORTED_TARGET yaml-0.1)
+pkg_check_modules(DUKTAPE REQUIRED IMPORTED_TARGET duktape)
+pkg_check_modules(UV      REQUIRED IMPORTED_TARGET libuv)
+pkg_check_modules(YAML    REQUIRED IMPORTED_TARGET yaml-0.1)
 
 pkg_check_modules(VALGRIND valgrind)
 
@@ -75,10 +76,13 @@ target_link_libraries(libupd
     cwalk
     hedley
     picohttpparser
+    PkgConfig::DUKTAPE
     PkgConfig::UV
     PkgConfig::YAML
     utf8.h
     wsock.h
+
+    m
 )
 
 
