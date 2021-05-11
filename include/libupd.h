@@ -110,9 +110,6 @@ upd_driver_lookup(
  * ---- FILE INTERFACE ----
  */
 #define UPD_FILE_ID_ROOT 0
-#define UPD_FILE_ID_DEV  1
-#define UPD_FILE_ID_IO   2
-#define UPD_FILE_ID_PROG 3
 
 enum {
   /* upd_file_event_t */

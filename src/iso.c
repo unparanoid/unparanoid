@@ -1,53 +1,28 @@
 #include "common.h"
 
 
-typedef struct setup_t_ {
-  upd_file_lock_t lock;
-
-  upd_iso_t* iso;
-  size_t     refcnt;
-} setup_t_;
-
-
-static const struct {
-  const char* name;
-  uint64_t    id;
-} root_dirs_[] = {
-  { "dev",  UPD_FILE_ID_DEV,  },
-  { "io",   UPD_FILE_ID_IO,   },
-  { "prog", UPD_FILE_ID_PROG, },
-};
-
-
 static
 bool
 iso_get_paths_(
   upd_iso_t* iso);
 
-
 static
 void
-iso_setup_unref_(
-  setup_t_* setup);
-
-static
-upd_file_t*
-iso_setup_install_(
-  setup_t_*           setup,
-  upd_file_t*         parent,
-  const upd_driver_t* drv,
-  const char*         name);
+iso_create_dir_(
+  upd_iso_t*  iso,
+  const char* path);
 
 
 static
 void
-iso_setup_lock_cb_(
-  upd_file_lock_t* lock);
+iso_create_dir_cb_(
+  upd_req_pathfind_t* pf);
 
 static
 void
-iso_setup_install_cb_(
-  upd_req_t* req);
+iso_finalize_walk_cb_(
+  uv_handle_t* handle,
+  void*        udata);
 
 
 upd_iso_t* upd_iso_new(size_t stacksz) {
@@ -65,15 +40,11 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     },
   };
 
-  if (HEDLEY_UNLIKELY(!iso_get_paths_(iso))) {
-    return NULL;
-  }
-
-  if (HEDLEY_UNLIKELY(0 > uv_loop_init(&iso->loop))) {
-    return NULL;
-  }
-
-  if (HEDLEY_UNLIKELY(0 > uv_tty_init(&iso->loop, &iso->out, 1, 0))) {
+  const bool ok =
+    iso_get_paths_(iso) &&
+    0 <= uv_loop_init(&iso->loop) &&
+    0 <= uv_tty_init(&iso->loop, &iso->out, 1, 0);
+  if (HEDLEY_UNLIKELY(!ok)) {
     return NULL;
   }
 
@@ -83,38 +54,20 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
   }
   assert(root->id == UPD_FILE_ID_ROOT);
 
-  setup_t_* setup = upd_iso_stack(iso, sizeof(*setup));
-  if (HEDLEY_UNLIKELY(setup == NULL)) {
-    return NULL;
-  }
+  iso_create_dir_(iso, "/sys");
+  iso_create_dir_(iso, "/var");
 
-  *setup = (setup_t_) {
-    .lock = {
-      .file = root,
-      .ex   = true,
-      .cb   = iso_setup_lock_cb_,
-    },
-    .iso = iso,
-  };
-  if (HEDLEY_UNLIKELY(!upd_file_lock(&setup->lock))) {
-    return NULL;
-  }
+  upd_driver_setup(iso);
   return iso;
 }
 
-static void iso_run_walk_cb_(uv_handle_t* handle, void* udata) {
-  (void) udata;
-  if (HEDLEY_LIKELY(!uv_is_closing(handle))) {
-    uv_close(handle, NULL);
-  }
-}
 upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
 
   upd_iso_close_all_conn(iso);
-  uv_walk(&iso->loop, iso_run_walk_cb_, NULL);
+  uv_walk(&iso->loop, iso_finalize_walk_cb_, NULL);
 
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
@@ -170,88 +123,37 @@ static bool iso_get_paths_(upd_iso_t* iso) {
 }
 
 
-static void iso_setup_unref_(setup_t_* setup) {
-  if (HEDLEY_UNLIKELY(--setup->refcnt == 0)) {
-    upd_file_unlock(&setup->lock);
-
-    upd_driver_setup_iso(setup->iso);
-    upd_iso_unstack(setup->iso, setup);
-  }
-}
-
-static upd_file_t* iso_setup_install_(
-    setup_t_*           setup,
-    upd_file_t*         parent,
-    const upd_driver_t* drv,
-    const char*         name) {
-  upd_file_t* f = upd_file_new(setup->iso, drv);
-  if (HEDLEY_UNLIKELY(f == NULL)) {
-    return NULL;
-  }
-  ++setup->refcnt;
-  const bool add = upd_req_with_dup(&(upd_req_t) {
-      .file = parent,
-      .type = UPD_REQ_DIR_ADD,
-      .dir  = { .entry = {
-        .file = f,
-        .name = (uint8_t*) name,
-        .len  = utf8size_lazy(name),
-      }, },
-      .udata = setup,
-      .cb    = iso_setup_install_cb_,
+static void iso_create_dir_(upd_iso_t* iso, const char* path) {
+  const bool ok = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
+      .iso    = iso,
+      .path   = (uint8_t*) path,
+      .len    = utf8size_lazy(path),
+      .create = true,
+      .cb     = iso_create_dir_cb_,
     });
-  if (HEDLEY_UNLIKELY(!add)) {
-    iso_setup_unref_(setup);
-    upd_file_unref(f);
-    return NULL;
-  }
-  return f;
-}
-
-
-static void iso_setup_lock_cb_(upd_file_lock_t* lock) {
-  setup_t_*  setup = (void*) lock;
-  upd_iso_t* iso   = setup->iso;
-
-  if (HEDLEY_UNLIKELY(!lock->ok)) {
-    upd_iso_msgf(iso, "cannot setup iso since failure of acquiring lock\n");
+  if (HEDLEY_UNLIKELY(!ok)) {
+    upd_iso_msgf(iso,
+      "allocation failure on pathfind request of '%s', while iso setup\n", path);
     return;
   }
-
-  assert(iso->files.n);
-  upd_file_t* root = upd_file_get(iso, UPD_FILE_ID_ROOT);
-
-  ++setup->refcnt;
-
-  /* create system dirs */
-  for (size_t i = 0; i < sizeof(root_dirs_)/sizeof(root_dirs_[0]); ++i) {
-    upd_file_t* f =
-      iso_setup_install_(setup, root, &upd_driver_dir, root_dirs_[i].name);
-    if (HEDLEY_UNLIKELY(!f || f->id != root_dirs_[i].id)) {
-      upd_iso_msgf(iso, "failed to create %s dir\n", root_dirs_[i].name);
-      goto EXIT;
-    }
-  }
-
-  /* put builtin programs in prog dir */
-  upd_file_t* prog = upd_file_get(iso, UPD_FILE_ID_PROG);
-# define install_(name) do {  \
-    const bool ok = iso_setup_install_(  \
-      setup, prog, &upd_driver_prog_##name, "upd."#name);  \
-    if (HEDLEY_UNLIKELY(!ok)) {  \
-      upd_iso_msgf(iso, "failed to install program, 'upd."#name"'\n");  \
-      goto EXIT;  \
-    }  \
-  } while (0)
-  install_(http);
-  install_(parallelism);
-# undef install_
-
-EXIT:
-  iso_setup_unref_(setup);
 }
-static void iso_setup_install_cb_(upd_req_t* req) {
-  upd_file_unref(req->dir.entry.file);
-  iso_setup_unref_(req->udata);
-  upd_iso_unstack(req->file->iso, req);
+
+
+static void iso_create_dir_cb_(upd_req_pathfind_t* pf) {
+  upd_iso_t* iso = pf->base->iso;
+
+  const upd_file_t* f = pf->len? NULL: pf->base;
+  upd_iso_unstack(iso, pf);
+
+  if (HEDLEY_UNLIKELY(f == NULL)) {
+    upd_iso_msgf(iso, "dir creation failure, while iso setup\n");
+    return;
+  }
+}
+
+static void iso_finalize_walk_cb_(uv_handle_t* handle, void* udata) {
+  (void) udata;
+  if (HEDLEY_LIKELY(!uv_is_closing(handle))) {
+    uv_close(handle, NULL);
+  }
 }

@@ -22,7 +22,7 @@ extern const upd_driver_t upd_driver_prog_parallelism;
 
 HEDLEY_NON_NULL(1)
 void
-upd_driver_setup_iso(
+upd_driver_setup(
   upd_iso_t* iso);
 
 
