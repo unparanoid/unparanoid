@@ -83,5 +83,6 @@ static uintmax_t get_wait_time_(void) {
 
 static void timer_cb_(uv_timer_t* timer) {
   (void) timer;
+  uv_close((uv_handle_t*) timer, NULL);
   upd_iso_exit(upd_test.iso, UPD_ISO_SHUTDOWN);
 }

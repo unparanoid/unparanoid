@@ -18,12 +18,6 @@ void
 iso_create_dir_cb_(
   upd_req_pathfind_t* pf);
 
-static
-void
-iso_finalize_walk_cb_(
-  uv_handle_t* handle,
-  void*        udata);
-
 
 upd_iso_t* upd_iso_new(size_t stacksz) {
   /*  It's unnecessary to clean up resources in aborted,
@@ -55,7 +49,8 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
   assert(root->id == UPD_FILE_ID_ROOT);
 
   iso_create_dir_(iso, "/sys");
-  iso_create_dir_(iso, "/var");
+  iso_create_dir_(iso, "/var/srv");
+  iso_create_dir_(iso, "/var/cli");
 
   upd_driver_setup(iso);
   return iso;
@@ -66,25 +61,35 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
     return UPD_ISO_PANIC;
   }
 
+  /* shutdown all sockets */
   upd_iso_close_all_conn(iso);
-  uv_walk(&iso->loop, iso_finalize_walk_cb_, NULL);
-
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
 
+  /* cleanup root directory */
+  upd_file_unref(iso->files.p[0]);
+  if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
+    return UPD_ISO_PANIC;
+  }
+
+  /* close all system handlers */
+  uv_close((uv_handle_t*) &iso->out, NULL);
+  if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
+    return UPD_ISO_PANIC;
+  }
+
+  /* make sure that all resources have been freed X) */
+  assert(iso->stack.refcnt == 0);
+  assert(iso->files.n      == 0);
+  assert(iso->srv.n        == 0);
+  assert(iso->cli.n        == 0);
+
   if (HEDLEY_UNLIKELY(0 > uv_loop_close(&iso->loop))) {
     return UPD_ISO_PANIC;
   }
+
   upd_array_clear(&iso->drivers);
-
-  assert(iso->files.n);
-  upd_file_unref(iso->files.p[0]);
-
-  assert(iso->stack.refcnt == 0);
-  assert(iso->files.n == 0);
-  assert(iso->srv.n   == 0);
-  assert(iso->cli.n   == 0);
 
   const upd_iso_status_t ret = iso->status;
   upd_free(&iso);
@@ -148,12 +153,5 @@ static void iso_create_dir_cb_(upd_req_pathfind_t* pf) {
   if (HEDLEY_UNLIKELY(f == NULL)) {
     upd_iso_msgf(iso, "dir creation failure, while iso setup\n");
     return;
-  }
-}
-
-static void iso_finalize_walk_cb_(uv_handle_t* handle, void* udata) {
-  (void) udata;
-  if (HEDLEY_LIKELY(!uv_is_closing(handle))) {
-    uv_close(handle, NULL);
   }
 }

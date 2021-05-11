@@ -51,12 +51,14 @@ upd_file_t* upd_file_new_from_npath(
       upd_free(&f);
       return NULL;
     }
+
     if (HEDLEY_UNLIKELY(0 > uv_fs_poll_init(&iso->loop, f->poll))) {
       upd_free(&f->poll);
       upd_free(&f);
       return NULL;
     }
     f->poll->data = f;
+    uv_unref((uv_handle_t*) f->poll);
 
     const bool start = 0 <= uv_fs_poll_start(
       f->poll, file_poll_cb_, (char*) f->super.npath, FILE_POLL_INTERVAL_);
