@@ -120,16 +120,20 @@ static inline void upd_iso_msg(upd_iso_t* iso, const uint8_t* msg, uint64_t len)
 }
 
 HEDLEY_NON_NULL(1)
-HEDLEY_PRINTF_FORMAT(2, 3)
-static inline void upd_iso_msgf(upd_iso_t* iso, const char* fmt, ...) {
+static inline void upd_iso_msgfv(upd_iso_t* iso, const char* fmt, va_list args) {
   uint8_t buf[1024];
 
+  const size_t len = vsnprintf((char*) buf, sizeof(buf), fmt, args);
+  upd_iso_msg(iso, buf, len);
+}
+
+HEDLEY_NON_NULL(1)
+HEDLEY_PRINTF_FORMAT(2, 3)
+static inline void upd_iso_msgf(upd_iso_t* iso, const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
-  const size_t len = vsnprintf((char*) buf, sizeof(buf), fmt, args);
+  upd_iso_msgfv(iso, fmt, args);
   va_end(args);
-
-  upd_iso_msg(iso, buf, len);
 }
 
 HEDLEY_NON_NULL(1)
