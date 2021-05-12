@@ -32,6 +32,8 @@ setup_install_add_cb_(
 
 
 void upd_driver_setup(upd_iso_t* iso) {
+  upd_driver_register(iso, &upd_driver_lua);
+
   const bool ok = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
       .iso  = iso,
       .path = (uint8_t*) "/sys",
@@ -106,6 +108,8 @@ static void setup_lock_for_add_cb_(upd_file_lock_t* lock) {
     upd_iso_msgf(iso, "'/sys' dir exlock failure, while driver setup\n");
     goto EXIT;
   }
+
+  setup_install_(sys, &upd_driver_dev_lua);
 
   setup_install_(sys, &upd_driver_prog_http);
   setup_install_(sys, &upd_driver_prog_parallelism);

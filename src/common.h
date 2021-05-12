@@ -10,6 +10,8 @@
 #include <base64.h>
 #include <cwalk.h>
 #include <hedley.h>
+#include <lauxlib.h>
+#include <lua.h>
 #include <picohttpparser.h>
 #include <sha1.h>
 #include <utf8.h>
