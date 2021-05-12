@@ -14,8 +14,6 @@ typedef struct upd_driver_rule_t {
 extern const upd_driver_t upd_driver_dir;
 extern const upd_driver_t upd_driver_syncdir;
 
-extern const upd_driver_t upd_driver_dev_duktape;
-
 extern const upd_driver_t upd_driver_prog_http;
 extern const upd_driver_t upd_driver_prog_parallelism;
 
