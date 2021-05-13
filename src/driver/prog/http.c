@@ -251,7 +251,9 @@ static void stream_deinit_(upd_file_t* f) {
   http_t_* ctx = f->ctx;
 
   if (HEDLEY_UNLIKELY(ctx->ws)) {
-    upd_file_unwatch(&ctx->wswatch);
+    if (HEDLEY_LIKELY(ctx->wswatch.file)) {
+      upd_file_unwatch(&ctx->wswatch);
+    }
     upd_file_unref(ctx->ws);
   }
   upd_buf_clear(&ctx->wsbuf);
