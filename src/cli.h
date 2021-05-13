@@ -3,6 +3,8 @@
 #include "common.h"
 
 
+#define UPD_CLI_HASH_SIZE 28
+
 struct upd_cli_t {
   union uv_any_handle uv;
 
@@ -12,6 +14,8 @@ struct upd_cli_t {
   upd_file_t*      prog;
   upd_file_t*      io;
   upd_file_watch_t watch;
+
+  uint8_t hash[UPD_CLI_HASH_SIZE];
 
   bool   deleted;
   size_t refcnt;

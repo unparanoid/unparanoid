@@ -57,7 +57,6 @@ target_sources(libupd
     src/driver.h
     src/file.c
     src/file.h
-    src/hash.h
     src/iso.c
     src/memory.h
     src/path.h
