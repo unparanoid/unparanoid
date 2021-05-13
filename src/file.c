@@ -114,12 +114,6 @@ bool upd_file_normalize_npath(
     return true;
   }
 
-  const uint8_t* prefix = iso->path.working;
-  if (HEDLEY_UNLIKELY(*len || src[0] == '|')) {
-    prefix = iso->path.runtime;
-    ++src;
-  }
-
   uint8_t* s = upd_iso_stack(iso, *len+1);
   if (HEDLEY_UNLIKELY(s == NULL)) {
     return false;
@@ -127,15 +121,24 @@ bool upd_file_normalize_npath(
   utf8ncpy(s, src, *len);
   s[*len] = 0;
 
-  *len = cwk_path_join((char*) prefix, (char*) s, NULL, 0);
+  uint8_t* j = s;
+  if (HEDLEY_LIKELY(!cwk_path_is_absolute((char*) s))) {
+    const uint8_t* prefix = iso->path.working;
+    if (HEDLEY_UNLIKELY(*len || src[0] == '|')) {
+      prefix = iso->path.runtime;
+      ++src;
+    }
 
-  uint8_t* j = upd_iso_stack(iso, *len + 1);
-  if (HEDLEY_UNLIKELY(j == NULL)) {
+    *len = cwk_path_join((char*) prefix, (char*) s, NULL, 0);
+
+    j = upd_iso_stack(iso, *len + 1);
+    if (HEDLEY_UNLIKELY(j == NULL)) {
+      upd_iso_unstack(iso, s);
+      return false;
+    }
+    cwk_path_join((char*) prefix, (char*) s, (char*) j, *len + 1);
     upd_iso_unstack(iso, s);
-    return false;
   }
-  cwk_path_join((char*) prefix, (char*) s, (char*) j, *len + 1);
-  upd_iso_unstack(iso, s);
 
   *len = cwk_path_normalize((char*) j, NULL, 0);
 
