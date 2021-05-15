@@ -350,7 +350,7 @@ static void lua_req_finalize_(lua_req_t_* req, bool ok) {
 
   if (HEDLEY_UNLIKELY(req->pending)) {
     const int err = lua_resume(lua, 0);
-    if (err != LUA_OK && err != LUA_YIELD) {
+    if (err != 0 && err != LUA_YIELD) {
       luaL_error(lua, "resume failure");
     }
   }

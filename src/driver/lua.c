@@ -416,7 +416,7 @@ static void stream_resume_(upd_file_t* st) {
   /* TODO: pop stack */
 
   switch (err) {
-  case LUA_OK:
+  case 0:
     ctx->exited = true;
     stream_exit_(st);
     break;
