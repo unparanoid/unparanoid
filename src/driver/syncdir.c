@@ -365,7 +365,8 @@ static void task_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
         continue;
       }
 
-      upd_file_t* f = upd_file_new_from_npath(ctx->file->iso, d, path, pathlen);
+      upd_file_t* f =
+        upd_file_new_from_normalized_npath(ctx->file->iso, d, path, pathlen);
       upd_iso_unstack(ctx->file->iso, path);
       if (HEDLEY_UNLIKELY(f == NULL)) {
         continue;

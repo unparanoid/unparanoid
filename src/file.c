@@ -5,6 +5,15 @@
 
 
 static
+bool
+file_normalize_npath_(
+  upd_iso_t*     iso,
+  uint8_t**      dst,
+  size_t*        len,
+  const uint8_t* src);
+
+
+static
 void
 file_poll_cb_(
   uv_fs_poll_t*    poll,
@@ -24,29 +33,36 @@ upd_file_t* upd_file_new_from_npath(
     const uint8_t*      npath,
     size_t              len) {
   uint8_t* np = NULL;
-  if (HEDLEY_UNLIKELY(!upd_file_normalize_npath(iso, &np, &len, npath))) {
+  if (HEDLEY_UNLIKELY(!file_normalize_npath_(iso, &np, &len, npath))) {
     return NULL;
   }
+  upd_file_t* f = upd_file_new_from_normalized_npath(iso, driver, np, len);
+  upd_iso_unstack(iso, np);
+  return f;
+}
 
+upd_file_t* upd_file_new_from_normalized_npath(
+    upd_iso_t*          iso,
+    const upd_driver_t* driver,
+    const uint8_t*      npath,
+    size_t              len) {
   upd_file_t_* f = NULL;
   if (HEDLEY_UNLIKELY(!upd_malloc(&f, sizeof(*f)+len+!!len))) {
-    if (np) upd_iso_unstack(iso, np);
     return NULL;
   }
   *f = (upd_file_t_) {
     .super = {
       .iso    = iso,
       .driver = driver,
-      .npath  = np? (uint8_t*) (f+1): NULL,
+      .npath  = len? (uint8_t*) (f+1): NULL,
       .id     = iso->files_created++,
       .refcnt = 1,
     },
   };
 
-  if (np) {
-    utf8cpy(f->super.npath, np);
-    upd_iso_unstack(iso, np);
-
+  if (len) {
+    utf8ncpy(f->super.npath, npath, len);
+    f->super.npath[len] = 0;
     if (HEDLEY_UNLIKELY(!upd_malloc(&f->poll, sizeof(*f->poll)))) {
       upd_free(&f);
       return NULL;
@@ -70,14 +86,9 @@ upd_file_t* upd_file_new_from_npath(
   }
 
   if (HEDLEY_UNLIKELY(!driver->init(&f->super))) {
-    if (np) {
+    if (len) {
       uv_close((uv_handle_t*) &f->poll, file_poll_close_cb_);
     }
-
-    /* driver->init could add new watcher */
-    upd_file_trigger(&f->super, UPD_FILE_DELETE);
-    upd_array_clear(&f->watch);
-
     upd_free(&f);
     return NULL;
   }
@@ -107,7 +118,8 @@ void upd_file_delete(upd_file_t* f) {
   upd_free(&f_);
 }
 
-bool upd_file_normalize_npath(
+
+static bool file_normalize_npath_(
     upd_iso_t* iso, uint8_t** dst, size_t* len, const uint8_t* src) {
   if (HEDLEY_UNLIKELY(*len == 0)) {
     *dst = NULL;
@@ -121,24 +133,21 @@ bool upd_file_normalize_npath(
   utf8ncpy(s, src, *len);
   s[*len] = 0;
 
-  uint8_t* j = s;
-  if (HEDLEY_LIKELY(!cwk_path_is_absolute((char*) s))) {
-    const uint8_t* prefix = iso->path.working;
-    if (HEDLEY_UNLIKELY(*len || src[0] == '|')) {
-      prefix = iso->path.runtime;
-      ++src;
-    }
-
-    *len = cwk_path_join((char*) prefix, (char*) s, NULL, 0);
-
-    j = upd_iso_stack(iso, *len + 1);
-    if (HEDLEY_UNLIKELY(j == NULL)) {
-      upd_iso_unstack(iso, s);
-      return false;
-    }
-    cwk_path_join((char*) prefix, (char*) s, (char*) j, *len + 1);
-    upd_iso_unstack(iso, s);
+  const uint8_t* prefix = iso->path.working;
+  if (HEDLEY_UNLIKELY(*len || src[0] == '|')) {
+    prefix = iso->path.runtime;
+    ++src;
   }
+
+  *len = cwk_path_join((char*) prefix, (char*) s, NULL, 0);
+
+  uint8_t* j = upd_iso_stack(iso, *len + 1);
+  if (HEDLEY_UNLIKELY(j == NULL)) {
+    upd_iso_unstack(iso, s);
+    return false;
+  }
+  cwk_path_join((char*) prefix, (char*) s, (char*) j, *len + 1);
+  upd_iso_unstack(iso, s);
 
   *len = cwk_path_normalize((char*) j, NULL, 0);
 

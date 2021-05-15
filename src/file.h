@@ -27,18 +27,17 @@ upd_file_new_from_npath(
   size_t              len);
 
 HEDLEY_NON_NULL(1)
+upd_file_t*
+upd_file_new_from_normalized_npath(
+  upd_iso_t*          iso,
+  const upd_driver_t* driver,
+  const uint8_t*      npath,
+  size_t              len);
+
+HEDLEY_NON_NULL(1)
 void
 upd_file_delete(
   upd_file_t* f);
-
-
-HEDLEY_NON_NULL(1, 2, 3)
-bool
-upd_file_normalize_npath(
-  upd_iso_t*     iso,
-  uint8_t**      dst,
-  size_t*        len,
-  const uint8_t* src);
 
 
 HEDLEY_NON_NULL(1, 2)
