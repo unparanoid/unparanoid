@@ -29,13 +29,15 @@ typedef struct prog_t_ {
 typedef struct stream_t_ {
   uv_idle_t idle;
 
+  lua_State* lua;
+
+  /* strong reference */
   upd_file_t* file;
   upd_file_t* dev;
-
-  lua_State* lua;
-  int        lua_registry_index;
-  int        env_registry_index;
-  int        func_registry_index;
+  upd_file_t* prog;
+  int         lua_registry_index;
+  int         env_registry_index;
+  int         func_registry_index;
 
   unsigned exited : 1;
 } stream_t_;
@@ -327,7 +329,12 @@ static void stream_deinit_(upd_file_t* f) {
   if (HEDLEY_LIKELY(ctx->dev)) {
     upd_file_unref(ctx->dev);
   }
+  if (HEDLEY_LIKELY(ctx->prog)) {
+    upd_file_unref(ctx->prog);
+  }
   if (HEDLEY_LIKELY(ctx->lua)) {
+    luaL_unref(ctx->lua, LUA_REGISTRYINDEX, ctx->env_registry_index);
+    luaL_unref(ctx->lua, LUA_REGISTRYINDEX, ctx->func_registry_index);
     luaL_unref(ctx->lua, LUA_REGISTRYINDEX, ctx->lua_registry_index);
   }
   uv_close((uv_handle_t*) &ctx->idle, stream_close_cb_);
@@ -365,9 +372,12 @@ static upd_file_t* prog_exec_(upd_file_t* prog) {
   }
 
   stream_t_* st = f->ctx;
-  st->dev = dev;
+  st->file = f;
+  st->dev  = dev;
+  st->prog = prog;
 
   upd_file_ref(dev);
+  upd_file_ref(prog);
 
   lua_State* th = lua_newthread(lua);
   if (HEDLEY_UNLIKELY(th == NULL)) {
@@ -388,9 +398,11 @@ static upd_file_t* prog_exec_(upd_file_t* prog) {
   }
   st->env_registry_index = luaL_ref(th, LUA_REGISTRYINDEX);
 
-  st->func_registry_index = ctx->func_registry_index;
-  lua_rawgeti(th, LUA_REGISTRYINDEX, st->func_registry_index);
+  lua_rawgeti(th, LUA_REGISTRYINDEX, ctx->func_registry_index);
+  lua_pushvalue(th, -1);
+  st->func_registry_index = luaL_ref(th, LUA_REGISTRYINDEX);
 
+  upd_file_ref(f);
   stream_resume_(f);
   return f;
 }
@@ -417,7 +429,6 @@ static void stream_resume_(upd_file_t* st) {
 
   switch (err) {
   case 0:
-    ctx->exited = true;
     stream_exit_(st);
     break;
   case LUA_YIELD:
