@@ -60,6 +60,8 @@ struct stream_t_ {
     int ctx;
   } registry;
 
+  upd_array_t files;
+
   upd_buf_t in;
   upd_buf_t out;
 
@@ -314,7 +316,6 @@ static bool dev_init_(upd_file_t* f) {
   if (HEDLEY_UNLIKELY(lua == NULL)) {
     return false;
   }
-
   lua_lib_register_class_(lua);
   lua_file_register_class_(lua, f->iso);
   lua_promise_register_class_(lua);
@@ -502,7 +503,7 @@ static upd_file_t* prog_exec_(upd_file_t* prf) {
   }
   st->lua = th;
 
-  lua_pushvalue(th, -1);
+  lua_pushthread(th);
   st->registry.thread = luaL_ref(th, LUA_REGISTRYINDEX);
 
   lua_sethook(th,
@@ -530,9 +531,10 @@ static upd_file_t* prog_exec_(upd_file_t* prf) {
     }
     lua_setmetatable(th, -2);
   }
-  lua_pushvalue(th, -1);
   st->registry.ctx = luaL_ref(th, LUA_REGISTRYINDEX);
 
+  lua_pushthread(th);
+  lua_rawgeti(th, LUA_REGISTRYINDEX, st->registry.ctx);
   lua_setfenv(th, -2);
   lua_pop(th, 1);
 
@@ -562,6 +564,13 @@ static bool stream_init_(upd_file_t* f) {
 static void stream_deinit_(upd_file_t* f) {
   stream_t_* ctx = f->ctx;
 
+  for (size_t i = 0; i < ctx->files.n; ++i) {
+    upd_file_t** udata = ctx->files.p[i];
+    upd_file_unref(*udata);
+    *udata = NULL;
+  }
+  upd_array_clear(&ctx->files);
+
   if (HEDLEY_LIKELY(ctx->dev)) {
     upd_file_unref(ctx->dev);
   }
@@ -575,6 +584,7 @@ static void stream_deinit_(upd_file_t* f) {
     luaL_unref(ctx->lua, LUA_REGISTRYINDEX, ctx->registry.thread);
     lua_gc(ctx->lua, LUA_GCCOLLECT, 0);
   }
+  uv_timer_stop(&ctx->timer);
   uv_close((uv_handle_t*) &ctx->timer, stream_close_cb_);
 }
 
@@ -971,7 +981,7 @@ static int lua_context_sleep_(lua_State* lua) {
   upd_file_t* f   = lua_touserdata(lua, lua_upvalueindex(1));
   stream_t_*  ctx = f->ctx;
 
-  if (HEDLEY_UNLIKELY(lua_gettop(lua) == 1)) {
+  if (HEDLEY_UNLIKELY(lua_gettop(lua) != 1)) {
     return luaL_error(lua, "Context.sleep() takes 1 arg");
   }
 
@@ -982,7 +992,7 @@ static int lua_context_sleep_(lua_State* lua) {
     return luaL_error(lua, "negative duration: %"PRIiMAX"", (intmax_t) t);
   }
 
-  const bool start = uv_timer_start(&ctx->timer, stream_timer_cb_, t, 0);
+  const bool start = 0 <= uv_timer_start(&ctx->timer, stream_timer_cb_, t, 0);
   if (HEDLEY_UNLIKELY(!start)) {
     assert(false);
   }
@@ -999,7 +1009,7 @@ static void lua_context_create_(lua_State* lua, upd_file_t* f) {
       lua_pushcclosure(lua, lua_context_msg_, 1);
       lua_setfield(lua, -2, "msg");
 
-      lua_pushlightuserdata(lua, f->iso);
+      lua_pushlightuserdata(lua, f);
       lua_pushcclosure(lua, lua_context_sleep_, 1);
       lua_setfield(lua, -2, "sleep");
 
@@ -1064,8 +1074,14 @@ static int lua_file_index_(lua_State* lua) {
   return luaL_error(lua, "unknown field %s", key);
 }
 static int lua_file_gc_(lua_State* lua) {
-  upd_file_t* f = *(void**) lua_touserdata(lua, 1);
-  upd_file_unref(f);
+  upd_file_t** udata = lua_touserdata(lua, 1);
+  if (HEDLEY_UNLIKELY(*udata == NULL)) {
+    return 0;
+  }
+  upd_file_t* stf = lua_context_get_file_(lua);
+  stream_t_*  ctx = stf->ctx;
+  upd_array_find_and_remove(&ctx->files, udata);
+  upd_file_unref(*udata);
   return 0;
 }
 static void lua_file_register_class_(lua_State* lua, upd_iso_t* iso) {
@@ -1096,10 +1112,18 @@ static void lua_file_register_class_(lua_State* lua, upd_iso_t* iso) {
 }
 
 static void lua_file_new_(lua_State* lua, upd_file_t* f) {
-  *(void**) lua_newuserdata(lua, sizeof(f)) = f;
+  upd_file_t* stf = lua_context_get_file_(lua);
+  stream_t_*  ctx = stf->ctx;
+
+  upd_file_t** udata = lua_newuserdata(lua, sizeof(f));
+  *udata = f;
+
   lua_getfield(lua, LUA_REGISTRYINDEX, "File");
   lua_setmetatable(lua, -2);
 
+  if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->files, udata, SIZE_MAX))) {
+    luaL_error(lua, "file list insertion failure");
+  }
   upd_file_ref(f);
 }
 
