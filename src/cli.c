@@ -549,8 +549,10 @@ static void cli_output_cb_(upd_req_t* req) {
   upd_iso_unstack(iso, req);
 
   if (HEDLEY_UNLIKELY(!io.size)) {
-    cli_logf_(cli, "empty output");
-    goto ABORT;
+    upd_file_unlock(lock);
+    upd_iso_unstack(iso, lock);
+    cli_unref_(cli);
+    return;
   }
 
   uv_write_t* write = upd_iso_stack(iso, sizeof(*write)+io.size);
@@ -575,7 +577,7 @@ static void cli_output_cb_(upd_req_t* req) {
 
 ABORT:
   upd_file_unlock(lock);
-  upd_iso_unstack(cli->iso, lock);
+  upd_iso_unstack(iso, lock);
   cli_unref_(cli);
   upd_cli_delete(cli);
 }

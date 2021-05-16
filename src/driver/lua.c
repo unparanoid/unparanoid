@@ -117,17 +117,6 @@ lua_logf_(
 
 static
 void
-stream_exit_(
-  upd_file_t* st);
-
-static
-void
-stream_resume_(
-  upd_file_t* st);
-
-
-static
-void
 stream_lua_build_class_(
   lua_State* lua);
 
@@ -452,57 +441,6 @@ static void lua_logf_(upd_file_t* f, const char* fmt, ...) {
 }
 
 
-static void stream_exit_(upd_file_t* st) {
-  stream_t_* ctx = st->ctx;
-
-  upd_file_trigger(st, UPD_FILE_UPDATE);
-
-  ctx->exited = true;
-  if (HEDLEY_LIKELY(ctx->holdref)) {
-    upd_file_unref(st);
-  }
-  upd_file_trigger(st, UPD_FILE_UPDATE);
-}
-
-static void stream_resume_(upd_file_t* st) {
-  stream_t_* ctx = st->ctx;
-  lua_State* lua = ctx->lua;
-
-  lua_rawgeti(lua, LUA_REGISTRYINDEX, ctx->func_registry_index);
-  lua_rawgeti(lua, LUA_REGISTRYINDEX, ctx->env_registry_index);
-  lua_setfenv(lua, -2);
-  lua_pop(lua, 1);
-
-  const int err = lua_resume(lua, 0);
-  switch (err) {
-  case 0:
-    lua_settop(lua, 0);
-    stream_exit_(st);
-    break;
-  case LUA_YIELD:
-    lua_settop(lua, 0);
-    if (HEDLEY_UNLIKELY(!uv_is_active((uv_handle_t*) &ctx->idle))) {
-      if (HEDLEY_UNLIKELY(0 > uv_idle_start(&ctx->idle, stream_idle_cb_))) {
-        lua_logf_(st, "failed to start runner");
-        stream_exit_(st);
-      }
-    }
-    break;
-  case LUA_ERRRUN:
-  case LUA_ERRMEM:
-  case LUA_ERRERR: {
-    lua_Debug dbg;
-    lua_getstack(lua, 0, &dbg);
-    lua_getinfo(lua, "Sl", &dbg);
-    lua_logf_(st,
-      "runtime error (%s) (%s:%d)",
-      lua_tostring(lua, -1), dbg.source, dbg.currentline);
-    stream_exit_(st);
-  } break;
-  }
-}
-
-
 static int stream_lua_output_(lua_State* lua) {
   upd_file_t* f   = *(void**) lua_touserdata(lua, lua_upvalueindex(1));
   stream_t_*  ctx = f->ctx;
@@ -517,7 +455,6 @@ static int stream_lua_output_(lua_State* lua) {
   if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->out, (uint8_t*) ptr, len))) {
     return luaL_error(lua, "buffer allocation failure");
   }
-  upd_file_trigger(f, UPD_FILE_UPDATE);
   return 0;
 }
 static int stream_lua_yield_(lua_State* lua) {
@@ -869,6 +806,11 @@ static void prog_lock_for_exec_cb_(upd_file_lock_t* lock) {
     upd_file_unref(stf);
     goto EXIT;
   }
+  if (HEDLEY_UNLIKELY(0 > uv_idle_start(&st->idle, stream_idle_cb_))) {
+    lua_logf_(prf, "failed to start runner");
+    upd_file_unref(stf);
+    goto EXIT;
+  }
 
   st->lua = th;
   st->lua_registry_index = luaL_ref(lua, LUA_REGISTRYINDEX);
@@ -893,7 +835,6 @@ static void prog_lock_for_exec_cb_(upd_file_lock_t* lock) {
   st->holdref = true;
   upd_file_ref(stf);
 
-  stream_resume_(stf);
   req->prog.exec = stf;
 
 EXIT:
@@ -939,11 +880,43 @@ static void stream_lua_hook_cb_(lua_State* lua, lua_Debug* dbg) {
 static void stream_idle_cb_(uv_idle_t* idle) {
   stream_t_*  ctx = (void*) idle;
   upd_file_t* f   = ctx->file;
+  lua_State*  lua = ctx->lua;
 
-  stream_resume_(f);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, ctx->func_registry_index);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, ctx->env_registry_index);
+  lua_setfenv(lua, -2);
 
+  const int err = lua_resume(lua, 0);
+  switch (err) {
+  case 0:
+    ctx->exited = true;
+    break;
+  case LUA_YIELD:
+    break;
+  case LUA_ERRRUN:
+  case LUA_ERRMEM:
+  case LUA_ERRERR: {
+    lua_Debug dbg;
+    lua_getstack(lua, 0, &dbg);
+    lua_getinfo(lua, "Sl", &dbg);
+    lua_logf_(f,
+      "runtime error (%s) (%s:%d)",
+      lua_tostring(lua, -1), dbg.source, dbg.currentline);
+    ctx->exited = true;
+  } break;
+  }
+  lua_settop(lua, 0);
+
+  if (HEDLEY_UNLIKELY(ctx->out.size)) {
+    upd_file_trigger(f, UPD_FILE_UPDATE);
+  }
   if (HEDLEY_UNLIKELY(ctx->exited)) {
+    upd_file_trigger(f, UPD_FILE_UPDATE);
     uv_idle_stop(&ctx->idle);
+
+    if (HEDLEY_LIKELY(ctx->holdref)) {
+      upd_file_unref(f);
+    }
   }
 }
 

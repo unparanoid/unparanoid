@@ -56,11 +56,6 @@ const upd_driver_t upd_driver_dev_lua = {
 
 
 static
-int
-lua_frozen_newindex_(
-  lua_State* lua);
-
-static
 lua_CFunction
 lua_find_reg_(
   luaL_Reg*   regs,
@@ -140,10 +135,6 @@ static bool lua_handle_(upd_req_t* req) {
   return false;
 }
 
-
-static int lua_frozen_newindex_(lua_State* lua) {
-  return luaL_error(lua, "tried to modify immutable object");
-}
 
 static lua_CFunction lua_find_reg_(luaL_Reg* regs, const char* key) {
   for (size_t i = 0; regs[i].name; ++i) {
@@ -252,9 +243,6 @@ static void lua_iso_build_class_(lua_State* lua, upd_iso_t* iso) {
 
   lua_pushcfunction(lua, lua_iso_index_);
   lua_setfield(lua, -2, "__index");
-
-  lua_pushcfunction(lua, lua_frozen_newindex_);
-  lua_setfield(lua, -2, "__newindex");
 
   lua_pushboolean(lua, false);
   lua_setfield(lua, -2, "__metatable");
