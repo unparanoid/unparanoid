@@ -187,7 +187,7 @@ static void cli_calc_hash_(upd_cli_t* cli) {
   base64_encode(temp, cli->hash, SHA1_BLOCK_SIZE, false);
 
   /* replaces '/' -> '-' because filename cannot include '/' */
-  for (size_t i = 0; i < SHA1_BLOCK_SIZE; ++i) {
+  for (size_t i = 0; i < UPD_CLI_HASH_SIZE; ++i) {
     if (HEDLEY_UNLIKELY(cli->hash[i] == '/')) {
       cli->hash[i] = '-';
     }
