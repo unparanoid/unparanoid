@@ -128,8 +128,7 @@ static bool dir_handle_(upd_req_t* req) {
 
     size_t i;
     const bool duplicated =
-      (re->len  && entry_find_by_name_(ctx, &i, re->name, re->len)) ||
-      (re->file && entry_find_by_file_(ctx, &i, re->file));
+      (re->len  && entry_find_by_name_(ctx, &i, re->name, re->len));
     if (HEDLEY_UNLIKELY(duplicated)) {
       return false;
     }
@@ -153,8 +152,11 @@ static bool dir_handle_(upd_req_t* req) {
       req->dir.entry = (upd_req_dir_entry_t) {0};
       return false;
     }
-    entry_delete_(upd_array_remove(&ctx->children, i));
-  } break;
+    entry_t_* e = upd_array_remove(&ctx->children, i);
+    req->dir.entry = e->super;
+    req->cb(req);
+    entry_delete_(e);
+  } return true;
 
   default:
     return false;
