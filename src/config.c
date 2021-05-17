@@ -19,6 +19,7 @@ struct ctx_t_ {
 
   uv_file  fd;
   uint8_t* buf;
+  size_t   size;
 
   uv_fs_t fsreq;
 
@@ -615,10 +616,18 @@ static void config_stat_cb_(uv_fs_t* req) {
   upd_iso_t* iso = ctx->iso;
 
   const ssize_t result = req->result;
+
+  ctx->size = req->statbuf.st_size;
   uv_fs_req_cleanup(req);
 
   if (HEDLEY_UNLIKELY(result != 0)) {
     config_logf_(ctx, "stat failure");
+    goto ABORT;
+  }
+
+  if (HEDLEY_UNLIKELY(ctx->size > CONFIG_FILE_MAX_)) {
+    config_logf_(ctx,
+      "too large config (must be %d bytes or less)", CONFIG_FILE_MAX_);
     goto ABORT;
   }
 
@@ -639,7 +648,6 @@ static void config_open_cb_(uv_fs_t* req) {
   upd_iso_t* iso = ctx->iso;
 
   const ssize_t result = req->result;
-  const size_t  size   = req->statbuf.st_size;
   uv_fs_req_cleanup(req);
 
   if (HEDLEY_UNLIKELY(result < 0)) {
@@ -648,26 +656,32 @@ static void config_open_cb_(uv_fs_t* req) {
   }
   ctx->fd = result;
 
-  if (HEDLEY_UNLIKELY(size > CONFIG_FILE_MAX_)) {
-    config_logf_(ctx,
-      "too large config (must be %d bytes or less)", CONFIG_FILE_MAX_);
-    goto ABORT;
-  }
-
-  ctx->buf = upd_iso_stack(iso, size);
+  ctx->buf = upd_iso_stack(iso, ctx->size);
   if (HEDLEY_UNLIKELY(ctx->buf == NULL)) {
     config_logf_(ctx, "config file buffer allocation failure");
-    goto ABORT;
+
+    const bool close =
+      0 <= uv_fs_close(&iso->loop, &ctx->fsreq, ctx->fd, config_close_cb_);
+    if (HEDLEY_UNLIKELY(!close)) {
+      goto ABORT;
+    }
+    return;
   }
 
-  const uv_buf_t buf = uv_buf_init((char*) ctx->buf, size);
+  const uv_buf_t buf = uv_buf_init((char*) ctx->buf, ctx->size);
 
   const bool read = 0 <= uv_fs_read(
     &iso->loop, &ctx->fsreq, ctx->fd, &buf, 1, 0, config_read_cb_);
   if (HEDLEY_UNLIKELY(!read)) {
     upd_iso_unstack(iso, ctx->buf);
     config_logf_(ctx, "read failure");
-    goto ABORT;
+
+    const bool close =
+      0 <= uv_fs_close(&iso->loop, &ctx->fsreq, ctx->fd, config_close_cb_);
+    if (HEDLEY_UNLIKELY(!close)) {
+      goto ABORT;
+    }
+    return;
   }
   return;
 
@@ -687,14 +701,14 @@ static void config_read_cb_(uv_fs_t* req) {
   if (HEDLEY_UNLIKELY(result < 0)) {
     upd_iso_unstack(iso, ctx->buf);
     config_logf_(ctx, "read failure");
-    goto ABORT;
+    goto EXIT;
   }
 
   yaml_parser_t parser = {0};
   if (HEDLEY_UNLIKELY(!yaml_parser_initialize(&parser))) {
     upd_iso_unstack(iso, ctx->buf);
     config_logf_(ctx, "yaml parser allocation failure");
-    goto ABORT;
+    goto EXIT;
   }
   yaml_parser_set_input_string(&parser, ctx->buf, result);
 
@@ -703,21 +717,17 @@ static void config_read_cb_(uv_fs_t* req) {
   upd_iso_unstack(iso, ctx->buf);
   if (HEDLEY_UNLIKELY(!parse)) {
     config_logf_(ctx, "yaml parser error");
-    goto ABORT;
+    goto EXIT;
   }
 
   config_parse_(ctx);
 
-  const bool ok = 0 <= uv_fs_close(
-    &iso->loop, &ctx->fsreq, ctx->fd, config_close_cb_);
-  if (HEDLEY_UNLIKELY(!ok)) {
-    config_logf_(ctx, "close failure");
-    goto ABORT;
+  bool close;
+EXIT:
+  close = 0 <= uv_fs_close(&iso->loop, &ctx->fsreq, ctx->fd, config_close_cb_);
+  if (HEDLEY_UNLIKELY(!close)) {
+    config_unref_(ctx);
   }
-  return;
-
-ABORT:
-  config_unref_(ctx);
 }
 
 static void config_close_cb_(uv_fs_t* req) {
