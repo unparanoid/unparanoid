@@ -7,6 +7,11 @@ struct upd_iso_t {
   uv_loop_t loop;
   uv_tty_t  out;
 
+  uv_signal_t sigint;
+  uv_signal_t sighup;
+
+  uv_timer_t shutdown_timer;
+
   upd_iso_status_t status;
 
   upd_array_of(const upd_driver_t*) drivers;

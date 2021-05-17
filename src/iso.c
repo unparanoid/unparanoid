@@ -1,6 +1,9 @@
 #include "common.h"
 
 
+#define SHUTDOWN_TIMER_ 1000
+
+
 static
 bool
 iso_get_paths_(
@@ -18,6 +21,17 @@ void
 iso_create_dir_cb_(
   upd_req_pathfind_t* pf);
 
+static
+void
+iso_signal_cb_(
+  uv_signal_t* sig,
+  int          signum);
+
+static
+void
+iso_shutdown_timer_cb_(
+  uv_timer_t* timer);
+
 
 upd_iso_t* upd_iso_new(size_t stacksz) {
   /*  It's unnecessary to clean up resources in aborted,
@@ -28,6 +42,10 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     return NULL;
   }
   *iso = (upd_iso_t) {
+    .sigint         = { .data = iso, },
+    .sighup         = { .data = iso, },
+    .shutdown_timer = { .data = iso, },
+
     .stack = {
       .size = stacksz,
       .ptr  = (uint8_t*) (iso+1),
@@ -37,10 +55,17 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
   const bool ok =
     iso_get_paths_(iso) &&
     0 <= uv_loop_init(&iso->loop) &&
-    0 <= uv_tty_init(&iso->loop, &iso->out, 1, 0);
+    0 <= uv_tty_init(&iso->loop, &iso->out, 1, 0) &&
+    0 <= uv_signal_init(&iso->loop, &iso->sigint) &&
+    0 <= uv_signal_start(&iso->sigint, iso_signal_cb_, SIGINT) &&
+    0 <= uv_signal_init(&iso->loop, &iso->sighup) &&
+    0 <= uv_signal_start(&iso->sighup, iso_signal_cb_, SIGHUP) &&
+    0 <= uv_timer_init(&iso->loop, &iso->shutdown_timer);
   if (HEDLEY_UNLIKELY(!ok)) {
     return NULL;
   }
+  uv_unref((uv_handle_t*) &iso->sigint);
+  uv_unref((uv_handle_t*) &iso->sighup);
 
   upd_file_t* root = upd_file_new(iso, &upd_driver_dir);
   if (HEDLEY_UNLIKELY(root == NULL)) {
@@ -74,7 +99,10 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   }
 
   /* close all system handlers */
-  uv_close((uv_handle_t*) &iso->out, NULL);
+  uv_close((uv_handle_t*) &iso->out,            NULL);
+  uv_close((uv_handle_t*) &iso->sigint,         NULL);
+  uv_close((uv_handle_t*) &iso->sighup,         NULL);
+  uv_close((uv_handle_t*) &iso->shutdown_timer, NULL);
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
@@ -103,6 +131,8 @@ void upd_iso_close_all_conn(upd_iso_t* iso) {
   while (iso->cli.n) {
     upd_cli_delete(iso->cli.p[0]);
   }
+  uv_signal_stop(&iso->sigint);
+  uv_signal_stop(&iso->sighup);
 }
 
 
@@ -154,4 +184,34 @@ static void iso_create_dir_cb_(upd_req_pathfind_t* pf) {
     upd_iso_msgf(iso, "dir creation failure, while iso setup\n");
     return;
   }
+}
+
+static void iso_signal_cb_(uv_signal_t* sig, int signum) {
+  upd_iso_t* iso = sig->data;
+
+  switch (signum) {
+  case SIGINT:
+    if (uv_is_active((uv_handle_t*) &iso->shutdown_timer)) {
+      upd_iso_msgf(iso, "rebooting...\n");
+      uv_timer_stop(&iso->shutdown_timer);
+      upd_iso_exit(iso, UPD_ISO_REBOOT);
+    } else {
+      upd_iso_msgf(iso,
+        "SIGINT received: "
+        "wait for 1 sec to shutdown, or press Ctrl+C again to reboot\n");
+      uv_timer_start(
+        &iso->shutdown_timer, iso_shutdown_timer_cb_, SHUTDOWN_TIMER_, 0);
+    }
+    break;
+  case SIGHUP:
+    upd_iso_msgf(iso, "SIGHUP received: exiting...\n");
+    upd_iso_exit(iso, UPD_ISO_SHUTDOWN);
+    break;
+  }
+}
+
+static void iso_shutdown_timer_cb_(uv_timer_t* timer) {
+  upd_iso_t* iso = timer->data;
+  upd_iso_msgf(iso, "shutting down...\n");
+  upd_iso_exit(iso, UPD_ISO_SHUTDOWN);
 }
