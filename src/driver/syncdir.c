@@ -266,6 +266,9 @@ static bool task_unref_(task_t_* task) {
   ctx_t_* ctx = task->ctx;
 
   if (HEDLEY_UNLIKELY(--task->refcnt == 0)) {
+    if (HEDLEY_UNLIKELY(ctx->last_task == task)) {
+      ctx->last_task = NULL;
+    }
     if (HEDLEY_UNLIKELY(task->next)) {
       task->next->cb(task->next);
     }
