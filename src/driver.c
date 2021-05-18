@@ -109,7 +109,7 @@ static void setup_lock_for_add_cb_(upd_file_lock_t* lock) {
     goto EXIT;
   }
 
-  setup_install_(sys, &upd_driver_dev_lua);
+  setup_install_(sys, &upd_driver_lua_dev);
 
   setup_install_(sys, &upd_driver_prog_http);
   setup_install_(sys, &upd_driver_prog_parallelism);

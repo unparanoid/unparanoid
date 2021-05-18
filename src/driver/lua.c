@@ -3,53 +3,117 @@
 
 #define SCRIPT_MAX_ (1024*1024*8)
 
-#define DEV_PATH_ "/sys/upd.dev.lua"
+#define DEV_PATH_ "/sys/upd.lua.dev"
 
 #define SANDBOX_INSTRUCTION_LIMIT_ 10000000  /* = 10^7 (10ms in 1 GHz clock) */
 
 
-static const char* lua_global_[] = {
-  "iso",
-};
+typedef struct prog_t_    prog_t_;
+typedef struct stream_t_  stream_t_;
+typedef struct promise_t_ promise_t_;
 
 
-typedef struct prog_t_ {
+struct prog_t_ {
   upd_file_t* file;
   upd_file_t* dev;
 
   upd_file_watch_t watch;
 
-  int func_registry_index;
-
   size_t   size;
   uint8_t* buf;
   uv_file  fd;
 
-  unsigned buf_on_stack : 1;
-  unsigned clean        : 1;
-  unsigned compiled     : 1;
-} prog_t_;
+  struct {
+    int func;
+  } registry;
 
-typedef struct stream_t_ {
-  uv_idle_t idle;
+  unsigned clean    : 1;
+  unsigned compiled : 1;
+};
+
+
+typedef enum stream_state_t_ {
+  STREAM_EXITED_  = 0x00,
+  STREAM_ABORTED_ = 0x10,
+
+  STREAM_RUNNING_         = 0x01,
+  STREAM_PENDING_TIMER_   = 0x11,
+  STREAM_PENDING_PROMISE_ = 0x21,
+  STREAM_PENDING_INPUT_   = 0x31,
+
+  STREAM_FLAG_ALIVE_ = 0x01,
+} stream_state_t_;
+
+struct stream_t_ {
+  uv_timer_t timer;
 
   lua_State* lua;
-
-  upd_buf_t in;
-  upd_buf_t out;
 
   /* strong reference */
   upd_file_t* file;
   upd_file_t* dev;
   upd_file_t* prog;
-  int         lua_registry_index;
-  int         env_registry_index;
-  int         func_registry_index;
 
-  unsigned dirty   : 1;
-  unsigned holdref : 1;
-  unsigned exited  : 1;
-} stream_t_;
+  struct {
+    int thread;
+    int func;
+    int ctx;
+  } registry;
+
+  upd_buf_t in;
+  upd_buf_t out;
+
+  promise_t_* pending;
+
+  stream_state_t_ state;
+};
+
+
+typedef enum promise_type_t_ {
+  PROMISE_STANDARD_,
+  PROMISE_PATHFIND_,
+} promise_type_t_;
+
+struct promise_t_ {
+  union {
+    upd_req_t          std;
+    upd_req_pathfind_t pf;
+  };
+  promise_type_t_ type;
+
+  upd_file_t* file;
+
+  int registry;
+
+  unsigned error : 1;
+  unsigned done  : 1;
+};
+
+
+static
+bool
+dev_init_(
+  upd_file_t* f);
+
+static
+void
+dev_deinit_(
+  upd_file_t* f);
+
+static
+bool
+dev_handle_(
+  upd_req_t* req);
+
+const upd_driver_t upd_driver_lua_dev = {
+  .name = (uint8_t*) "upd.lua.dev",
+  .cats = (upd_req_cat_t[]) {
+    0,
+  },
+  .init   = dev_init_,
+  .deinit = dev_deinit_,
+  .handle = dev_handle_,
+};
 
 
 static
@@ -66,6 +130,16 @@ static
 bool
 prog_handle_(
   upd_req_t* req);
+
+static
+bool
+prog_compile_(
+  upd_file_t* f);
+
+static
+upd_file_t*
+prog_exec_(
+  upd_file_t* f);
 
 const upd_driver_t upd_driver_lua = {
   .name = (uint8_t*) "upd.lua",
@@ -109,22 +183,10 @@ static const upd_driver_t stream_ = {
 
 static
 void
-lua_logf_(
+logf_(
   upd_file_t* f,
   const char* fmt,
   ...);
-
-
-static
-void
-stream_lua_build_class_(
-  lua_State* lua);
-
-static
-void
-stream_lua_new_(
-  lua_State*  lua,
-  upd_file_t* f);
 
 
 static
@@ -162,26 +224,6 @@ void
 prog_close_cb_(
   uv_fs_t* fsreq);
 
-static
-void
-prog_lock_for_exec_cb_(
-  upd_file_lock_t* lock);
-
-static
-void
-prog_lock_for_compile_cb_(
-  upd_file_lock_t* lock);
-
-static
-void
-prog_exec_after_compile_cb_(
-  upd_req_t* req);
-
-static
-void
-prog_lock_for_delete_cb_(
-  upd_file_lock_t* lock);
-
 
 static
 void
@@ -191,13 +233,105 @@ stream_lua_hook_cb_(
 
 static
 void
-stream_idle_cb_(
-  uv_idle_t* idle);
+stream_timer_cb_(
+  uv_timer_t* timer);
 
 static
 void
 stream_close_cb_(
   uv_handle_t* handle);
+
+
+static
+int
+lua_immutable_newindex_(
+  lua_State* lua);
+
+
+static
+void
+lua_lib_register_class_(
+  lua_State* lua);
+
+
+static
+void
+lua_context_create_(
+  lua_State*  lua,
+  upd_file_t* stf);
+
+static
+upd_file_t*
+lua_context_get_file_(
+  lua_State* lua);
+
+
+static
+void
+lua_file_register_class_(
+  lua_State* lua,
+  upd_iso_t* iso);
+
+static
+void
+lua_file_new_(
+  lua_State*  lua,
+  upd_file_t* file);
+
+
+static
+void
+lua_promise_register_class_(
+  lua_State* lua);
+
+static
+promise_t_*
+lua_promise_new_(
+  lua_State* lua,
+  size_t     add);
+
+static
+int
+lua_promise_push_result_(
+  promise_t_* pro,
+  lua_State*  lua);
+
+static
+void
+lua_promise_finalize_(
+  promise_t_* pro,
+  bool        ok);
+
+
+static
+void
+lua_promise_pathfind_cb_(
+  upd_req_pathfind_t* pf);
+
+
+static bool dev_init_(upd_file_t* f) {
+  lua_State* lua = luaL_newstate();
+  if (HEDLEY_UNLIKELY(lua == NULL)) {
+    return false;
+  }
+
+  lua_lib_register_class_(lua);
+  lua_file_register_class_(lua, f->iso);
+  lua_promise_register_class_(lua);
+
+  f->ctx = lua;
+  return true;
+}
+
+static void dev_deinit_(upd_file_t* f) {
+  lua_State* lua = f->ctx;
+  lua_close(lua);
+}
+
+static bool dev_handle_(upd_req_t* req) {
+  (void) req;
+  return false;
+}
 
 
 static bool prog_init_(upd_file_t* f) {
@@ -235,33 +369,24 @@ static bool prog_init_(upd_file_t* f) {
 static void prog_deinit_(upd_file_t* f) {
   prog_t_*    ctx = f->ctx;
   upd_file_t* dev = ctx->dev;
+  lua_State*  lua = dev->ctx;
 
   upd_file_unwatch(&ctx->watch);
 
-  bool lock = dev != NULL && ctx->compiled;
-  if (HEDLEY_LIKELY(lock)) {
-    lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
-        .file  = dev,
-        .ex    = true,
-        .udata = ctx,
-        .cb    = prog_lock_for_delete_cb_,
-      });
+  if (HEDLEY_UNLIKELY(ctx->compiled)) {
+    luaL_unref(lua, LUA_REGISTRYINDEX, ctx->registry.func);
   }
+  upd_free(&ctx);
 
   if (HEDLEY_LIKELY(dev)) {
     upd_file_unref(dev);
   }
-  if (HEDLEY_LIKELY(lock)) {
-    return;
-  }
-  upd_free(&ctx);
 }
 
 static bool prog_handle_(upd_req_t* req) {
   upd_file_t* f   = req->file;
   prog_t_*    ctx = f->ctx;
   upd_iso_t*  iso = f->iso;
-  upd_file_t* dev = ctx->dev;
 
   switch (req->type) {
   case UPD_REQ_BIN_ACCESS:
@@ -273,18 +398,9 @@ static bool prog_handle_(upd_req_t* req) {
     if (HEDLEY_UNLIKELY(f->npath || req->bin.rw.offset)) {
       return false;
     }
-    ctx->buf_on_stack = false;
     ctx->buf  = req->bin.rw.buf;
     ctx->size = req->bin.rw.size;
-    upd_file_ref(f);
-    const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
-        .file  = dev,
-        .ex    = true,
-        .udata = req,
-        .cb    = prog_lock_for_compile_cb_,
-      });
-    if (HEDLEY_UNLIKELY(!lock)) {
-      upd_file_unref(f);
+    if (HEDLEY_UNLIKELY(!prog_compile_(f))) {
       return false;
     }
   } break;
@@ -298,38 +414,18 @@ static bool prog_handle_(upd_req_t* req) {
   case UPD_REQ_PROG_EXEC: {
     req->prog.exec = NULL;
     if (HEDLEY_LIKELY(ctx->clean && ctx->compiled)) {
-      upd_file_ref(f);
-      const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
-          .file  = dev,
-          .ex    = true,
-          .udata = req,
-          .cb    = prog_lock_for_exec_cb_,
-        });
-      if (HEDLEY_UNLIKELY(!lock)) {
-        upd_file_unref(f);
-        return false;
-      }
-      return true;
+      req->prog.exec = prog_exec_(f);
+      break;
     }
     if (HEDLEY_UNLIKELY(!f->npath)) {
       return false;
     }
 
-    upd_req_t* wrap = upd_iso_stack(iso, sizeof(*wrap));
-    if (HEDLEY_UNLIKELY(wrap == NULL)) {
-      return false;
-    }
-    *wrap = (upd_req_t) {
-      .file  = f,
-      .udata = req,
-      .cb    = prog_exec_after_compile_cb_,
-    };
-
     uv_fs_t* fsreq = upd_iso_stack(iso, sizeof(*fsreq));
     if (HEDLEY_UNLIKELY(fsreq == NULL)) {
       return false;
     }
-    *fsreq = (uv_fs_t) { .data = wrap, };
+    *fsreq = (uv_fs_t) { .data = req, };
 
     upd_file_ref(f);
     const bool stat =
@@ -347,6 +443,104 @@ static bool prog_handle_(upd_req_t* req) {
   return true;
 }
 
+static bool prog_compile_(upd_file_t* f) {
+  prog_t_*    ctx = f->ctx;
+  upd_file_t* dev = ctx->dev;
+  lua_State*  lua = dev->ctx;
+
+  if (HEDLEY_LIKELY(ctx->compiled)) {
+    luaL_unref(lua, LUA_REGISTRYINDEX, ctx->registry.func);
+  }
+  ctx->compiled = false;
+
+  const int load = luaL_loadbuffer(
+    lua, (char*) ctx->buf, ctx->size, (char*) f->npath);
+
+  switch (load) {
+  case LUA_ERRSYNTAX:
+    logf_(f, "lua parser syntax error");
+    return false;
+  case LUA_ERRMEM:
+    logf_(f, "lua parser allocation failure");
+    return false;
+  }
+  ctx->compiled      = true;
+  ctx->clean         = true;
+  ctx->registry.func = luaL_ref(lua, LUA_REGISTRYINDEX);
+  return true;
+}
+
+static upd_file_t* prog_exec_(upd_file_t* prf) {
+  upd_iso_t*  iso = prf->iso;
+  prog_t_*    ctx = prf->ctx;
+  upd_file_t* dev = ctx->dev;
+  lua_State*  lua = dev->ctx;
+
+  upd_file_t* stf = upd_file_new(iso, &stream_);
+  if (HEDLEY_UNLIKELY(prf == NULL)) {
+    return NULL;
+  }
+
+  stream_t_* st = stf->ctx;
+  st->file = stf;
+  st->dev  = dev;
+  st->prog = prf;
+
+  upd_file_ref(st->dev);
+  upd_file_ref(st->prog);
+
+  lua_State* th = lua_newthread(lua);
+  if (HEDLEY_UNLIKELY(th == NULL)) {
+    logf_(prf, "failed to create new thread");
+    upd_file_unref(stf);
+    return NULL;
+  }
+  if (HEDLEY_UNLIKELY(0 > uv_timer_start(&st->timer, stream_timer_cb_, 0, 0))) {
+    logf_(prf, "failed to start runner");
+    upd_file_unref(stf);
+    return NULL;
+  }
+  st->lua = th;
+
+  lua_pushvalue(th, -1);
+  st->registry.thread = luaL_ref(th, LUA_REGISTRYINDEX);
+
+  lua_sethook(th,
+    stream_lua_hook_cb_, LUA_MASKCOUNT, SANDBOX_INSTRUCTION_LIMIT_);
+
+  lua_createtable(th, 0, 0);
+  {
+    lua_createtable(th, 0, 0);
+    {
+      lua_createtable(th, 0, 0);
+      {
+        lua_context_create_(th, stf);
+        lua_setfield(th, -2, "Context");
+
+        lua_getfield(th, LUA_REGISTRYINDEX, "Lua");
+        lua_setfield(th, -2, "Lua");
+
+        lua_getfield(th, LUA_REGISTRYINDEX, "File");
+        lua_setfield(th, -2, "File");
+      }
+      lua_setfield(th, -2, "__index");
+
+      lua_pushcfunction(th, lua_immutable_newindex_);
+      lua_setfield(th, -2, "__newindex");
+    }
+    lua_setmetatable(th, -2);
+  }
+  lua_pushvalue(th, -1);
+  st->registry.ctx = luaL_ref(th, LUA_REGISTRYINDEX);
+
+  lua_setfenv(th, -2);
+  lua_pop(th, 1);
+
+  lua_rawgeti(th, LUA_REGISTRYINDEX, ctx->registry.func);
+  st->registry.func = luaL_ref(th, LUA_REGISTRYINDEX);
+  return stf;
+}
+
 
 static bool stream_init_(upd_file_t* f) {
   stream_t_* ctx = NULL;
@@ -357,7 +551,7 @@ static bool stream_init_(upd_file_t* f) {
     .file = f,
   };
 
-  if (HEDLEY_UNLIKELY(0 > uv_idle_init(&f->iso->loop, &ctx->idle))) {
+  if (HEDLEY_UNLIKELY(0 > uv_timer_init(&f->iso->loop, &ctx->timer))) {
     upd_free(&ctx);
     return false;
   }
@@ -375,11 +569,13 @@ static void stream_deinit_(upd_file_t* f) {
     upd_file_unref(ctx->prog);
   }
   if (HEDLEY_LIKELY(ctx->lua)) {
-    luaL_unref(ctx->lua, LUA_REGISTRYINDEX, ctx->env_registry_index);
-    luaL_unref(ctx->lua, LUA_REGISTRYINDEX, ctx->func_registry_index);
-    luaL_unref(ctx->lua, LUA_REGISTRYINDEX, ctx->lua_registry_index);
+    luaL_unref(ctx->lua, LUA_REGISTRYINDEX, ctx->registry.ctx);
+    luaL_unref(ctx->lua, LUA_REGISTRYINDEX, ctx->registry.func);
+
+    luaL_unref(ctx->lua, LUA_REGISTRYINDEX, ctx->registry.thread);
+    lua_gc(ctx->lua, LUA_GCCOLLECT, 0);
   }
-  uv_close((uv_handle_t*) &ctx->idle, stream_close_cb_);
+  uv_close((uv_handle_t*) &ctx->timer, stream_close_cb_);
 }
 
 static bool stream_handle_(upd_req_t* req) {
@@ -395,20 +591,30 @@ static bool stream_handle_(upd_req_t* req) {
     break;
 
   case UPD_REQ_STREAM_INPUT: {
-    if (HEDLEY_UNLIKELY(ctx->exited)) {
-      return false;
-    }
     const upd_req_stream_io_t io = req->stream.io;
     req->stream.io.size = 0;
+    if (HEDLEY_UNLIKELY(!io.size)) {
+      break;
+    }
+    if (HEDLEY_UNLIKELY(!(ctx->state & STREAM_FLAG_ALIVE_))) {
+      return false;
+    }
     if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->in, io.buf, io.size))) {
       return false;
     }
-    ctx->dirty = true;
+    if (HEDLEY_UNLIKELY(ctx->state == STREAM_PENDING_INPUT_)) {
+      const bool start =
+        0 <= uv_timer_start(&ctx->timer, stream_timer_cb_, 0, 0);
+      if (HEDLEY_UNLIKELY(!start)) {
+        assert(false);
+      }
+    }
     req->stream.io.size = io.size;
   } break;
 
-  case UPD_REQ_STREAM_OUTPUT:
-    if (HEDLEY_UNLIKELY(ctx->out.size == 0 && ctx->exited)) {
+  case UPD_REQ_STREAM_OUTPUT: {
+    const bool alive = ctx->state & STREAM_FLAG_ALIVE_;
+    if (HEDLEY_UNLIKELY(ctx->out.size == 0 && !alive)) {
       return false;
     }
     req->stream.io = (upd_req_stream_io_t) {
@@ -417,7 +623,7 @@ static bool stream_handle_(upd_req_t* req) {
     };
     req->cb(req);
     upd_buf_clear(&ctx->out);
-    return true;
+  } return true;
 
   default:
     return false;
@@ -427,7 +633,7 @@ static bool stream_handle_(upd_req_t* req) {
 }
 
 
-static void lua_logf_(upd_file_t* f, const char* fmt, ...) {
+static void logf_(upd_file_t* f, const char* fmt, ...) {
   upd_iso_t* iso = f->iso;
 
   upd_iso_msgf(iso, "upd.lua error: ");
@@ -438,91 +644,6 @@ static void lua_logf_(upd_file_t* f, const char* fmt, ...) {
   va_end(args);
 
   upd_iso_msgf(iso, " (%s)\n", f->npath);
-}
-
-
-static int stream_lua_output_(lua_State* lua) {
-  upd_file_t* f   = *(void**) lua_touserdata(lua, lua_upvalueindex(1));
-  stream_t_*  ctx = f->ctx;
-
-  if (HEDLEY_UNLIKELY(lua_gettop(lua) != 1)) {
-    return luaL_error(lua, "ProgramStream.output() takes just one arguments");
-  }
-
-  size_t len;
-  const char* ptr = luaL_checklstring(lua, 1, &len);
-
-  if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->out, (uint8_t*) ptr, len))) {
-    return luaL_error(lua, "buffer allocation failure");
-  }
-  return 0;
-}
-static int stream_lua_yield_(lua_State* lua) {
-  if (HEDLEY_UNLIKELY(lua_gettop(lua) != 0)) {
-    return luaL_error(lua, "ProgramStream.yield() takes no arguments");
-  }
-  return lua_yield(lua, 0);
-}
-static int stream_lua_unref_(lua_State* lua) {
-  upd_file_t* f   = *(void**) lua_touserdata(lua, lua_upvalueindex(1));
-  stream_t_*  ctx = f->ctx;
-
-  if (HEDLEY_UNLIKELY(lua_gettop(lua) != 0)) {
-    return luaL_error(lua, "ProgramStream.unref() takes no arguments");
-  }
-
-  lua_pushboolean(lua, ctx->holdref);
-
-  if (HEDLEY_LIKELY(ctx->holdref)) {
-    upd_file_unref(f);
-    ctx->holdref = false;
-  }
-  return 1;
-}
-static int stream_lua_index_(lua_State* lua) {
-  upd_file_t* f   = *(void**) lua_touserdata(lua, 1);
-  stream_t_*  ctx = f->ctx;
-
-  const char* key = luaL_checkstring(lua, 2);
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "input") == 0)) {
-    lua_pushlstring(lua, (char*) ctx->in.ptr, ctx->in.size);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "output") == 0)) {
-    lua_pushvalue(lua, 1);
-    lua_pushcclosure(lua, stream_lua_output_, 1);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "yield") == 0)) {
-    lua_pushvalue(lua, 1);
-    lua_pushcclosure(lua, stream_lua_yield_, 1);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "unref") == 0)) {
-    lua_pushvalue(lua, 1);
-    lua_pushcclosure(lua, stream_lua_unref_, 1);
-    return 1;
-  }
-  return luaL_error(lua, "unknown field ProgramStream.%s", key);
-}
-static void stream_lua_build_class_(lua_State* lua) {
-  luaL_newmetatable(lua, "ProgramStream");
-
-  lua_pushcfunction(lua, stream_lua_index_);
-  lua_setfield(lua, -2, "__index");
-
-  lua_getfield(lua, LUA_REGISTRYINDEX, "File");
-  lua_setfield(lua, -2, "__metatable");
-
-  lua_pop(lua, 1);
-}
-
-static void stream_lua_new_(lua_State* lua, upd_file_t* f) {
-  upd_file_t** ptr = lua_newuserdata(lua, sizeof(f));
-  *ptr = f;
-
-  lua_getfield(lua, LUA_REGISTRYINDEX, "ProgramStream");
-  lua_setmetatable(lua, -2);
 }
 
 
@@ -561,12 +682,12 @@ static void prog_pathfind_cb_(upd_req_pathfind_t* pf) {
   upd_iso_unstack(iso, pf);
 
   if (HEDLEY_UNLIKELY(dev == NULL)) {
-    lua_logf_(f, "'"DEV_PATH_"' is not found");
+    logf_(f, "'"DEV_PATH_"' is not found");
     goto EXIT;
   }
 
-  if (HEDLEY_UNLIKELY(dev->driver != &upd_driver_dev_lua)) {
-    lua_logf_(f, "'"DEV_PATH_"' is not lua_State device");
+  if (HEDLEY_UNLIKELY(dev->driver != &upd_driver_lua_dev)) {
+    logf_(f, "'"DEV_PATH_"' is not upd.lua.dev");
     goto EXIT;
   }
 
@@ -597,20 +718,20 @@ static void prog_stat_cb_(uv_fs_t* fsreq) {
   uv_fs_req_cleanup(fsreq);
 
   if (HEDLEY_UNLIKELY(result != 0)) {
-    lua_logf_(f, "stat failure");
+    logf_(f, "stat failure");
     goto ABORT;
   }
 
   ctx->size = fsreq->statbuf.st_size;
   if (HEDLEY_UNLIKELY(ctx->size > SCRIPT_MAX_)) {
-    lua_logf_(f, "too huge script (%zu exceeds %zu)", ctx->size, SCRIPT_MAX_);
+    logf_(f, "too huge script (%zu exceeds %zu)", ctx->size, SCRIPT_MAX_);
     goto ABORT;
   }
 
   const bool open = 0 <= uv_fs_open(
     &iso->loop, fsreq, (char*) f->npath, 0, O_RDONLY, prog_open_cb_);
   if (HEDLEY_UNLIKELY(!open)) {
-    lua_logf_(f, "open failure");
+    logf_(f, "open failure");
     goto ABORT;
   }
   return;
@@ -631,24 +752,24 @@ static void prog_open_cb_(uv_fs_t* fsreq) {
   uv_fs_req_cleanup(fsreq);
 
   if (HEDLEY_UNLIKELY(result < 0)) {
-    lua_logf_(f, "open failure");
+    logf_(f, "open failure");
     goto ABORT;
   }
   ctx->fd = result;
 
   ctx->buf = upd_iso_stack(iso, ctx->size);
   if (HEDLEY_UNLIKELY(ctx->buf == NULL)) {
-    lua_logf_(f, "read buffer allocation failure");
+    logf_(f, "read buffer allocation failure");
     goto ABORT;
   }
-  ctx->buf_on_stack = true;
 
   uv_buf_t buf = uv_buf_init((char*) ctx->buf, ctx->size);
 
   const bool read =
     0 <= uv_fs_read(&iso->loop, fsreq, ctx->fd, &buf, 1, 0, prog_read_cb_);
   if (HEDLEY_UNLIKELY(!read)) {
-    lua_logf_(f, "read failure");
+    upd_iso_unstack(iso, ctx->buf);
+    logf_(f, "read failure");
     goto ABORT;
   }
   return;
@@ -669,27 +790,16 @@ static void prog_read_cb_(uv_fs_t* fsreq) {
   uv_fs_req_cleanup(fsreq);
 
   if (HEDLEY_UNLIKELY(result < 0)) {
-    upd_iso_unstack(iso, ctx->buf);
-    lua_logf_(f, "read failure");
+    logf_(f, "read failure");
     goto EXIT;
   }
-
-  upd_file_ref(f);
-  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
-      .file  = ctx->dev,
-      .ex    = true,
-      .udata = req,
-      .cb    = prog_lock_for_compile_cb_,
-    });
-  if (HEDLEY_UNLIKELY(!lock)) {
-    upd_iso_unstack(iso, ctx->buf);
-    req->cb(req);
-    lua_logf_(f, "lock allocation failure");
-    upd_file_unref(f);
-    goto EXIT;
-  }
+  prog_compile_(f);
+  req->prog.exec = prog_exec_(f);
 
 EXIT:
+  upd_iso_unstack(iso, ctx->buf);
+  req->cb(req);
+
   fsreq->data = f;
   if (HEDLEY_UNLIKELY(0 > uv_fs_close(&iso->loop, fsreq, ctx->fd, prog_close_cb_))) {
     upd_file_unref(f);
@@ -703,170 +813,6 @@ static void prog_close_cb_(uv_fs_t* fsreq) {
   upd_file_unref(f);
 }
 
-static void prog_lock_for_compile_cb_(upd_file_lock_t* lock) {
-  upd_req_t*  req = lock->udata;
-  upd_file_t* f   = req->file;
-  upd_iso_t*  iso = f->iso;
-  prog_t_*    ctx = f->ctx;
-  upd_file_t* dev = ctx->dev;
-  lua_State*  lua = dev->ctx;
-
-  if (HEDLEY_UNLIKELY(!lock->ok)) {
-    goto EXIT;
-  }
-
-  lua_getfield(lua, LUA_REGISTRYINDEX, "ProgramStream");
-  if (HEDLEY_UNLIKELY(lua_isnil(lua, -1))) {
-    stream_lua_build_class_(lua);
-  } else {
-    lua_pop(lua, 1);
-  }
-
-  if (HEDLEY_LIKELY(ctx->compiled)) {
-    luaL_unref(lua, LUA_REGISTRYINDEX, ctx->func_registry_index);
-    ctx->compiled = false;
-  }
-
-  const int load = luaL_loadbuffer(
-    lua, (char*) ctx->buf, ctx->size, (char*) f->npath);
-
-  switch (load) {
-  case LUA_ERRSYNTAX:
-    lua_logf_(f, "lua parser syntax error");
-    goto EXIT;
-  case LUA_ERRMEM:
-    lua_logf_(f, "lua parser allocation failure");
-    goto EXIT;
-  }
-
-  ctx->compiled = true;
-  ctx->clean    = true;
-  ctx->func_registry_index = luaL_ref(lua, LUA_REGISTRYINDEX);
-
-EXIT:
-  req->cb(req);
-
-  upd_file_unlock(lock);
-  upd_iso_unstack(iso, lock);
-
-  if (HEDLEY_LIKELY(ctx->buf_on_stack)) {
-    upd_iso_unstack(iso, ctx->buf);
-  }
-
-  upd_file_unref(f);
-}
-
-static void prog_exec_after_compile_cb_(upd_req_t* req) {
-  upd_file_t* f      = req->file;
-  prog_t_*    ctx    = f->ctx;
-  upd_iso_t*  iso    = f->iso;
-  upd_req_t*  origin = req->udata;
-
-  upd_iso_unstack(iso, req);
-
-  if (HEDLEY_UNLIKELY(ctx->compiled)) {
-    upd_file_ref(f);
-    const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
-        .file  = ctx->dev,
-        .ex    = true,
-        .udata = origin,
-        .cb    = prog_lock_for_exec_cb_,
-      });
-    if (HEDLEY_UNLIKELY(!lock)) {
-      origin->cb(origin);
-      upd_file_unref(f);
-      return;
-    }
-  }
-}
-
-static void prog_lock_for_exec_cb_(upd_file_lock_t* lock) {
-  upd_req_t*  req = lock->udata;
-  upd_file_t* prf = req->file;
-  upd_iso_t*  iso = prf->iso;
-  prog_t_*    ctx = prf->ctx;
-  upd_file_t* dev = ctx->dev;
-  lua_State*  lua = dev->ctx;
-
-  upd_file_t* stf = upd_file_new(iso, &stream_);
-  if (HEDLEY_UNLIKELY(prf == NULL)) {
-    goto EXIT;
-  }
-
-  stream_t_* st = stf->ctx;
-  st->file = stf;
-  st->dev  = dev;
-  st->prog = prf;
-
-  upd_file_ref(st->dev);
-  upd_file_ref(st->prog);
-
-  lua_State* th = lua_newthread(lua);
-  if (HEDLEY_UNLIKELY(th == NULL)) {
-    upd_file_unref(stf);
-    goto EXIT;
-  }
-  if (HEDLEY_UNLIKELY(0 > uv_idle_start(&st->idle, stream_idle_cb_))) {
-    lua_logf_(prf, "failed to start runner");
-    upd_file_unref(stf);
-    goto EXIT;
-  }
-
-  st->lua = th;
-  st->lua_registry_index = luaL_ref(lua, LUA_REGISTRYINDEX);
-
-  lua_sethook(th,
-    stream_lua_hook_cb_, LUA_MASKCOUNT, SANDBOX_INSTRUCTION_LIMIT_);
-
-  lua_createtable(th, 0, 0);
-  for (size_t i = 0; i < sizeof(lua_global_)/sizeof(lua_global_[0]); ++i) {
-    lua_getglobal(th, lua_global_[i]);
-    lua_setfield(th, -2, lua_global_[i]);
-  }
-  stream_lua_new_(th, stf);
-  lua_setfield(th, -2, "stream");
-
-  st->env_registry_index = luaL_ref(th, LUA_REGISTRYINDEX);
-
-  lua_rawgeti(th, LUA_REGISTRYINDEX, ctx->func_registry_index);
-  lua_pushvalue(th, -1);
-  st->func_registry_index = luaL_ref(th, LUA_REGISTRYINDEX);
-
-  st->holdref = true;
-  upd_file_ref(stf);
-
-  req->prog.exec = stf;
-
-EXIT:
-  req->cb(req);
-
-  upd_file_unlock(lock);
-  upd_iso_unstack(iso, lock);
-
-  upd_file_unref(prf);
-}
-
-static void prog_lock_for_delete_cb_(upd_file_lock_t* lock) {
-  prog_t_* ctx = lock->udata;
-  upd_file_t*  dev = lock->file;
-  upd_iso_t*   iso = dev->iso;
-  lua_State*   lua = dev->ctx;
-
-  if (HEDLEY_UNLIKELY(!lock->ok)) {
-    goto EXIT;
-  }
-
-  if (HEDLEY_LIKELY(ctx->compiled)) {
-    luaL_unref(lua, LUA_REGISTRYINDEX, ctx->func_registry_index);
-  }
-
-EXIT:
-  upd_free(&ctx);
-
-  upd_file_unlock(lock);
-  upd_iso_unstack(iso, lock);
-}
-
 
 static void stream_lua_destroy_hook_cb_(lua_State* lua, lua_Debug* dbg) {
   (void) dbg;
@@ -877,19 +823,33 @@ static void stream_lua_hook_cb_(lua_State* lua, lua_Debug* dbg) {
   lua_sethook(lua, stream_lua_destroy_hook_cb_, LUA_MASKLINE, 0);
 }
 
-static void stream_idle_cb_(uv_idle_t* idle) {
-  stream_t_*  ctx = (void*) idle;
-  upd_file_t* f   = ctx->file;
+static void stream_timer_cb_(uv_timer_t* timer) {
+  stream_t_*  ctx = (void*) timer;
+  upd_file_t* stf = ctx->file;
+  upd_file_t* prf = ctx->prog;
   lua_State*  lua = ctx->lua;
 
-  lua_rawgeti(lua, LUA_REGISTRYINDEX, ctx->func_registry_index);
-  lua_rawgeti(lua, LUA_REGISTRYINDEX, ctx->env_registry_index);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, ctx->registry.func);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, ctx->registry.ctx);
   lua_setfenv(lua, -2);
 
-  const int err = lua_resume(lua, 0);
+  int args = 0;
+  switch ((intmax_t) ctx->state) {
+  case STREAM_PENDING_INPUT_:
+    lua_pushlstring(lua, (char*) ctx->in.ptr, ctx->in.size);
+    args = 1;
+    upd_buf_clear(&ctx->in);
+    break;
+  case STREAM_PENDING_PROMISE_:
+    args = lua_promise_push_result_(ctx->pending, lua);
+    break;
+  }
+  ctx->state = STREAM_RUNNING_;
+
+  const int err = lua_resume(lua, args);
   switch (err) {
   case 0:
-    ctx->exited = true;
+    ctx->state = STREAM_EXITED_;
     break;
   case LUA_YIELD:
     break;
@@ -899,28 +859,362 @@ static void stream_idle_cb_(uv_idle_t* idle) {
     lua_Debug dbg;
     lua_getstack(lua, 0, &dbg);
     lua_getinfo(lua, "Sl", &dbg);
-    lua_logf_(f,
-      "runtime error (%s) (%s:%d)",
+    logf_(prf, "runtime error (%s) (%s:%d)",
       lua_tostring(lua, -1), dbg.source, dbg.currentline);
-    ctx->exited = true;
+    ctx->state = STREAM_ABORTED_;
   } break;
   }
   lua_settop(lua, 0);
 
   if (HEDLEY_UNLIKELY(ctx->out.size)) {
-    upd_file_trigger(f, UPD_FILE_UPDATE);
+    upd_file_trigger(stf, UPD_FILE_UPDATE);
   }
-  if (HEDLEY_UNLIKELY(ctx->exited)) {
-    upd_file_trigger(f, UPD_FILE_UPDATE);
-    uv_idle_stop(&ctx->idle);
 
-    if (HEDLEY_LIKELY(ctx->holdref)) {
-      upd_file_unref(f);
+  switch ((intmax_t) ctx->state) {
+  case STREAM_RUNNING_: {
+    const bool start = 0 <= uv_timer_start(&ctx->timer, stream_timer_cb_, 0, 0);
+    if (HEDLEY_UNLIKELY(!start)) {
+      assert(false);
     }
+  } break;
+  case STREAM_EXITED_:
+  case STREAM_ABORTED_:
+    upd_file_trigger(stf, UPD_FILE_UPDATE);
+    break;
   }
 }
 
 static void stream_close_cb_(uv_handle_t* handle) {
   stream_t_* ctx = (void*) handle;
   upd_free(&ctx);
+}
+
+
+static int lua_immutable_newindex_(lua_State* lua) {
+  return luaL_error(lua, "immutable object cannot be modified");
+}
+
+
+static int lua_lib_set_metatable_(lua_State* lua) {
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  lua_setmetatable(lua, -2);
+  return 1;
+}
+static void lua_lib_register_class_(lua_State* lua) {
+  lua_newuserdata(lua, 0);
+  {
+    lua_createtable(lua, 0, 0);
+    {
+      lua_createtable(lua, 0, 0);
+      {
+        lua_pushcfunction(lua, lua_lib_set_metatable_);
+        lua_setfield(lua, -2, "setMetatable");
+      }
+      lua_setfield(lua, -2, "__index");
+    }
+    lua_setmetatable(lua, -2);
+  }
+  lua_setfield(lua, LUA_REGISTRYINDEX, "Lua");
+}
+
+
+static int lua_context_msg_(lua_State* lua) {
+  upd_iso_t* iso = lua_touserdata(lua, lua_upvalueindex(1));
+
+  const size_t n = lua_gettop(lua);
+  for (size_t i = 1; i <= n; ++i) {
+    size_t len;
+    const char* s = luaL_checklstring(lua, i, &len);
+
+    upd_iso_msg(iso, (uint8_t*) s, len);
+  }
+  return 0;
+}
+static int lua_context_recv_(lua_State* lua) {
+  upd_file_t* f   = lua_touserdata(lua, lua_upvalueindex(1));
+  stream_t_*  ctx = f->ctx;
+
+  lua_pushlstring(lua, (char*) ctx->in.ptr, ctx->in.size);
+  upd_buf_clear(&ctx->in);
+  return 1;
+}
+static int lua_context_recv_blocked_(lua_State* lua) {
+  upd_file_t* f   = lua_touserdata(lua, lua_upvalueindex(1));
+  stream_t_*  ctx = f->ctx;
+
+  if (HEDLEY_LIKELY(!ctx->in.size)) {
+    ctx->state = STREAM_PENDING_INPUT_;
+    return lua_yield(lua, 0);
+  }
+
+  lua_pushlstring(lua, (char*) ctx->in.ptr, ctx->in.size);
+  upd_buf_clear(&ctx->in);
+  return 1;
+}
+static int lua_context_send_(lua_State* lua) {
+  upd_file_t* f   = lua_touserdata(lua, lua_upvalueindex(1));
+  stream_t_*  ctx = f->ctx;
+
+  const size_t n = lua_gettop(lua);
+  for (size_t i = 1; i <= n; ++i) {
+    size_t len;
+    const char* s = luaL_checklstring(lua, i, &len);
+
+    if (HEDLEY_UNLIKELY(len && !upd_buf_append(&ctx->out, (uint8_t*) s, len))) {
+      return luaL_error(lua, "buffer allocation failure");
+    }
+  }
+  return 0;
+}
+static int lua_context_sleep_(lua_State* lua) {
+  upd_file_t* f   = lua_touserdata(lua, lua_upvalueindex(1));
+  stream_t_*  ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(lua_gettop(lua) == 1)) {
+    return luaL_error(lua, "Context.sleep() takes 1 arg");
+  }
+
+  ctx->state = STREAM_PENDING_TIMER_;
+
+  const lua_Integer t = luaL_checkinteger(lua, 1);
+  if (HEDLEY_UNLIKELY(t < 0)) {
+    return luaL_error(lua, "negative duration: %"PRIiMAX"", (intmax_t) t);
+  }
+
+  const bool start = uv_timer_start(&ctx->timer, stream_timer_cb_, t, 0);
+  if (HEDLEY_UNLIKELY(!start)) {
+    assert(false);
+  }
+  return lua_yield(lua, 0);
+}
+static void lua_context_create_(lua_State* lua, upd_file_t* f) {
+  *(void**) lua_newuserdata(lua, sizeof(f)) = f;
+
+  lua_createtable(lua, 0, 0);
+  {
+    lua_createtable(lua, 0, 0);
+    {
+      lua_pushlightuserdata(lua, f->iso);
+      lua_pushcclosure(lua, lua_context_msg_, 1);
+      lua_setfield(lua, -2, "msg");
+
+      lua_pushlightuserdata(lua, f->iso);
+      lua_pushcclosure(lua, lua_context_sleep_, 1);
+      lua_setfield(lua, -2, "sleep");
+
+      lua_pushlightuserdata(lua, f);
+      lua_pushcclosure(lua, lua_context_recv_, 1);
+      lua_setfield(lua, -2, "recv");
+
+      lua_pushlightuserdata(lua, f);
+      lua_pushcclosure(lua, lua_context_recv_blocked_, 1);
+      lua_setfield(lua, -2, "recvBlocked");
+
+      lua_pushlightuserdata(lua, f);
+      lua_pushcclosure(lua, lua_context_send_, 1);
+      lua_setfield(lua, -2, "send");
+    }
+    lua_setfield(lua, -2, "__index");
+  }
+  lua_setmetatable(lua, -2);
+}
+
+static upd_file_t* lua_context_get_file_(lua_State* lua) {
+  lua_pushthread(lua);
+  lua_getfenv(lua, -1);
+  lua_getfield(lua, -1, "Context");
+  upd_file_t* f = *(void**) lua_touserdata(lua, -1);
+  lua_pop(lua, 3);
+  return f;
+}
+
+
+static int lua_file_pathfind_(lua_State* lua) {
+  upd_iso_t* iso = lua_touserdata(lua, lua_upvalueindex(1));
+
+  if (HEDLEY_UNLIKELY(lua_gettop(lua) != 1)) {
+    return luaL_error(lua, "File.pathfind() takes one arg");
+  }
+
+  size_t len;
+  const char* path = luaL_checklstring(lua, 1, &len);
+
+  promise_t_* pro = lua_promise_new_(lua, len);
+  pro->type = PROMISE_PATHFIND_;
+
+  pro->pf = (upd_req_pathfind_t) {
+    .iso  = iso,
+    .path = utf8ncpy(pro+1, path, len),
+    .len  = len,
+    .cb   = lua_promise_pathfind_cb_,
+  };
+  upd_file_ref(pro->file);
+  upd_req_pathfind(&pro->pf);
+  return 1;
+}
+static int lua_file_index_(lua_State* lua) {
+  upd_file_t* f = *(void**) lua_touserdata(lua, 1);
+
+  const char* key = luaL_checkstring(lua, 2);
+  if (HEDLEY_UNLIKELY(utf8cmp(key, "npath") == 0)) {
+    lua_pushstring(lua, (char*) f->npath);
+    return 1;
+  }
+  return luaL_error(lua, "unknown field %s", key);
+}
+static int lua_file_gc_(lua_State* lua) {
+  upd_file_t* f = *(void**) lua_touserdata(lua, 1);
+  upd_file_unref(f);
+  return 0;
+}
+static void lua_file_register_class_(lua_State* lua, upd_iso_t* iso) {
+  lua_createtable(lua, 0, 0);
+  {
+    lua_pushcfunction(lua, lua_file_index_);
+    lua_setfield(lua, -2, "__index");
+
+    lua_pushcfunction(lua, lua_file_gc_);
+    lua_setfield(lua, -2, "__gc");
+
+    lua_createtable(lua, 0, 0);
+    {
+      lua_createtable(lua, 0, 0);
+      {
+        lua_pushlightuserdata(lua, iso);
+        lua_pushcclosure(lua, lua_file_pathfind_, 1);
+        lua_setfield(lua, -2, "pathfind");
+      }
+      lua_setfield(lua, -2, "__index");
+
+      lua_pushcfunction(lua, lua_immutable_newindex_);
+      lua_setfield(lua, -2, "__newindex");
+    }
+    lua_setmetatable(lua, -2);
+  }
+  lua_setfield(lua, LUA_REGISTRYINDEX, "File");
+}
+
+static void lua_file_new_(lua_State* lua, upd_file_t* f) {
+  *(void**) lua_newuserdata(lua, sizeof(f)) = f;
+  lua_getfield(lua, LUA_REGISTRYINDEX, "File");
+  lua_setmetatable(lua, -2);
+
+  upd_file_ref(f);
+}
+
+
+static int lua_promise_result_(lua_State* lua) {
+  promise_t_* pro = lua_touserdata(lua, lua_upvalueindex(1));
+  if (HEDLEY_UNLIKELY(lua_gettop(lua) > 0)) {
+    return luaL_error(lua, "Promise.result() takes no args");
+  }
+  return lua_promise_push_result_(pro, lua);
+}
+static int lua_promise_await_(lua_State* lua) {
+  promise_t_* pro = lua_touserdata(lua, lua_upvalueindex(1));
+  upd_file_t* f   = pro->file;
+  stream_t_*  ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(lua_gettop(lua) > 0)) {
+    return luaL_error(lua, "Promise.await() takes no args");
+  }
+  if (!pro->done) {
+    ctx->state   = STREAM_PENDING_PROMISE_;
+    ctx->pending = pro;
+    return lua_yield(lua, 0);
+  }
+  return lua_promise_result_(lua);
+}
+static int lua_promise_index_(lua_State* lua) {
+  promise_t_* pro = lua_touserdata(lua, 1);
+
+  const char* key = luaL_checkstring(lua, 2);
+  if (HEDLEY_UNLIKELY(utf8cmp(key, "result") == 0)) {
+    lua_pushlightuserdata(lua, pro);
+    lua_pushcclosure(lua, lua_promise_result_, 1);
+    return 1;
+  }
+  if (HEDLEY_UNLIKELY(utf8cmp(key, "await") == 0)) {
+    lua_pushlightuserdata(lua, pro);
+    lua_pushcclosure(lua, lua_promise_await_, 1);
+    return 1;
+  }
+  if (HEDLEY_UNLIKELY(utf8cmp(key, "done") == 0)) {
+    lua_pushboolean(lua, pro->done);
+    return 1;
+  }
+  if (HEDLEY_UNLIKELY(utf8cmp(key, "error") == 0)) {
+    lua_pushboolean(lua, pro->error);
+    return 1;
+  }
+  return luaL_error(lua, "unknown field %s", key);
+}
+static void lua_promise_register_class_(lua_State* lua) {
+  lua_createtable(lua, 0, 0);
+  {
+    lua_pushcfunction(lua, lua_promise_index_);
+    lua_setfield(lua, -2, "__index");
+  }
+  lua_setfield(lua, LUA_REGISTRYINDEX, "Promise");
+}
+
+static promise_t_* lua_promise_new_(lua_State* lua, size_t add) {
+  promise_t_* pro = lua_newuserdata(lua, sizeof(*pro)+add);
+  lua_getfield(lua, LUA_REGISTRYINDEX, "Promise");
+  lua_setmetatable(lua, -2);
+
+  *pro = (promise_t_) {
+    .file = lua_context_get_file_(lua),
+  };
+
+  lua_pushvalue(lua, -1);
+  pro->registry = luaL_ref(lua, LUA_REGISTRYINDEX);
+  return pro;
+}
+
+static int lua_promise_push_result_(promise_t_* pro, lua_State* lua) {
+  switch (pro->type) {
+  case PROMISE_STANDARD_:
+    return luaL_error(lua, "not implemented");
+
+  case PROMISE_PATHFIND_:
+    if (HEDLEY_LIKELY(!pro->pf.len)) {
+      lua_file_new_(lua, pro->pf.base);
+      lua_pushstring(lua, "");
+      lua_pushvalue(lua, -2);
+    } else {
+      lua_pushnil(lua);
+      lua_pushlstring(lua, (char*) pro->pf.path, pro->pf.len);
+      lua_file_new_(lua, pro->pf.base);
+    }
+    return 3;
+
+  default:
+    return luaL_error(lua, "unknown promise");
+  }
+}
+
+static void lua_promise_finalize_(promise_t_* pro, bool ok) {
+  upd_file_t* f   = pro->file;
+  stream_t_*  ctx = f->ctx;
+
+  pro->done  = true;
+  pro->error = !ok;
+
+  if (HEDLEY_UNLIKELY(pro == ctx->pending)) {
+    const bool start =
+      0 <= uv_timer_start(&ctx->timer, stream_timer_cb_, 0, 0);
+    if (HEDLEY_UNLIKELY(!start)) {
+      assert(false);
+    }
+  }
+  upd_file_unref(f);
+  luaL_unref(ctx->lua, LUA_REGISTRYINDEX, pro->registry);
+}
+
+
+static void lua_promise_pathfind_cb_(upd_req_pathfind_t* pf) {
+  promise_t_* pro = (void*) pf;
+  lua_promise_finalize_(pro, true);
 }

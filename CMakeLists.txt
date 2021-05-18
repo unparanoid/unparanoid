@@ -70,8 +70,6 @@ target_sources(libupd
     src/driver/lua.c
     src/driver/syncdir.c
 
-    src/driver/dev/lua.c
-
     src/driver/prog/http.c
     src/driver/prog/parallelism.c
 )
