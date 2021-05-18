@@ -26,21 +26,3 @@ HEDLEY_NON_NULL(1)
 void
 upd_srv_delete(
   upd_srv_t* srv);
-
-
-#if defined(UPD_TEST)
-static void upd_test_srv(void) {
-  upd_file_t* parallelism = upd_file_new(upd_test.iso, &upd_driver_prog_parallelism);
-  assert(parallelism);
-  upd_file_t* http = upd_file_new(upd_test.iso, &upd_driver_prog_http);
-  assert(http);
-
-  assert(upd_srv_new_tcp(
-    upd_test.iso, parallelism, (uint8_t*) "0.0.0.0", 9999));
-  assert(upd_srv_new_tcp(
-    upd_test.iso, http, (uint8_t*) "0.0.0.0", 8080));
-
-  upd_file_unref(parallelism);
-  upd_file_unref(http);
-}
-#endif

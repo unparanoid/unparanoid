@@ -21,7 +21,6 @@ static const test_t_ tests_[] = {
   { "file",   upd_test_file, },
   { "path",   upd_test_path, },
   { "req",    upd_test_req, },
-  { "srv",    upd_test_srv, },
 };
 
 
