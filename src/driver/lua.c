@@ -85,7 +85,10 @@ struct promise_t_ {
 
   upd_file_t* file;
 
-  int registry;
+  struct {
+    int self;
+    int file;
+  } registry;
 
   unsigned error : 1;
   unsigned done  : 1;
@@ -271,14 +274,20 @@ lua_context_get_file_(
 static
 void
 lua_file_register_class_(
-  lua_State* lua,
-  upd_iso_t* iso);
+  lua_State* lua);
 
 static
 void
 lua_file_new_(
   lua_State*  lua,
   upd_file_t* file);
+
+
+static
+void
+lua_req_register_class_(
+  lua_State* lua,
+  upd_iso_t* iso);
 
 
 static
@@ -307,6 +316,11 @@ lua_promise_finalize_(
 
 static
 void
+lua_promise_std_cb_(
+  upd_req_t* req);
+
+static
+void
 lua_promise_pathfind_cb_(
   upd_req_pathfind_t* pf);
 
@@ -317,7 +331,8 @@ static bool dev_init_(upd_file_t* f) {
     return false;
   }
   lua_lib_register_class_(lua);
-  lua_file_register_class_(lua, f->iso);
+  lua_file_register_class_(lua);
+  lua_req_register_class_(lua, f->iso);
   lua_promise_register_class_(lua);
 
   f->ctx = lua;
@@ -523,6 +538,9 @@ static upd_file_t* prog_exec_(upd_file_t* prf) {
 
         lua_getfield(th, LUA_REGISTRYINDEX, "File");
         lua_setfield(th, -2, "File");
+
+        lua_getfield(th, LUA_REGISTRYINDEX, "Req");
+        lua_setfield(th, -2, "Req");
       }
       lua_setfield(th, -2, "__index");
 
@@ -1040,29 +1058,6 @@ static upd_file_t* lua_context_get_file_(lua_State* lua) {
 }
 
 
-static int lua_file_pathfind_(lua_State* lua) {
-  upd_iso_t* iso = lua_touserdata(lua, lua_upvalueindex(1));
-
-  if (HEDLEY_UNLIKELY(lua_gettop(lua) != 1)) {
-    return luaL_error(lua, "File.pathfind() takes one arg");
-  }
-
-  size_t len;
-  const char* path = luaL_checklstring(lua, 1, &len);
-
-  promise_t_* pro = lua_promise_new_(lua, len);
-  pro->type = PROMISE_PATHFIND_;
-
-  pro->pf = (upd_req_pathfind_t) {
-    .iso  = iso,
-    .path = utf8ncpy(pro+1, path, len),
-    .len  = len,
-    .cb   = lua_promise_pathfind_cb_,
-  };
-  upd_file_ref(pro->file);
-  upd_req_pathfind(&pro->pf);
-  return 1;
-}
 static int lua_file_index_(lua_State* lua) {
   upd_file_t* f = *(void**) lua_touserdata(lua, 1);
 
@@ -1084,7 +1079,7 @@ static int lua_file_gc_(lua_State* lua) {
   upd_file_unref(*udata);
   return 0;
 }
-static void lua_file_register_class_(lua_State* lua, upd_iso_t* iso) {
+static void lua_file_register_class_(lua_State* lua) {
   lua_createtable(lua, 0, 0);
   {
     lua_pushcfunction(lua, lua_file_index_);
@@ -1092,21 +1087,6 @@ static void lua_file_register_class_(lua_State* lua, upd_iso_t* iso) {
 
     lua_pushcfunction(lua, lua_file_gc_);
     lua_setfield(lua, -2, "__gc");
-
-    lua_createtable(lua, 0, 0);
-    {
-      lua_createtable(lua, 0, 0);
-      {
-        lua_pushlightuserdata(lua, iso);
-        lua_pushcclosure(lua, lua_file_pathfind_, 1);
-        lua_setfield(lua, -2, "pathfind");
-      }
-      lua_setfield(lua, -2, "__index");
-
-      lua_pushcfunction(lua, lua_immutable_newindex_);
-      lua_setfield(lua, -2, "__newindex");
-    }
-    lua_setmetatable(lua, -2);
   }
   lua_setfield(lua, LUA_REGISTRYINDEX, "File");
 }
@@ -1114,6 +1094,11 @@ static void lua_file_register_class_(lua_State* lua, upd_iso_t* iso) {
 static void lua_file_new_(lua_State* lua, upd_file_t* f) {
   upd_file_t* stf = lua_context_get_file_(lua);
   stream_t_*  ctx = stf->ctx;
+
+  if (HEDLEY_UNLIKELY(f == NULL)) {
+    lua_pushnil(lua);
+    return;
+  }
 
   upd_file_t** udata = lua_newuserdata(lua, sizeof(f));
   *udata = f;
@@ -1125,6 +1110,78 @@ static void lua_file_new_(lua_State* lua, upd_file_t* f) {
     luaL_error(lua, "file list insertion failure");
   }
   upd_file_ref(f);
+}
+
+
+static int lua_req_pathfind_(lua_State* lua) {
+  upd_iso_t* iso = lua_touserdata(lua, lua_upvalueindex(1));
+
+  if (HEDLEY_UNLIKELY(lua_gettop(lua) != 1)) {
+    return luaL_error(lua, "Req.pathfind() takes one arg");
+  }
+
+  size_t len;
+  const char* path = luaL_checklstring(lua, 1, &len);
+
+  promise_t_* pro = lua_promise_new_(lua, len);
+  pro->type = PROMISE_PATHFIND_;
+
+  pro->pf = (upd_req_pathfind_t) {
+    .iso  = iso,
+    .path = utf8ncpy(pro+1, path, len),
+    .len  = len,
+    .cb   = lua_promise_pathfind_cb_,
+  };
+  upd_req_pathfind(&pro->pf);
+  return 1;
+}
+static int lua_req_prog_exec_(lua_State* lua) {
+  if (HEDLEY_UNLIKELY(lua_gettop(lua) != 1)) {
+    return luaL_error(lua, "usage: Req.prog.exec(File)");
+  }
+  upd_file_t* f = *(void**) luaL_checkudata(lua, 1, "File");
+
+  promise_t_* pro = lua_promise_new_(lua, 0);
+  pro->type = PROMISE_STANDARD_;
+
+  pro->std = (upd_req_t) {
+    .file = f,
+    .type = UPD_REQ_PROG_EXEC,
+    .cb   = lua_promise_std_cb_,
+  };
+  if (HEDLEY_UNLIKELY(!upd_req(&pro->std))) {
+    lua_pop(lua, 1);
+    lua_promise_finalize_(pro, false);
+    lua_pushnil(lua);
+  }
+  return 1;
+}
+static void lua_req_register_class_(lua_State* lua, upd_iso_t* iso) {
+  lua_createtable(lua, 0, 0);
+  {
+    lua_createtable(lua, 0, 0);
+    {
+      lua_createtable(lua, 0, 0);
+      {
+        lua_pushlightuserdata(lua, iso);
+        lua_pushcclosure(lua, lua_req_pathfind_, 1);
+        lua_setfield(lua, -2, "pathfind");
+
+        lua_createtable(lua, 0, 0);
+        {
+          lua_pushcfunction(lua, lua_req_prog_exec_);
+          lua_setfield(lua, -2, "exec");
+        }
+        lua_setfield(lua, -2, "prog");
+      }
+      lua_setfield(lua, -2, "__index");
+
+      lua_pushcfunction(lua, lua_immutable_newindex_);
+      lua_setfield(lua, -2, "__newindex");
+    }
+    lua_setmetatable(lua, -2);
+  }
+  lua_setfield(lua, LUA_REGISTRYINDEX, "Req");
 }
 
 
@@ -1191,15 +1248,23 @@ static promise_t_* lua_promise_new_(lua_State* lua, size_t add) {
   *pro = (promise_t_) {
     .file = lua_context_get_file_(lua),
   };
+  upd_file_ref(pro->file);
 
   lua_pushvalue(lua, -1);
-  pro->registry = luaL_ref(lua, LUA_REGISTRYINDEX);
+  pro->registry.self = luaL_ref(lua, LUA_REGISTRYINDEX);
   return pro;
 }
 
 static int lua_promise_push_result_(promise_t_* pro, lua_State* lua) {
+  upd_req_t* std = &pro->std;
+
   switch (pro->type) {
   case PROMISE_STANDARD_:
+    switch (std->type) {
+    case UPD_REQ_PROG_EXEC:
+      lua_rawgeti(lua, LUA_REGISTRYINDEX, pro->registry.file);
+      return 1;
+    }
     return luaL_error(lua, "not implemented");
 
   case PROMISE_PATHFIND_:
@@ -1234,9 +1299,28 @@ static void lua_promise_finalize_(promise_t_* pro, bool ok) {
     }
   }
   upd_file_unref(f);
-  luaL_unref(ctx->lua, LUA_REGISTRYINDEX, pro->registry);
+  luaL_unref(ctx->lua, LUA_REGISTRYINDEX, pro->registry.self);
 }
 
+
+static void lua_promise_std_cb_(upd_req_t* req) {
+  promise_t_* pro = (void*) req;
+  upd_file_t* stf = pro->file;
+  stream_t_*  ctx = stf->ctx;
+  lua_State*  lua = ctx->lua;
+
+  switch (req->type) {
+  case UPD_REQ_PROG_EXEC:
+    lua_file_new_(lua, req->prog.exec);
+    pro->registry.file = luaL_ref(lua, LUA_REGISTRYINDEX);
+    upd_file_unref(req->prog.exec);
+    break;
+
+  default:
+    luaL_error(lua, "not implemented request type");
+  }
+  lua_promise_finalize_(pro, true);
+}
 
 static void lua_promise_pathfind_cb_(upd_req_pathfind_t* pf) {
   promise_t_* pro = (void*) pf;
