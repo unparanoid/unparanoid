@@ -222,7 +222,8 @@ upd_file_unlock(
   f(BIN, 0x0002, WRITE)  \
 \
   f(PROG, 0x0000, ACCESS)  \
-  f(PROG, 0x0010, EXEC)  \
+  f(PROG, 0x0010, COMPILE)  \
+  f(PROG, 0x0020, EXEC)  \
 \
   f(STREAM, 0x0000, ACCESS)  \
   f(STREAM, 0x0010, INPUT)  \
@@ -269,7 +270,8 @@ typedef struct upd_req_bin_rw_t {
 } upd_req_bin_rw_t;
 
 typedef struct upd_req_prog_access_t {
-  unsigned exec : 1;
+  unsigned compile : 1;
+  unsigned exec    : 1;
 } upd_req_prog_access_t;
 
 typedef struct upd_req_stream_access_t {
