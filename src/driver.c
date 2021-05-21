@@ -33,6 +33,7 @@ setup_install_add_cb_(
 
 void upd_driver_setup(upd_iso_t* iso) {
   upd_driver_register(iso, &upd_driver_lua);
+  upd_driver_register(iso, &upd_driver_tensor);
 
   const bool ok = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
       .iso  = iso,

@@ -21,6 +21,7 @@ typedef uint64_t upd_file_id_t;
 typedef uint8_t  upd_file_event_t;
 typedef uint16_t upd_req_cat_t;
 typedef uint32_t upd_req_type_t;
+typedef uint8_t  upd_tensor_type_t;
 
 typedef
 void
@@ -208,7 +209,8 @@ upd_file_unlock(
   f(0x0000, DIR)  \
   f(0x0001, BIN)  \
   f(0x0002, PROG)  \
-  f(0x0003, STREAM)
+  f(0x0003, STREAM)  \
+  f(0x0004, TENSOR)
 
 #define UPD_REQ_TYPE_EACH(f)  \
   f(DIR, 0x0000, ACCESS)  \
@@ -227,7 +229,12 @@ upd_file_unlock(
 \
   f(STREAM, 0x0000, ACCESS)  \
   f(STREAM, 0x0010, INPUT)  \
-  f(STREAM, 0x0020, OUTPUT)
+  f(STREAM, 0x0020, OUTPUT)  \
+\
+  f(TENSOR, 0x0000, ACCESS)  \
+  f(TENSOR, 0x0010, ALLOC)  \
+  f(TENSOR, 0x0020, META)  \
+  f(TENSOR, 0x0030, DATA)
 
 enum {
 # define each_(i, N) UPD_REQ_##N = i,
@@ -284,6 +291,28 @@ typedef struct upd_req_stream_io_t {
   uint8_t* buf;
 } upd_req_stream_io_t;
 
+typedef struct upd_req_tensor_access_t {
+  unsigned alloc : 1;
+  unsigned meta  : 1;
+  unsigned data  : 1;
+} upd_req_tensor_access_t;
+
+typedef struct upd_req_tensor_meta_t {
+  uint8_t dim;
+  uint8_t rank;
+
+  upd_tensor_type_t* type;
+  uint64_t*          reso;
+
+  unsigned inplace : 1;
+} upd_req_tensor_meta_t;
+
+typedef struct upd_req_tensor_data_t {
+  upd_req_tensor_meta_t meta;
+  uint8_t* ptr;
+  size_t   size;
+} upd_req_tensor_data_t;
+
 struct upd_req_t {
   upd_file_t* file;
 
@@ -312,6 +341,11 @@ struct upd_req_t {
       upd_req_stream_access_t access;
       upd_req_stream_io_t     io;
     } stream;
+    union {
+      upd_req_tensor_access_t access;
+      upd_req_tensor_meta_t   meta;
+      upd_req_tensor_data_t   data;
+    } tensor;
   };
 };
 
@@ -319,3 +353,24 @@ UPD_DECL_FUNC
 bool
 upd_req(
   upd_req_t* req);
+
+
+/* ---- TENSOR TYPE ---- */
+
+enum {
+  /* upd_tensor_type_t */
+  UPD_TENSOR_U8  = 0x00,
+  UPD_TENSOR_U16 = 0x01,
+  UPD_TENSOR_FLT = 0x10,
+  UPD_TENSOR_DBL = 0x11,
+};
+
+static inline uint64_t upd_tensor_type_sizeof(upd_tensor_type_t t) {
+  switch (t) {
+  case UPD_TENSOR_U8:  return sizeof(uint8_t);
+  case UPD_TENSOR_U16: return sizeof(uint16_t);
+  case UPD_TENSOR_FLT: return sizeof(float);
+  case UPD_TENSOR_DBL: return sizeof(double);
+  }
+  return 0;
+}

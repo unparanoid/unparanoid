@@ -69,6 +69,7 @@ target_sources(libupd
     src/driver/dir.c
     src/driver/lua.c
     src/driver/syncdir.c
+    src/driver/tensor.c
 
     src/driver/prog/http.c
     src/driver/prog/parallelism.c
