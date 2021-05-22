@@ -951,6 +951,13 @@ static void stream_timer_cb_(uv_timer_t* timer) {
   switch (err) {
   case 0:
     ctx->state = STREAM_EXITED_;
+
+    for (size_t i = 0; i < ctx->files.n; ++i) {
+      upd_file_t** udata = ctx->files.p[i];
+      upd_file_unref(*udata);
+      *udata = NULL;
+    }
+    upd_array_clear(&ctx->files);
     break;
   case LUA_YIELD:
     break;
@@ -1289,7 +1296,9 @@ static int lua_req_emit_no_args_(lua_State* lua) {
   lua_pushvalue(lua, index);
   return 1;
 }
-static int lua_req_dir_find_(lua_State* lua) {
+static int lua_req_dir_with_entry_name_(lua_State* lua) {
+  const upd_req_type_t type = lua_tointeger(lua, lua_upvalueindex(1));
+
   if (HEDLEY_UNLIKELY(lua_gettop(lua) != 2)) {
     return luaL_error(lua, "invalid args");
   }
@@ -1304,7 +1313,7 @@ static int lua_req_dir_find_(lua_State* lua) {
   pro->type = PROMISE_REQ_;
   pro->req  = (upd_req_t) {
     .file = f,
-    .type = UPD_REQ_DIR_FIND,
+    .type = type,
     .dir  = { .entry = {
       .name = utf8ncpy(pro+1, name, len),
       .len  = len,
@@ -1318,12 +1327,13 @@ static int lua_req_dir_find_(lua_State* lua) {
   return 1;
 }
 static int lua_req_dir_add_(lua_State* lua) {
+  const upd_req_type_t type = lua_tointeger(lua, lua_upvalueindex(1));
+
   if (HEDLEY_UNLIKELY(lua_gettop(lua) != 3)) {
     return luaL_error(lua, "invalid args");
   }
   upd_file_t* f = *(void**) luaL_checkudata(lua, 1, "File");
-
-  upd_file_t* child = *(void**) luaL_checkudata(lua, 2, "File");
+  upd_file_t* c = *(void**) luaL_checkudata(lua, 2, "File");
 
   size_t len;
   const char* name = luaL_checklstring(lua, 3, &len);
@@ -1334,11 +1344,11 @@ static int lua_req_dir_add_(lua_State* lua) {
   pro->type = PROMISE_REQ_;
   pro->req  = (upd_req_t) {
     .file = f,
-    .type = UPD_REQ_DIR_ADD,
+    .type = type,
     .dir  = { .entry = {
       .name = utf8ncpy(pro+1, name, len),
       .len  = len,
-      .file = child,
+      .file = c,
     }, },
     .cb = lua_promise_req_cb_,
   };
@@ -1487,11 +1497,20 @@ static void lua_req_register_class_(lua_State* lua, upd_iso_t* iso) {
           lua_pushcclosure(lua, lua_req_emit_no_args_, 1);
           lua_setfield(lua, -2, "list");
 
-          lua_pushcfunction(lua, lua_req_dir_find_);
+          lua_pushinteger(lua, UPD_REQ_DIR_FIND);
+          lua_pushcclosure(lua, lua_req_dir_with_entry_name_, 1);
           lua_setfield(lua, -2, "find");
 
           lua_pushcfunction(lua, lua_req_dir_add_);
           lua_setfield(lua, -2, "add");
+
+          lua_pushinteger(lua, UPD_REQ_DIR_NEW);
+          lua_pushcclosure(lua, lua_req_dir_with_entry_name_, 1);
+          lua_setfield(lua, -2, "new");
+
+          lua_pushinteger(lua, UPD_REQ_DIR_NEWDIR);
+          lua_pushcclosure(lua, lua_req_dir_with_entry_name_, 1);
+          lua_setfield(lua, -2, "newdir");
 
           lua_pushcfunction(lua, lua_req_dir_rm_);
           lua_setfield(lua, -2, "rm");
@@ -1650,23 +1669,23 @@ static promise_t_* lua_promise_new_(lua_State* lua, size_t add) {
 
 static int lua_promise_push_result_(promise_t_* pro, lua_State* lua) {
   lua_rawgeti(lua, LUA_REGISTRYINDEX, pro->registry.result);
-  if (HEDLEY_UNLIKELY(lua_isnil(lua, -1))) {
-    return 0;
-  }
-  for (int i = 1; ; ++i) {
-    lua_rawgeti(lua, -i, i);
-    if (HEDLEY_UNLIKELY(lua_isnil(lua, -1))) {
-      lua_pop(lua, 1);
-      return i-1;
+  if (HEDLEY_UNLIKELY(lua_istable(lua, -1))) {
+    for (int i = 1; ; ++i) {
+      lua_rawgeti(lua, -i, i);
+      if (HEDLEY_UNLIKELY(lua_isnil(lua, -1))) {
+        lua_pop(lua, 1);
+        return i-1;
+      }
     }
   }
-  HEDLEY_UNREACHABLE();
+  return 1;
 }
 
 static void lua_promise_finalize_(promise_t_* pro, bool ok) {
   upd_file_t* f   = pro->file;
   stream_t_*  ctx = f->ctx;
 
+  assert(!pro->done);
   pro->done  = true;
   pro->error = !ok;
 
@@ -1708,6 +1727,12 @@ static void lua_promise_req_cb_(upd_req_t* req) {
       lua_pushboolean(lua, req->dir.access.add);
       lua_setfield(lua, -2, "add");
 
+      lua_pushboolean(lua, req->dir.access.new);
+      lua_setfield(lua, -2, "new");
+
+      lua_pushboolean(lua, req->dir.access.new);
+      lua_setfield(lua, -2, "newdir");
+
       lua_pushboolean(lua, req->dir.access.rm);
       lua_setfield(lua, -2, "rm");
     }
@@ -1730,6 +1755,8 @@ static void lua_promise_req_cb_(upd_req_t* req) {
 
   case UPD_REQ_DIR_FIND:
   case UPD_REQ_DIR_ADD:
+  case UPD_REQ_DIR_NEW:
+  case UPD_REQ_DIR_NEWDIR:
   case UPD_REQ_DIR_RM:
     if (HEDLEY_LIKELY(req->dir.entry.file)) {
       lua_file_new_(lua, req->dir.entry.file);
@@ -1766,6 +1793,8 @@ static void lua_promise_req_cb_(upd_req_t* req) {
     break;
 
   case UPD_REQ_BIN_WRITE:
+    lua_pushinteger(lua, req->bin.rw.size);
+    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
     break;
 
   case UPD_REQ_PROG_ACCESS:

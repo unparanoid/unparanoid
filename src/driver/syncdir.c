@@ -1,6 +1,9 @@
 #include "common.h"
 
 
+#define DEFAULT_PERMISSION_ 0600
+
+
 typedef struct ctx_t_    ctx_t_;
 typedef struct task_t_   task_t_;
 typedef struct drvmap_t_ drvmap_t_;
@@ -213,7 +216,12 @@ static bool syncdir_handle_(upd_req_t* req) {
         &iso->loop, fsreq, (char*) path, S_IFDIR, syncdir_mkdir_cb_);
     } else {
       open = 0 <= uv_fs_open(
-        &iso->loop, fsreq, (char*) path, 0, O_WRONLY, syncdir_open_cb_);
+        &iso->loop,
+        fsreq,
+        (char*) path,
+        O_CREAT | O_EXCL | O_WRONLY,
+        DEFAULT_PERMISSION_,
+        syncdir_open_cb_);
     }
     upd_iso_unstack(iso, path);
     if (HEDLEY_UNLIKELY(!open)) {
@@ -335,6 +343,7 @@ static void syncdir_sync_finalize_(ctx_t_* ctx) {
       syncdir_find_(ctx, &req->dir.entry)? UPD_REQ_OK: UPD_REQ_ABORTED;
     req->cb(req);
   }
+  upd_array_clear(&ctx->reqs);
   ctx->busy = false;
 }
 
@@ -371,7 +380,8 @@ static void syncdir_open_cb_(uv_fs_t* fsreq) {
   }
 
   fsreq->data = ctx;
-  const bool close = uv_fs_close(&iso->loop, fsreq, result, syncdir_close_cb_);
+  const bool close = 0 <= uv_fs_close(
+    &iso->loop, fsreq, result, syncdir_close_cb_);
   if (HEDLEY_UNLIKELY(!close)) {
     goto ABORT;
   }
@@ -387,6 +397,8 @@ static void syncdir_close_cb_(uv_fs_t* fsreq) {
   upd_file_t* f   = ctx->file;
 
   uv_fs_req_cleanup(fsreq);
+
+  upd_iso_unstack(f->iso, fsreq);
   upd_file_unref(f);
 }
 
@@ -405,12 +417,14 @@ static void syncdir_mkdir_cb_(uv_fs_t* fsreq) {
   if (HEDLEY_UNLIKELY(!syncdir_sync_n2u_(ctx, req))) {
     goto ABORT;
   }
-  return;
+
+  goto EXIT;
 
 ABORT:
   req->result = UPD_REQ_ABORTED;
   req->cb(req);
 
+EXIT:
   upd_iso_unstack(iso, fsreq);
   upd_file_unref(f);
 }

@@ -288,6 +288,10 @@ static bool bin_handle_(upd_req_t* req) {
     break;
 
   case UPD_REQ_BIN_READ: {
+    if (HEDLEY_UNLIKELY(!ctx->read)) {
+      req->result = UPD_REQ_ABORTED;
+      return false;
+    }
     if (HEDLEY_UNLIKELY(!ctx->open)) {
       const bool ok = task_queue_with_dup_(&(task_t_) {
           .file = f,
@@ -310,6 +314,10 @@ static bool bin_handle_(upd_req_t* req) {
   } return true;
 
   case UPD_REQ_BIN_WRITE: {
+    if (HEDLEY_UNLIKELY(!ctx->write)) {
+      req->result = UPD_REQ_ABORTED;
+      return false;
+    }
     if (HEDLEY_UNLIKELY(!ctx->open)) {
       const bool ok = task_queue_with_dup_(&(task_t_) {
           .file = f,
@@ -457,13 +465,13 @@ static void task_open_exec_cb_(task_t_* task) {
   bin_t_*     ctx = f->ctx;
   upd_iso_t*  iso = f->iso;
 
-  const int mode =
+  const int flag =
     ctx->read && ctx->write? O_RDWR:
     ctx->read?               O_RDONLY:
     ctx->write?              O_WRONLY: 0;
 
   const int open = uv_fs_open(
-    &iso->loop, &task->fsreq, (char*) f->npath, 0, mode, task_open_cb_);
+    &iso->loop, &task->fsreq, (char*) f->npath, flag, 0, task_open_cb_);
   if (HEDLEY_UNLIKELY(0 > open)) {
     goto ABORT;
   }
@@ -599,8 +607,8 @@ ABORT:
 }
 
 static void task_write_cb_(uv_fs_t* fsreq) {
-  task_t_*    task = (void*) fsreq;
-  upd_req_t*  req  = task->req;
+  task_t_*   task = (void*) fsreq;
+  upd_req_t* req  = task->req;
 
   const ssize_t result = fsreq->result;
   uv_fs_req_cleanup(fsreq);
