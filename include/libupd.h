@@ -230,6 +230,7 @@ upd_file_unlock(
   f(DIR, 0x0020, FIND)  \
   f(DIR, 0x0030, ADD)  \
   f(DIR, 0x0038, NEW)  \
+  f(DIR, 0x0039, NEWDIR)  \
   f(DIR, 0x0040, RM)  \
 \
   f(BIN, 0x0000, ACCESS)  \
@@ -265,11 +266,12 @@ enum {
 };
 
 typedef struct upd_req_dir_access_t {
-  unsigned list : 1;
-  unsigned find : 1;
-  unsigned add  : 1;
-  unsigned new  : 1;
-  unsigned rm   : 1;
+  unsigned list   : 1;
+  unsigned find   : 1;
+  unsigned add    : 1;
+  unsigned new    : 1;
+  unsigned newdir : 1;
+  unsigned rm     : 1;
 } upd_req_dir_access_t;
 
 typedef struct upd_req_dir_entry_t {
@@ -283,11 +285,6 @@ typedef struct upd_req_dir_entries_t {
   upd_req_dir_entry_t** p;
   size_t                n;
 } upd_req_dir_entries_t;
-
-typedef struct upd_req_dir_new_t {
-  upd_req_dir_entry_t entry;
-  unsigned dir : 1;
-} upd_req_dir_new_t;
 
 typedef struct upd_req_bin_access_t {
   unsigned read  : 1;
@@ -353,7 +350,6 @@ struct upd_req_t {
       upd_req_dir_access_t  access;
       upd_req_dir_entry_t   entry;
       upd_req_dir_entries_t entries;
-      upd_req_dir_new_t     new;
     } dir;
     union {
       upd_req_bin_access_t access;

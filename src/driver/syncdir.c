@@ -173,9 +173,10 @@ static bool syncdir_handle_(upd_req_t* req) {
   switch (req->type) {
   case UPD_REQ_DIR_ACCESS:
     req->dir.access = (upd_req_dir_access_t) {
-      .list = true,
-      .find = true,
-      .new  = true,
+      .list   = true,
+      .find   = true,
+      .new    = true,
+      .newdir = true,
     };
     break;
 
@@ -190,9 +191,9 @@ static bool syncdir_handle_(upd_req_t* req) {
     syncdir_find_(ctx, &req->dir.entry);
   } break;
 
-  case UPD_REQ_DIR_NEW: {
-    const upd_req_dir_new_t*   n = &req->dir.new;
-    const upd_req_dir_entry_t* e = &n->entry;
+  case UPD_REQ_DIR_NEW:
+  case UPD_REQ_DIR_NEWDIR: {
+    const upd_req_dir_entry_t* e = &req->dir.entry;
 
     uv_fs_t* fsreq = upd_iso_stack(iso, sizeof(*fsreq));
     if (HEDLEY_UNLIKELY(fsreq == NULL)) {
@@ -207,7 +208,7 @@ static bool syncdir_handle_(upd_req_t* req) {
     upd_file_ref(f);
 
     bool open;
-    if (n->dir) {
+    if (req->type == UPD_REQ_DIR_NEWDIR) {
       open = 0 <= uv_fs_mkdir(
         &iso->loop, fsreq, (char*) path, S_IFDIR, syncdir_mkdir_cb_);
     } else {
@@ -330,10 +331,8 @@ static void syncdir_sync_finalize_(ctx_t_* ctx) {
 
   for (size_t i = 0; i < ctx->reqs.n; ++i) {
     upd_req_t* req = ctx->reqs.p[i];
-    assert(req->type == UPD_REQ_DIR_NEW);
-
     req->result =
-      syncdir_find_(ctx, &req->dir.new.entry)? UPD_REQ_OK: UPD_REQ_ABORTED;
+      syncdir_find_(ctx, &req->dir.entry)? UPD_REQ_OK: UPD_REQ_ABORTED;
     req->cb(req);
   }
   ctx->busy = false;
