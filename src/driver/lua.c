@@ -815,7 +815,7 @@ static void prog_stat_cb_(uv_fs_t* fsreq) {
   }
 
   const bool open = 0 <= uv_fs_open(
-    &iso->loop, fsreq, (char*) f->npath, 0, O_RDONLY, prog_open_cb_);
+    &iso->loop, fsreq, (char*) f->npath, O_RDONLY, 0, prog_open_cb_);
   if (HEDLEY_UNLIKELY(!open)) {
     logf_(f, "open failure");
     req->result = UPD_REQ_ABORTED;

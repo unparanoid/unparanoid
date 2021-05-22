@@ -632,7 +632,7 @@ static void config_stat_cb_(uv_fs_t* req) {
   }
 
   const bool open = 0 <= uv_fs_open(
-    &iso->loop, &ctx->fsreq, (char*) ctx->fpath, 0, O_RDONLY, config_open_cb_);
+    &iso->loop, &ctx->fsreq, (char*) ctx->fpath, O_RDONLY, 0, config_open_cb_);
   if (HEDLEY_UNLIKELY(!open)) {
     config_logf_(ctx, "open failure");
     goto ABORT;
