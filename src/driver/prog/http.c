@@ -413,7 +413,7 @@ static bool stream_output_http_error_(
   uint8_t temp[1024] = {0};
   const size_t len = snprintf((char*) temp, sizeof(temp),
     "HTTP/1.1 %"PRIu16" %s\r\n"
-    "Content-Type: text/plain\r\n"
+    "Content-Type: text/plain; charset=UTF-8\r\n"
     "\r\n"
     "UNPARANOID HTTP stream error: %s (%"PRIu16")\r\n",
     code, msg, msg, code);
@@ -477,8 +477,9 @@ ABORT:
 }
 
 static void req_bin_access_cb_(upd_req_t* req) {
-  req_t_*  hreq = req->udata;
-  http_t_* ctx  = hreq->ctx;
+  req_t_*     hreq = req->udata;
+  http_t_*    ctx  = hreq->ctx;
+  upd_file_t* f    = req->file;
 
   const bool readable = req->bin.access.read;
   upd_iso_unstack(ctx->file->iso, req);
@@ -489,8 +490,8 @@ static void req_bin_access_cb_(upd_req_t* req) {
   }
 
   const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
-      .file  = req->file,
-      .udata = req,
+      .file  = f,
+      .udata = hreq,
       .cb    = req_lock_for_read_cb_,
     });
   if (HEDLEY_UNLIKELY(!lock)) {
@@ -517,7 +518,7 @@ static void req_lock_for_read_cb_(upd_file_lock_t* lock) {
   uint8_t temp[1024];
   const size_t len = snprintf((char*) temp, sizeof(temp),
     "HTTP/1.1 200 OK\r\n"
-    "Content-type: text/plain\r\n"
+    "Content-Type: text/plain; charset=UTF-8\r\n"
     "\r\n");
 
   const bool header = upd_buf_append(&ctx->out, temp, len);
