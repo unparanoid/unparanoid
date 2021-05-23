@@ -11,6 +11,9 @@ typedef struct upd_driver_rule_t {
 } upd_driver_rule_t;
 
 
+extern const upd_driver_t upd_driver_bin_r;
+extern const upd_driver_t upd_driver_bin_rw;
+extern const upd_driver_t upd_driver_bin_w;
 extern const upd_driver_t upd_driver_dir;
 extern const upd_driver_t upd_driver_lua;
 extern const upd_driver_t upd_driver_lua_dev;

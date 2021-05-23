@@ -66,6 +66,7 @@ target_sources(libupd
     src/srv.c
     src/srv.h
 
+    src/driver/bin.c
     src/driver/dir.c
     src/driver/lua.c
     src/driver/syncdir.c

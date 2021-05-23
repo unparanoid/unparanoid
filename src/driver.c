@@ -32,6 +32,9 @@ setup_install_add_cb_(
 
 
 void upd_driver_setup(upd_iso_t* iso) {
+  upd_driver_register(iso, &upd_driver_bin_r);
+  upd_driver_register(iso, &upd_driver_bin_rw);
+  upd_driver_register(iso, &upd_driver_bin_w);
   upd_driver_register(iso, &upd_driver_lua);
   upd_driver_register(iso, &upd_driver_tensor);
 

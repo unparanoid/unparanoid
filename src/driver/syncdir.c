@@ -363,9 +363,7 @@ static void task_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
         dir? &upd_driver_syncdir:
         upd_driver_select(&ctx->drvmap->rules, (uint8_t*) path);
       if (HEDLEY_UNLIKELY(d == NULL)) {
-        upd_iso_msgf(ctx->file->iso, "no suitable driver found for '%s'\n", path);
-        upd_iso_unstack(ctx->file->iso, path);
-        continue;
+        d = &upd_driver_bin_r;
       }
 
       upd_file_t* f =
