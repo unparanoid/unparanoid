@@ -131,7 +131,9 @@ struct upd_file_t {
 
   uint64_t last_update;
 
-  void* ctx;
+  /* filled by driver */
+  const uint8_t* mimetype;
+  void*          ctx;
 };
 
 struct upd_file_watch_t {

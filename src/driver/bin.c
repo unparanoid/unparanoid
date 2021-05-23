@@ -3,6 +3,8 @@
 
 #define BUF_MAX_ (1024*1024*8)  /* = 8 MiB */
 
+#define DEFAULT_MIMETYPE_ "application/octet-stream"
+
 
 typedef struct bin_t_  bin_t_;
 typedef struct task_t_ task_t_;
@@ -178,6 +180,18 @@ task_close_cb_(
 static bool bin_init_(upd_file_t* f, bool r, bool w) {
   if (HEDLEY_UNLIKELY(!f->npath)) {
     return false;
+  }
+
+  {
+    const char* ext;
+    size_t      extlen;
+    if (cwk_path_get_extension((char*) f->npath, &ext, &extlen)) {
+      ++ext; --extlen;
+      f->mimetype = (uint8_t*) mimetype_from_ext_n(ext, extlen);
+    }
+    if (HEDLEY_UNLIKELY(f->mimetype == NULL)) {
+      f->mimetype = (uint8_t*) DEFAULT_MIMETYPE_;
+    }
   }
 
   bin_t_* ctx = NULL;

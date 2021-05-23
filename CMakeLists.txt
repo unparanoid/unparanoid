@@ -80,6 +80,7 @@ target_link_libraries(libupd
     crypto-algorithms
     cwalk
     hedley
+    mimetype.h
     picohttpparser
     PkgConfig::LUA
     PkgConfig::UV

@@ -30,6 +30,10 @@ target_sources(hedley
 )
 
 
+# ---- mimetype.h (https://github.com/falsycat/mimetype.h) ----
+add_subdirectory(mimetype.h)
+
+
 # ---- picohttpparser (https://github.com/h2o/picohttpparser) ----
 add_library(picohttpparser EXCLUDE_FROM_ALL)
 target_include_directories(picohttpparser SYSTEM BEFORE

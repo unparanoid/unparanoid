@@ -515,11 +515,17 @@ static void req_lock_for_read_cb_(upd_file_lock_t* lock) {
     goto ABORT;
   }
 
+  const uint8_t* mime = req->file->mimetype;
+  if (HEDLEY_UNLIKELY(mime == NULL)) {
+    mime = (uint8_t*) "text/plain";
+  }
+
   uint8_t temp[1024];
   const size_t len = snprintf((char*) temp, sizeof(temp),
     "HTTP/1.1 200 OK\r\n"
-    "Content-Type: text/plain; charset=UTF-8\r\n"
-    "\r\n");
+    "Content-Type: %s; charset=UTF-8\r\n"
+    "\r\n",
+    mime);
 
   const bool header = upd_buf_append(&ctx->out, temp, len);
   if (HEDLEY_UNLIKELY(!header)) {
