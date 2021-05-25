@@ -31,6 +31,8 @@ struct upd_req_pathfind_t {
 HEDLEY_NON_NULL(1)
 HEDLEY_WARN_UNUSED_RESULT
 static inline bool upd_req(upd_req_t* req) {
+  upd_file_t* f = req->file;
+  f->last_req = upd_iso_now(f->iso);
   return req->file->driver->handle(req);
 }
 

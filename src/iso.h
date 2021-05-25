@@ -32,6 +32,11 @@ struct upd_iso_t {
     uint8_t runtime[UPD_PATH_MAX];
     uint8_t working[UPD_PATH_MAX];
   } path;
+
+  struct {
+    uv_timer_t    timer;
+    upd_file_id_t last_seen;
+  } walker;
 };
 
 

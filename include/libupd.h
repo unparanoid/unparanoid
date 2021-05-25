@@ -82,6 +82,12 @@ struct upd_driver_t {
   const uint8_t*       name;
   const upd_req_cat_t* cats;
 
+  uint64_t uncache_period;
+
+  struct {
+    unsigned npoll : 1;
+  } flags;
+
   bool
   (*init)(
     upd_file_t* f);
@@ -118,6 +124,7 @@ enum {
   UPD_FILE_UPDATE   = 0x01,
   UPD_FILE_DELETE_N = 0x10,
   UPD_FILE_UPDATE_N = 0x11,
+  UPD_FILE_UNCACHE  = 0x20,
 };
 
 struct upd_file_t {
@@ -130,6 +137,8 @@ struct upd_file_t {
   uint64_t      refcnt;
 
   uint64_t last_update;
+  uint64_t last_req;
+  uint64_t last_uncache;
 
   /* filled by driver */
   const uint8_t* mimetype;

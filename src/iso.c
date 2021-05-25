@@ -3,6 +3,9 @@
 
 #define SHUTDOWN_TIMER_ 1000
 
+#define WALKER_PERIOD_           1000
+#define WALKER_FILES_PER_PERIOD_ 1000
+
 
 static
 bool
@@ -33,6 +36,17 @@ iso_shutdown_timer_cb_(
   uv_timer_t* timer);
 
 
+static
+void
+iso_walker_handle_(
+  upd_file_t* f);
+
+static
+void
+iso_walker_cb_(
+  uv_timer_t* timer);
+
+
 upd_iso_t* upd_iso_new(size_t stacksz) {
   /*  It's unnecessary to clean up resources in aborted,
    * because app exits immediately. */
@@ -50,6 +64,9 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
       .size = stacksz,
       .ptr  = (uint8_t*) (iso+1),
     },
+    .walker = {
+      .timer = { .data = iso, },
+    },
   };
 
   const bool ok =
@@ -57,15 +74,19 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     0 <= uv_loop_init(&iso->loop) &&
     0 <= uv_tty_init(&iso->loop, &iso->out, 1, 0) &&
     0 <= uv_signal_init(&iso->loop, &iso->sigint) &&
-    0 <= uv_signal_start(&iso->sigint, iso_signal_cb_, SIGINT) &&
     0 <= uv_signal_init(&iso->loop, &iso->sighup) &&
+    0 <= uv_timer_init(&iso->loop, &iso->walker.timer) &&
+    0 <= uv_timer_init(&iso->loop, &iso->shutdown_timer) &&
+    0 <= uv_signal_start(&iso->sigint, iso_signal_cb_, SIGINT) &&
     0 <= uv_signal_start(&iso->sighup, iso_signal_cb_, SIGHUP) &&
-    0 <= uv_timer_init(&iso->loop, &iso->shutdown_timer);
+    0 <= uv_timer_start(
+      &iso->walker.timer, iso_walker_cb_, WALKER_PERIOD_, WALKER_PERIOD_);
   if (HEDLEY_UNLIKELY(!ok)) {
     return NULL;
   }
   uv_unref((uv_handle_t*) &iso->sigint);
   uv_unref((uv_handle_t*) &iso->sighup);
+  uv_unref((uv_handle_t*) &iso->walker.timer);
 
   upd_file_t* root = upd_file_new(iso, &upd_driver_dir);
   if (HEDLEY_UNLIKELY(root == NULL)) {
@@ -103,6 +124,7 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   uv_close((uv_handle_t*) &iso->sigint,         NULL);
   uv_close((uv_handle_t*) &iso->sighup,         NULL);
   uv_close((uv_handle_t*) &iso->shutdown_timer, NULL);
+  uv_close((uv_handle_t*) &iso->walker.timer,   NULL);
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
@@ -214,4 +236,57 @@ static void iso_shutdown_timer_cb_(uv_timer_t* timer) {
   upd_iso_t* iso = timer->data;
   upd_iso_msgf(iso, "shutting down...\n");
   upd_iso_exit(iso, UPD_ISO_SHUTDOWN);
+}
+
+
+static void iso_walker_handle_(upd_file_t* f) {
+  const uint64_t now = upd_iso_now(f->iso);
+
+
+  const bool uncache =
+    f->driver->uncache_period && f->last_req &&
+    f->last_req >= f->last_uncache;
+  if (HEDLEY_UNLIKELY(uncache)) {
+    const uint64_t t = now > f->last_req? now - f->last_req: 0;
+    if (HEDLEY_UNLIKELY(t > f->driver->uncache_period)) {
+      upd_file_trigger(f, UPD_FILE_UNCACHE);
+      f->last_uncache = now;
+    }
+  }
+}
+
+static void iso_walker_cb_(uv_timer_t* timer) {
+  upd_iso_t*   iso   = timer->data;
+  upd_file_t** files = (void*) iso->files.p;
+
+  if (HEDLEY_UNLIKELY(iso->files.n == 0)) {
+    return;
+  }
+
+  const upd_file_id_t needle = iso->walker.last_seen;
+
+  ssize_t i, l = 0, r = (ssize_t) iso->files.n - 1;
+  while (l < r) {
+    i = (l+r)/2;
+    if (HEDLEY_UNLIKELY(files[i]->id == needle)) {
+      break;
+    }
+    if (files[i]->id > needle) {
+      r = i-1;
+    } else {
+      l = i+1;
+    }
+  }
+  if (files[i]->id <= needle) {
+    ++i;
+  }
+
+  for (size_t j = 0; j < iso->files.n && j < WALKER_FILES_PER_PERIOD_; ++j) {
+    if (HEDLEY_UNLIKELY((size_t) i >= iso->files.n)) {
+      i = 0;
+    }
+    upd_file_t* f = iso->files.p[i++];
+    iso_walker_handle_(f);
+    iso->walker.last_seen = f->id;
+  }
 }

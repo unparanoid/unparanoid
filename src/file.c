@@ -57,6 +57,9 @@ upd_file_t* upd_file_new_from_normalized_npath(
       .npath  = len? (uint8_t*) (f+1): NULL,
       .id     = iso->files_created++,
       .refcnt = 1,
+
+      .last_update = 0,
+      .last_req    = UINT64_MAX,
     },
   };
 
