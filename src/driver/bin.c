@@ -5,6 +5,8 @@
 
 #define DEFAULT_MIMETYPE_ "application/octet-stream"
 
+#define FILE_CLOSE_PERIOD_ 10000
+
 
 typedef struct bin_t_  bin_t_;
 typedef struct task_t_ task_t_;
@@ -76,6 +78,7 @@ const upd_driver_t upd_driver_bin_r = {
     UPD_REQ_BIN,
     0,
   },
+  .uncache_period = FILE_CLOSE_PERIOD_,
   .flags = {
     .npoll = true,
   },
@@ -90,6 +93,7 @@ const upd_driver_t upd_driver_bin_rw = {
     UPD_REQ_BIN,
     0,
   },
+  .uncache_period = FILE_CLOSE_PERIOD_,
   .flags = {
     .npoll = true,
   },
@@ -104,6 +108,7 @@ const upd_driver_t upd_driver_bin_w = {
     UPD_REQ_BIN,
     0,
   },
+  .uncache_period = FILE_CLOSE_PERIOD_,
   .flags = {
     .npoll = true,
   },
@@ -362,7 +367,8 @@ static void bin_watch_cb_(upd_file_watch_t* watch) {
   upd_file_t* f   = watch->file;
   bin_t_*     ctx = f->ctx;
 
-  if (HEDLEY_UNLIKELY(watch->event == UPD_FILE_UPDATE_N)) {
+  switch (watch->event) {
+  case UPD_FILE_UPDATE_N:
     task_queue_with_dup_(&(task_t_) {
         .file = f,
         .exec = task_stat_exec_cb_,
@@ -378,6 +384,16 @@ static void bin_watch_cb_(upd_file_watch_t* watch) {
         });
     }
     upd_file_trigger(f, UPD_FILE_UPDATE);
+    break;
+
+  case UPD_FILE_UNCACHE:
+    if (HEDLEY_UNLIKELY(ctx->open)) {
+      task_queue_with_dup_(&(task_t_) {
+          .file = f,
+          .exec = task_close_exec_cb_,
+        });
+    }
+    break;
   }
 }
 
