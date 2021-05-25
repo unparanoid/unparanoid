@@ -76,6 +76,9 @@ const upd_driver_t upd_driver_bin_r = {
     UPD_REQ_BIN,
     0,
   },
+  .flags = {
+    .npoll = true,
+  },
   .init   = bin_init_r_,
   .deinit = bin_deinit_,
   .handle = bin_handle_,
@@ -87,6 +90,9 @@ const upd_driver_t upd_driver_bin_rw = {
     UPD_REQ_BIN,
     0,
   },
+  .flags = {
+    .npoll = true,
+  },
   .init   = bin_init_rw_,
   .deinit = bin_deinit_,
   .handle = bin_handle_,
@@ -97,6 +103,9 @@ const upd_driver_t upd_driver_bin_w = {
   .cats = (upd_req_cat_t[]) {
     UPD_REQ_BIN,
     0,
+  },
+  .flags = {
+    .npoll = true,
   },
   .init   = bin_init_w_,
   .deinit = bin_deinit_,

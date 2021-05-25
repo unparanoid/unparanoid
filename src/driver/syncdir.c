@@ -56,6 +56,9 @@ const upd_driver_t upd_driver_syncdir = {
     UPD_REQ_DIR,
     0,
   },
+  .flags = {
+    .npoll = true,
+  },
   .init   = syncdir_init_,
   .deinit = syncdir_deinit_,
   .handle = syncdir_handle_,

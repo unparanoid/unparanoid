@@ -154,6 +154,9 @@ const upd_driver_t upd_driver_lua = {
     UPD_REQ_PROG,
     0,
   },
+  .flags  = {
+    .npoll = true,
+  },
   .init   = prog_init_,
   .deinit = prog_deinit_,
   .handle = prog_handle_,

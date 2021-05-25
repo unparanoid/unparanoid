@@ -46,6 +46,8 @@ upd_file_t* upd_file_new_from_normalized_npath(
     const upd_driver_t* driver,
     const uint8_t*      npath,
     size_t              len) {
+  const bool poll = driver->flags.npoll && len;
+
   upd_file_t_* f = NULL;
   if (HEDLEY_UNLIKELY(!upd_malloc(&f, sizeof(*f)+len+!!len))) {
     return NULL;
@@ -59,24 +61,26 @@ upd_file_t* upd_file_new_from_normalized_npath(
       .refcnt = 1,
 
       .last_update = 0,
-      .last_req    = UINT64_MAX,
+      .last_req    = 0,
     },
   };
 
   if (len) {
     utf8ncpy(f->super.npath, npath, len);
     f->super.npath[len] = 0;
+  }
+  if (poll) {
     if (HEDLEY_UNLIKELY(!upd_malloc(&f->poll, sizeof(*f->poll)))) {
       upd_free(&f);
       return NULL;
     }
 
+    *f->poll = (uv_fs_poll_t) { .data = f, };
     if (HEDLEY_UNLIKELY(0 > uv_fs_poll_init(&iso->loop, f->poll))) {
       upd_free(&f->poll);
       upd_free(&f);
       return NULL;
     }
-    f->poll->data = f;
     uv_unref((uv_handle_t*) f->poll);
 
     const bool start = 0 <= uv_fs_poll_start(
@@ -89,7 +93,7 @@ upd_file_t* upd_file_new_from_normalized_npath(
   }
 
   if (HEDLEY_UNLIKELY(!driver->init(&f->super))) {
-    if (len) {
+    if (poll) {
       uv_close((uv_handle_t*) &f->poll, file_poll_close_cb_);
     }
     upd_free(&f);
