@@ -72,14 +72,14 @@ struct stream_t_ {
 
 
 typedef enum promise_type_t_ {
-  PROMISE_STANDARD_,
+  PROMISE_REQ_,
   PROMISE_PATHFIND_,
   PROMISE_REQUIRE_,
 } promise_type_t_;
 
 struct promise_t_ {
   union {
-    upd_req_t          std;
+    upd_req_t          req;
     upd_req_pathfind_t pf;
   };
   promise_type_t_ type;
@@ -325,7 +325,7 @@ lua_promise_finalize_(
 
 static
 void
-lua_promise_std_cb_(
+lua_promise_req_cb_(
   upd_req_t* req);
 
 static
@@ -1035,6 +1035,21 @@ static int lua_lib_set_metatable_(lua_State* lua) {
   lua_setmetatable(lua, -2);
   return 1;
 }
+static int lua_lib_pairs_internal_(lua_State* lua) {
+  luaL_checktype(lua, 1, LUA_TTABLE);
+
+  if (HEDLEY_LIKELY(lua_next(lua, 1))) {
+    return 2;
+  }
+  return 0;
+}
+static int lua_lib_pairs_(lua_State* lua) {
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  lua_pushcfunction(lua, lua_lib_pairs_internal_);
+  lua_pushvalue(lua, 1);
+  lua_pushnil(lua);
+  return 3;
+}
 static void lua_lib_register_class_(lua_State* lua) {
   lua_newuserdata(lua, 0);
   {
@@ -1044,6 +1059,9 @@ static void lua_lib_register_class_(lua_State* lua) {
       {
         lua_pushcfunction(lua, lua_lib_can_require_);
         lua_setfield(lua, -2, "canRequire");
+
+        lua_pushcfunction(lua, lua_lib_pairs_);
+        lua_setfield(lua, -2, "pairs");
 
         lua_pushcfunction(lua, lua_lib_require_);
         lua_setfield(lua, -2, "require");
@@ -1247,29 +1265,206 @@ static int lua_req_pathfind_(lua_State* lua) {
   upd_req_pathfind(&pro->pf);
   return 1;
 }
-static int lua_req_prog_exec_(lua_State* lua) {
+static int lua_req_emit_no_args_(lua_State* lua) {
+  const upd_req_type_t type = lua_tointeger(lua, lua_upvalueindex(1));
+
   if (HEDLEY_UNLIKELY(lua_gettop(lua) != 1)) {
-    return luaL_error(lua, "usage: Req.prog.exec(File)");
+    return luaL_error(lua, "invalid args");
   }
   upd_file_t* f = *(void**) luaL_checkudata(lua, 1, "File");
 
   promise_t_* pro = lua_promise_new_(lua, 0);
-  pro->type = PROMISE_STANDARD_;
-
   const int index = lua_gettop(lua);
 
-  pro->std = (upd_req_t) {
+  pro->type = PROMISE_REQ_;
+  pro->req  = (upd_req_t) {
     .file = f,
-    .type = UPD_REQ_PROG_EXEC,
-    .cb   = lua_promise_std_cb_,
+    .type = type,
+    .cb   = lua_promise_req_cb_,
   };
-  if (HEDLEY_LIKELY(upd_req(&pro->std))) {
-    lua_pushvalue(lua, index);
-  } else {
+
+  if (HEDLEY_UNLIKELY(!upd_req(&pro->req))) {
     lua_promise_finalize_(pro, false);
-    lua_pushnil(lua);
   }
+  lua_pushvalue(lua, index);
   return 1;
+}
+static int lua_req_dir_find_(lua_State* lua) {
+  if (HEDLEY_UNLIKELY(lua_gettop(lua) != 2)) {
+    return luaL_error(lua, "invalid args");
+  }
+  upd_file_t* f = *(void**) luaL_checkudata(lua, 1, "File");
+
+  size_t len;
+  const char* name = luaL_checklstring(lua, 2, &len);
+
+  promise_t_* pro = lua_promise_new_(lua, len);
+  const int index = lua_gettop(lua);
+
+  pro->type = PROMISE_REQ_;
+  pro->req  = (upd_req_t) {
+    .file = f,
+    .type = UPD_REQ_DIR_FIND,
+    .dir  = { .entry = {
+      .name = utf8ncpy(pro+1, name, len),
+      .len  = len,
+    }, },
+    .cb = lua_promise_req_cb_,
+  };
+  if (HEDLEY_UNLIKELY(!upd_req(&pro->req))) {
+    lua_promise_finalize_(pro, false);
+  }
+  lua_pushvalue(lua, index);
+  return 1;
+}
+static int lua_req_dir_add_(lua_State* lua) {
+  if (HEDLEY_UNLIKELY(lua_gettop(lua) != 3)) {
+    return luaL_error(lua, "invalid args");
+  }
+  upd_file_t* f = *(void**) luaL_checkudata(lua, 1, "File");
+
+  upd_file_t* child = *(void**) luaL_checkudata(lua, 2, "File");
+
+  size_t len;
+  const char* name = luaL_checklstring(lua, 3, &len);
+
+  promise_t_* pro = lua_promise_new_(lua, len);
+  const int index = lua_gettop(lua);
+
+  pro->type = PROMISE_REQ_;
+  pro->req  = (upd_req_t) {
+    .file = f,
+    .type = UPD_REQ_DIR_ADD,
+    .dir  = { .entry = {
+      .name = utf8ncpy(pro+1, name, len),
+      .len  = len,
+      .file = child,
+    }, },
+    .cb = lua_promise_req_cb_,
+  };
+  if (HEDLEY_UNLIKELY(!upd_req(&pro->req))) {
+    lua_promise_finalize_(pro, false);
+  }
+  lua_pushvalue(lua, index);
+  return 1;
+}
+static int lua_req_dir_rm_(lua_State* lua) {
+  if (HEDLEY_UNLIKELY(lua_gettop(lua) != 2)) {
+    return luaL_error(lua, "invalid args");
+  }
+  upd_file_t* f = *(void**) luaL_checkudata(lua, 1, "File");
+
+  size_t      len   = 0;
+  const char* name  = NULL;
+  upd_file_t* child = NULL;
+  if (lua_isstring(lua, 2)) {
+    name = luaL_checklstring(lua, 2, &len);
+  } else {
+    child = luaL_checkudata(lua, 2, "File");
+  }
+
+  promise_t_* pro = lua_promise_new_(lua, len);
+  const int index = lua_gettop(lua);
+
+  pro->type = PROMISE_REQ_;
+  pro->req  = (upd_req_t) {
+    .file = f,
+    .type = UPD_REQ_DIR_RM,
+    .dir  = { .entry = {
+      .name = utf8ncpy(pro+1, name, len),
+      .len  = len,
+      .file = child,
+    }, },
+    .cb = lua_promise_req_cb_,
+  };
+  if (HEDLEY_UNLIKELY(!upd_req(&pro->req))) {
+    lua_promise_finalize_(pro, false);
+  }
+  lua_pushvalue(lua, index);
+  return 1;
+}
+static int lua_req_bin_read_(lua_State* lua) {
+  const size_t n = lua_gettop(lua);
+  if (HEDLEY_UNLIKELY(n > 3 || (n == 3 && !lua_isnumber(lua, 3)))) {
+    return luaL_error(lua, "invalid args");
+  }
+  upd_file_t* f = *(void**) luaL_checkudata(lua, 1, "File");
+
+  const lua_Integer size = luaL_checkinteger(lua, 2);
+  if (HEDLEY_UNLIKELY(size < 0)) {
+    return luaL_error(lua, "size must be 0 or more");
+  }
+
+  const lua_Integer offset = lua_tointeger(lua, 3);
+  if (HEDLEY_UNLIKELY(offset < 0)) {
+    return luaL_error(lua, "offset must be 0 or more");
+  }
+
+  promise_t_* pro = lua_promise_new_(lua, 0);
+  const int index = lua_gettop(lua);
+
+  pro->type = PROMISE_REQ_;
+  pro->req  = (upd_req_t) {
+    .file = f,
+    .type = UPD_REQ_BIN_READ,
+    .bin = { .rw = {
+      .offset = offset,
+      .size   = size,
+    }, },
+    .cb = lua_promise_req_cb_,
+  };
+  if (HEDLEY_UNLIKELY(!upd_req(&pro->req))) {
+    lua_promise_finalize_(pro, false);
+  }
+  lua_pushvalue(lua, index);
+  return 1;
+}
+static int lua_req_bin_write_(lua_State* lua) {
+  const size_t n = lua_gettop(lua);
+  if (HEDLEY_UNLIKELY(n > 3 || (n == 3 && !lua_isnumber(lua, 3)))) {
+    return luaL_error(lua, "invalid args");
+  }
+  upd_file_t* f = *(void**) luaL_checkudata(lua, 1, "File");
+
+  size_t len;
+  const char* data = luaL_checklstring(lua, 2, &len);
+
+  const lua_Integer offset = lua_tointeger(lua, 3);
+  if (HEDLEY_UNLIKELY(offset < 0)) {
+    return luaL_error(lua, "offset must be 0 or more");
+  }
+
+  promise_t_* pro = lua_promise_new_(lua, len);
+  const int index = lua_gettop(lua);
+
+  pro->type = PROMISE_REQ_;
+  pro->req  = (upd_req_t) {
+    .file = f,
+    .type = UPD_REQ_BIN_WRITE,
+    .bin = { .rw = {
+      .buf    = memcpy(pro+1, data, len),
+      .offset = offset,
+      .size   = len,
+    }, },
+    .cb = lua_promise_req_cb_,
+  };
+  if (HEDLEY_UNLIKELY(!upd_req(&pro->req))) {
+    lua_promise_finalize_(pro, false);
+  }
+  lua_pushvalue(lua, index);
+  return 1;
+}
+static int lua_req_stream_input_(lua_State* lua) {
+  return luaL_error(lua, "not implemented");
+}
+static int lua_req_stream_output_(lua_State* lua) {
+  return luaL_error(lua, "not implemented");
+}
+static int lua_req_tensor_alloc_(lua_State* lua) {
+  return luaL_error(lua, "not implemented");
+}
+static int lua_req_tensor_meta_(lua_State* lua) {
+  return luaL_error(lua, "not implemented");
 }
 static void lua_req_register_class_(lua_State* lua, upd_iso_t* iso) {
   lua_createtable(lua, 0, 0);
@@ -1284,10 +1479,82 @@ static void lua_req_register_class_(lua_State* lua, upd_iso_t* iso) {
 
         lua_createtable(lua, 0, 0);
         {
-          lua_pushcfunction(lua, lua_req_prog_exec_);
+          lua_pushinteger(lua, UPD_REQ_DIR_ACCESS);
+          lua_pushcclosure(lua, lua_req_emit_no_args_, 1);
+          lua_setfield(lua, -2, "access");
+
+          lua_pushinteger(lua, UPD_REQ_DIR_LIST);
+          lua_pushcclosure(lua, lua_req_emit_no_args_, 1);
+          lua_setfield(lua, -2, "list");
+
+          lua_pushcfunction(lua, lua_req_dir_find_);
+          lua_setfield(lua, -2, "find");
+
+          lua_pushcfunction(lua, lua_req_dir_add_);
+          lua_setfield(lua, -2, "add");
+
+          lua_pushcfunction(lua, lua_req_dir_rm_);
+          lua_setfield(lua, -2, "rm");
+        }
+        lua_setfield(lua, -2, "dir");
+
+        lua_createtable(lua, 0, 0);
+        {
+          lua_pushinteger(lua, UPD_REQ_BIN_ACCESS);
+          lua_pushcclosure(lua, lua_req_emit_no_args_, 1);
+          lua_setfield(lua, -2, "access");
+
+          lua_pushcfunction(lua, lua_req_bin_read_);
+          lua_setfield(lua, -2, "read");
+
+          lua_pushcfunction(lua, lua_req_bin_write_);
+          lua_setfield(lua, -2, "write");
+        }
+        lua_setfield(lua, -2, "bin");
+
+        lua_createtable(lua, 0, 0);
+        {
+          lua_pushinteger(lua, UPD_REQ_PROG_ACCESS);
+          lua_pushcclosure(lua, lua_req_emit_no_args_, 1);
+          lua_setfield(lua, -2, "access");
+
+          lua_pushinteger(lua, UPD_REQ_PROG_COMPILE);
+          lua_pushcclosure(lua, lua_req_emit_no_args_, 1);
+          lua_setfield(lua, -2, "compile");
+
+          lua_pushinteger(lua, UPD_REQ_PROG_EXEC);
+          lua_pushcclosure(lua, lua_req_emit_no_args_, 1);
           lua_setfield(lua, -2, "exec");
         }
         lua_setfield(lua, -2, "prog");
+
+        lua_createtable(lua, 0, 0);
+        {
+          lua_pushinteger(lua, UPD_REQ_STREAM_ACCESS);
+          lua_pushcclosure(lua, lua_req_emit_no_args_, 1);
+          lua_setfield(lua, -2, "access");
+
+          lua_pushcfunction(lua, lua_req_stream_input_);
+          lua_setfield(lua, -2, "input");
+
+          lua_pushcfunction(lua, lua_req_stream_output_);
+          lua_setfield(lua, -2, "output");
+        }
+        lua_setfield(lua, -2, "stream");
+
+        lua_createtable(lua, 0, 0);
+        {
+          lua_pushinteger(lua, UPD_REQ_TENSOR_ACCESS);
+          lua_pushcclosure(lua, lua_req_emit_no_args_, 1);
+          lua_setfield(lua, -2, "access");
+
+          lua_pushcfunction(lua, lua_req_tensor_alloc_);
+          lua_setfield(lua, -2, "alloc");
+
+          lua_pushcfunction(lua, lua_req_tensor_meta_);
+          lua_setfield(lua, -2, "meta");
+        }
+        lua_setfield(lua, -2, "tensor");
       }
       lua_setfield(lua, -2, "__index");
 
@@ -1416,17 +1683,136 @@ static void lua_promise_finalize_(promise_t_* pro, bool ok) {
 }
 
 
-static void lua_promise_std_cb_(upd_req_t* req) {
+static void lua_promise_req_cb_(upd_req_t* req) {
   promise_t_* pro = (void*) req;
   upd_file_t* stf = pro->file;
   stream_t_*  ctx = stf->ctx;
   lua_State*  lua = ctx->lua;
 
+  if (HEDLEY_UNLIKELY(req->result != UPD_REQ_OK)) {
+    lua_promise_finalize_(pro, false);
+    return;
+  }
+
   switch (req->type) {
+  case UPD_REQ_DIR_ACCESS:
+    lua_createtable(lua, 0, 0);
+    lua_createtable(lua, 0, 0);
+    {
+      lua_pushboolean(lua, req->dir.access.list);
+      lua_setfield(lua, -2, "list");
+
+      lua_pushboolean(lua, req->dir.access.find);
+      lua_setfield(lua, -2, "find");
+
+      lua_pushboolean(lua, req->dir.access.add);
+      lua_setfield(lua, -2, "add");
+
+      lua_pushboolean(lua, req->dir.access.rm);
+      lua_setfield(lua, -2, "rm");
+    }
+    lua_rawseti(lua, -2, 1);
+    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
+    break;
+
+  case UPD_REQ_DIR_LIST:
+    lua_createtable(lua, 0, 0);
+    lua_createtable(lua, 0, 0);
+    for (size_t i = 0; i < req->dir.entries.n; ++i) {
+      upd_req_dir_entry_t* e = req->dir.entries.p[i];
+      lua_pushlstring(lua, (char*) e->name, e->len);
+      lua_file_new_(lua, e->file);
+      lua_settable(lua, -3);
+    }
+    lua_rawseti(lua, -2, 1);
+    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
+    break;
+
+  case UPD_REQ_DIR_FIND:
+  case UPD_REQ_DIR_ADD:
+  case UPD_REQ_DIR_RM:
+    if (HEDLEY_LIKELY(req->dir.entry.file)) {
+      lua_file_new_(lua, req->dir.entry.file);
+    } else {
+      lua_pushnil(lua);
+    }
+    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
+    break;
+
+  case UPD_REQ_BIN_ACCESS:
+    lua_createtable(lua, 0, 0);
+    lua_createtable(lua, 0, 0);
+    {
+      lua_pushboolean(lua, req->bin.access.read);
+      lua_setfield(lua, -2, "read");
+
+      lua_pushboolean(lua, req->bin.access.write);
+      lua_setfield(lua, -2, "write");
+    }
+    lua_rawseti(lua, -2, 1);
+    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
+    break;
+
+  case UPD_REQ_BIN_READ:
+    lua_createtable(lua, 0, 0);
+    {
+      lua_pushlstring(lua, (char*) req->bin.rw.buf, req->bin.rw.size);
+      lua_rawseti(lua, -2, 1);
+
+      lua_pushinteger(lua, req->bin.rw.offset);
+      lua_rawseti(lua, -2, 2);
+    }
+    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
+    break;
+
+  case UPD_REQ_BIN_WRITE:
+    break;
+
+  case UPD_REQ_PROG_ACCESS:
+    lua_createtable(lua, 0, 0);
+    lua_createtable(lua, 0, 0);
+    {
+      lua_pushboolean(lua, req->prog.access.compile);
+      lua_setfield(lua, -2, "compile");
+
+      lua_pushboolean(lua, req->prog.access.exec);
+      lua_setfield(lua, -2, "exec");
+    }
+    lua_rawseti(lua, -2, 1);
+    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
+    break;
+
+  case UPD_REQ_PROG_COMPILE:
+    break;
+
   case UPD_REQ_PROG_EXEC:
     lua_file_new_(lua, req->prog.exec);
     pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
     upd_file_unref(req->prog.exec);
+    break;
+
+  case UPD_REQ_STREAM_ACCESS:
+    lua_createtable(lua, 0, 0);
+    lua_createtable(lua, 0, 0);
+    {
+      lua_pushboolean(lua, req->stream.access.input);
+      lua_setfield(lua, -2, "input");
+
+      lua_pushboolean(lua, req->stream.access.output);
+      lua_setfield(lua, -2, "output");
+    }
+    lua_rawseti(lua, -2, 1);
+    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
+    break;
+
+  case UPD_REQ_STREAM_INPUT:
+    lua_pushinteger(lua, req->stream.io.size);
+    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
+    break;
+
+  case UPD_REQ_STREAM_OUTPUT:
+    lua_pushlstring(lua, (char*) req->stream.io.buf, req->stream.io.size);
+    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
     break;
 
   default:
@@ -1474,12 +1860,12 @@ static void lua_promise_require_pathfind_cb_(upd_req_pathfind_t* pf) {
     goto ABORT;
   }
 
-  pro->std = (upd_req_t) {
+  pro->req = (upd_req_t) {
     .file = f,
     .type = UPD_REQ_PROG_COMPILE,
     .cb   = lua_promise_require_compile_cb_,
   };
-  if (HEDLEY_UNLIKELY(!upd_req(&pro->std))) {
+  if (HEDLEY_UNLIKELY(!upd_req(&pro->req))) {
     goto ABORT;
   }
   return;
