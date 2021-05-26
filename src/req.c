@@ -130,7 +130,7 @@ static void pathfind_add_cb_(upd_req_t* req) {
 
   upd_file_unlock(&pf->lock);
 
-  if (HEDLEY_UNLIKELY(req->dir.entry.file == NULL)) {
+  if (HEDLEY_UNLIKELY(req->result != UPD_REQ_OK)) {
     pf->cb(pf);
     return;
   }

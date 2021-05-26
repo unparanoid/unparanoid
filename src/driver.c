@@ -127,7 +127,7 @@ static void setup_install_add_cb_(upd_req_t* req) {
   upd_iso_t*          iso = req->file->iso;
   const upd_driver_t* drv = req->udata;
 
-  const bool ok = req->dir.entry.file;
+  const bool ok = req->result == UPD_REQ_OK;
   upd_iso_unstack(iso, req);
 
   if (HEDLEY_UNLIKELY(!ok)) {

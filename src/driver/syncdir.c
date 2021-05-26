@@ -155,14 +155,14 @@ static bool syncdir_handle_(upd_req_t* req) {
       .list = true,
       .find = true,
     };
-    goto FINALIZE;
+    break;
 
   case UPD_REQ_DIR_LIST:
     req->dir.entries = (upd_req_dir_entries_t) {
       .p = (upd_req_dir_entry_t**) ctx->children.p,
       .n = ctx->children.n,
     };
-    goto FINALIZE;
+    break;
 
   case UPD_REQ_DIR_FIND: {
     const upd_req_dir_entry_t needle = req->dir.entry;
@@ -172,16 +172,16 @@ static bool syncdir_handle_(upd_req_t* req) {
       const upd_req_dir_entry_t* e = ctx->children.p[i];
       if (HEDLEY_UNLIKELY(utf8ncmp(e->name, needle.name, needle.len) == 0)) {
         req->dir.entry = *e;
-        goto FINALIZE;
+        break;
       }
     }
-  } goto FINALIZE;
+  } break;
 
   default:
+    req->result = UPD_REQ_INVALID;
     return false;
   }
-
-FINALIZE:
+  req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
 }

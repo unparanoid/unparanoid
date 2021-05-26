@@ -257,7 +257,7 @@ static void srv_add_cb_(upd_req_t* req) {
   upd_srv_t*       srv  = lock->udata;
   upd_iso_t*       iso  = srv->iso;
 
-  const bool ok = req->dir.entry.file;
+  const bool ok = req->result == UPD_REQ_OK;
   upd_iso_unstack(iso, req);
 
   upd_file_unlock(lock);

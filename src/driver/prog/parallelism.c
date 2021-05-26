@@ -191,13 +191,16 @@ static bool prog_handle_(upd_req_t* req) {
   case UPD_REQ_PROG_EXEC: {
     upd_file_t* f = upd_file_new(iso, &stream_driver_);
     if (HEDLEY_UNLIKELY(f == NULL)) {
+      req->result = UPD_REQ_NOMEM;
       return false;
     }
     req->prog.exec = f;
   } break;
   default:
+    req->result = UPD_REQ_INVALID;
     return false;
   }
+  req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
 }
@@ -237,6 +240,7 @@ static bool stream_handle_(upd_req_t* req) {
 
   case UPD_REQ_STREAM_INPUT:
     if (HEDLEY_UNLIKELY(!stream_input_(req))) {
+      req->result = UPD_REQ_NOMEM;
       return false;
     }
     break;
@@ -248,6 +252,7 @@ static bool stream_handle_(upd_req_t* req) {
     };
     upd_buf_t oldbuf = ctx->buf;
     ctx->buf = (upd_buf_t) {0};
+    req->result = UPD_REQ_OK;
     req->cb(req);
     upd_buf_clear(&oldbuf);
     return true;
@@ -255,7 +260,7 @@ static bool stream_handle_(upd_req_t* req) {
   default:
     return false;
   }
-
+  req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
 }
@@ -548,8 +553,14 @@ static void session_input_cb_(upd_req_t* req) {
   upd_file_unlock(lock);
   upd_iso_unstack(ctx->file->iso, lock);
 
-  const upd_req_stream_io_t io = req->stream.io;
+  const upd_req_result_t    result = req->result;
+  const upd_req_stream_io_t io     = req->stream.io;
   upd_iso_unstack(ctx->file->iso, req);
+
+  if (HEDLEY_UNLIKELY(result != UPD_REQ_OK)) {
+    session_delete_(ss);
+    goto EXIT;
+  }
 
   const bool retry = ss->parsing != ss->buf.size;
 
@@ -625,14 +636,20 @@ static void session_output_cb_(upd_req_t* req) {
   session_t_*      ss   = lock->udata;
   ctx_t_*          ctx  = ss->ctx;
 
-  const upd_req_stream_io_t io = req->stream.io;
+  const upd_req_result_t    result = req->result;
+  const upd_req_stream_io_t io     = req->stream.io;
   upd_iso_unstack(ctx->file->iso, req);
 
-  if (HEDLEY_LIKELY(io.size)) {
-    stream_output_pipe_(ctx, ss->id, io.buf, io.size);
+  if (HEDLEY_LIKELY(result == UPD_REQ_OK)) {
+    if (HEDLEY_LIKELY(io.size)) {
+      stream_output_pipe_(ctx, ss->id, io.buf, io.size);
+    }
+  } else {
+    session_delete_(ss);
   }
   upd_file_unlock(lock);
   upd_iso_unstack(ctx->file->iso, lock);
 
   upd_file_unref(ctx->file);
+
 }

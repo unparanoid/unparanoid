@@ -123,6 +123,7 @@ static bool dir_handle_(upd_req_t* req) {
   case UPD_REQ_DIR_ADD: {
     upd_req_dir_entry_t* re = &req->dir.entry;
     if (HEDLEY_UNLIKELY(!upd_path_validate_name(re->name, re->len))) {
+      req->result = UPD_REQ_ABORTED;
       return false;
     }
 
@@ -130,6 +131,7 @@ static bool dir_handle_(upd_req_t* req) {
     const bool duplicated =
       (re->len  && entry_find_by_name_(ctx, &i, re->name, re->len));
     if (HEDLEY_UNLIKELY(duplicated)) {
+      req->result = UPD_REQ_ABORTED;
       return false;
     }
 
@@ -137,10 +139,12 @@ static bool dir_handle_(upd_req_t* req) {
 
     req->dir.entry = (upd_req_dir_entry_t) {0};
     if (HEDLEY_UNLIKELY(e == NULL)) {
+      req->result = UPD_REQ_NOMEM;
       return false;
     }
     if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->children, e, SIZE_MAX))) {
       upd_free(&e);
+      req->result = UPD_REQ_NOMEM;
       return false;
     }
     req->dir.entry = e->super;
@@ -149,6 +153,7 @@ static bool dir_handle_(upd_req_t* req) {
   case UPD_REQ_DIR_RM: {
     size_t i;
     if (HEDLEY_UNLIKELY(!entry_find_(ctx, &i, &req->dir.entry))) {
+      req->result = UPD_REQ_ABORTED;
       req->dir.entry = (upd_req_dir_entry_t) {0};
       return false;
     }
@@ -159,9 +164,10 @@ static bool dir_handle_(upd_req_t* req) {
   } return true;
 
   default:
+    req->result = UPD_REQ_INVALID;
     return false;
   }
-
+  req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
 }

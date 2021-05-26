@@ -364,7 +364,7 @@ static void dev_deinit_(upd_file_t* f) {
 }
 
 static bool dev_handle_(upd_req_t* req) {
-  (void) req;
+  req->result = UPD_REQ_INVALID;
   return false;
 }
 
@@ -431,11 +431,13 @@ static bool prog_handle_(upd_req_t* req) {
     break;
   case UPD_REQ_BIN_WRITE: {
     if (HEDLEY_UNLIKELY(f->npath || req->bin.rw.offset)) {
+      req->result = UPD_REQ_INVALID;
       return false;
     }
     ctx->buf  = req->bin.rw.buf;
     ctx->size = req->bin.rw.size;
     if (HEDLEY_UNLIKELY(!prog_compile_(f))) {
+      req->result = UPD_REQ_ABORTED;
       return false;
     }
   } break;
@@ -449,6 +451,7 @@ static bool prog_handle_(upd_req_t* req) {
 
   case UPD_REQ_PROG_COMPILE: {
     if (HEDLEY_UNLIKELY(!f->npath)) {
+      req->result = UPD_REQ_INVALID;
       return false;
     }
     if (HEDLEY_LIKELY(ctx->clean && ctx->compiled)) {
@@ -457,6 +460,7 @@ static bool prog_handle_(upd_req_t* req) {
 
     uv_fs_t* fsreq = upd_iso_stack(iso, sizeof(*fsreq));
     if (HEDLEY_UNLIKELY(fsreq == NULL)) {
+      req->result = UPD_REQ_NOMEM;
       return false;
     }
     *fsreq = (uv_fs_t) { .data = req, };
@@ -466,6 +470,7 @@ static bool prog_handle_(upd_req_t* req) {
       0 <= uv_fs_stat(&iso->loop, fsreq, (char*) f->npath, prog_stat_cb_);
     if (HEDLEY_UNLIKELY(!stat)) {
       upd_file_unref(f);
+      req->result = UPD_REQ_ABORTED;
       return false;
     }
   } return true;
@@ -473,23 +478,30 @@ static bool prog_handle_(upd_req_t* req) {
   case UPD_REQ_PROG_EXEC: {
     req->prog.exec = NULL;
     if (HEDLEY_UNLIKELY(!f->npath)) {
+      req->result = UPD_REQ_INVALID;
       return false;
     }
     if (HEDLEY_LIKELY(ctx->clean && ctx->compiled)) {
       req->prog.exec = prog_exec_(f);
       break;
     }
-    return upd_req_with_dup(&(upd_req_t) {
+    const bool compile = upd_req_with_dup(&(upd_req_t) {
         .file  = f,
         .type  = UPD_REQ_PROG_COMPILE,
         .udata = req,
         .cb    = prog_exec_after_compile_cb_,
       });
+    if (HEDLEY_UNLIKELY(!compile)) {
+      req->result = UPD_REQ_NOMEM;
+      return false;
+    }
   } return true;
 
   default:
+    req->result = UPD_REQ_INVALID;
     return false;
   }
+  req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
 }
@@ -660,9 +672,11 @@ static bool stream_handle_(upd_req_t* req) {
       break;
     }
     if (HEDLEY_UNLIKELY(!(ctx->state & STREAM_FLAG_ALIVE_))) {
+      req->result = UPD_REQ_ABORTED;
       return false;
     }
     if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->in, io.buf, io.size))) {
+      req->result = UPD_REQ_NOMEM;
       return false;
     }
     if (HEDLEY_UNLIKELY(ctx->state == STREAM_PENDING_INPUT_)) {
@@ -678,19 +692,23 @@ static bool stream_handle_(upd_req_t* req) {
   case UPD_REQ_STREAM_OUTPUT: {
     const bool alive = ctx->state & STREAM_FLAG_ALIVE_;
     if (HEDLEY_UNLIKELY(ctx->out.size == 0 && !alive)) {
+      req->result = UPD_REQ_ABORTED;
       return false;
     }
     req->stream.io = (upd_req_stream_io_t) {
       .buf  = ctx->out.ptr,
       .size = ctx->out.size,
     };
+    req->result = UPD_REQ_OK;
     req->cb(req);
     upd_buf_clear(&ctx->out);
   } return true;
 
   default:
+    req->result = UPD_REQ_INVALID;
     return false;
   }
+  req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
 }
@@ -782,12 +800,14 @@ static void prog_stat_cb_(uv_fs_t* fsreq) {
 
   if (HEDLEY_UNLIKELY(result != 0)) {
     logf_(f, "stat failure");
+    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
 
   ctx->size = fsreq->statbuf.st_size;
   if (HEDLEY_UNLIKELY(ctx->size > SCRIPT_MAX_)) {
     logf_(f, "too huge script (%zu exceeds %zu)", ctx->size, SCRIPT_MAX_);
+    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
 
@@ -795,6 +815,7 @@ static void prog_stat_cb_(uv_fs_t* fsreq) {
     &iso->loop, fsreq, (char*) f->npath, 0, O_RDONLY, prog_open_cb_);
   if (HEDLEY_UNLIKELY(!open)) {
     logf_(f, "open failure");
+    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
   return;
@@ -816,6 +837,7 @@ static void prog_open_cb_(uv_fs_t* fsreq) {
 
   if (HEDLEY_UNLIKELY(result < 0)) {
     logf_(f, "open failure");
+    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
   ctx->fd = result;
@@ -823,6 +845,7 @@ static void prog_open_cb_(uv_fs_t* fsreq) {
   ctx->buf = upd_iso_stack(iso, ctx->size);
   if (HEDLEY_UNLIKELY(ctx->buf == NULL)) {
     logf_(f, "read buffer allocation failure");
+    req->result = UPD_REQ_NOMEM;
     goto ABORT;
   }
 
@@ -833,6 +856,7 @@ static void prog_open_cb_(uv_fs_t* fsreq) {
   if (HEDLEY_UNLIKELY(!read)) {
     upd_iso_unstack(iso, ctx->buf);
     logf_(f, "read failure");
+    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
   return;
@@ -854,9 +878,10 @@ static void prog_read_cb_(uv_fs_t* fsreq) {
 
   if (HEDLEY_UNLIKELY(result < 0)) {
     logf_(f, "read failure");
+    req->result = UPD_REQ_ABORTED;
     goto EXIT;
   }
-  prog_compile_(f);
+  req->result = prog_compile_(f)? UPD_REQ_OK: UPD_REQ_ABORTED;
 
 EXIT:
   upd_iso_unstack(iso, ctx->buf);

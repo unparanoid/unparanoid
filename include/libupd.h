@@ -21,6 +21,7 @@ typedef uint64_t upd_file_id_t;
 typedef uint8_t  upd_file_event_t;
 typedef uint16_t upd_req_cat_t;
 typedef uint32_t upd_req_type_t;
+typedef uint8_t  upd_req_result_t;
 typedef uint8_t  upd_tensor_type_t;
 
 typedef
@@ -255,6 +256,11 @@ enum {
 # define each_(C, i, N) UPD_REQ_##C##_##N = (UPD_REQ_##C << 16) | i,
   UPD_REQ_TYPE_EACH(each_)
 # undef each_
+
+  UPD_REQ_OK      = 0x00,
+  UPD_REQ_NOMEM   = 0x01,
+  UPD_REQ_ABORTED = 0x02,
+  UPD_REQ_INVALID = 0x03,
 };
 
 typedef struct upd_req_dir_access_t {
@@ -327,7 +333,8 @@ typedef struct upd_req_tensor_data_t {
 struct upd_req_t {
   upd_file_t* file;
 
-  upd_req_type_t type;
+  upd_req_type_t   type;
+  upd_req_result_t result;
 
   void* udata;
   void

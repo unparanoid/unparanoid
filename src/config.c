@@ -594,7 +594,7 @@ static void config_parse_sync_add_cb_(upd_req_t* req) {
 
   yaml_node_t* node = task->node;
 
-  const bool added = req->dir.entry.file;
+  const bool added = req->result == UPD_REQ_OK;
   upd_iso_unstack(iso, req);
 
   upd_file_unlock(lock);

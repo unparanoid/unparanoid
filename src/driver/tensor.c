@@ -80,6 +80,7 @@ static bool tensor_handle_(upd_req_t* req) {
   case UPD_REQ_TENSOR_ALLOC: {
     const upd_req_tensor_meta_t* m = &req->tensor.meta;
     if (HEDLEY_UNLIKELY(m->dim >= MAX_DIM_ || m->rank >= MAX_RANK_)) {
+      req->result = UPD_REQ_INVALID;
       return false;
     }
     size_t n = 0;
@@ -90,6 +91,7 @@ static bool tensor_handle_(upd_req_t* req) {
       n *= m->reso[i];
     }
     if (HEDLEY_UNLIKELY(!upd_malloc(&ctx->data, n))) {
+      req->result = UPD_REQ_NOMEM;
       return false;
     }
     memcpy(ctx->type, m->type, sizeof(*m->type)*m->dim);
@@ -118,8 +120,10 @@ static bool tensor_handle_(upd_req_t* req) {
     break;
 
   default:
+    req->result = UPD_REQ_INVALID;
     return false;
   }
+  req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
 }

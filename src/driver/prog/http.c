@@ -223,13 +223,16 @@ static bool prog_handle_(upd_req_t* req) {
   case UPD_REQ_PROG_EXEC: {
     upd_file_t* f = upd_file_new(iso, &stream_driver_);
     if (HEDLEY_UNLIKELY(f == NULL)) {
+      req->result = UPD_REQ_NOMEM;
       return false;
     }
     req->prog.exec = f;
   } break;
   default:
+    req->result = UPD_REQ_INVALID;
     return false;
   }
+  req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
 }
@@ -279,15 +282,19 @@ static bool stream_handle_(upd_req_t* req) {
       return stream_parse_req_(ctx, req);
     case RESPONSE_:
       req->stream.io.size = 0;
+      req->result = UPD_REQ_OK;
+      req->cb(req);
       return true;
     case WSOCK_:
       return stream_pipe_wsock_input_(ctx, req);
     default:
+      req->result = UPD_REQ_INVALID;
       return false;
     }
 
   case UPD_REQ_STREAM_OUTPUT: {
     if (HEDLEY_UNLIKELY(ctx->state == END_ && !ctx->out.size)) {
+      req->result = UPD_REQ_ABORTED;
       return false;
     }
     req->stream.io = (upd_req_stream_io_t) {
@@ -297,13 +304,16 @@ static bool stream_handle_(upd_req_t* req) {
     upd_buf_t oldbuf = ctx->out;
     ctx->out = (upd_buf_t) {0};
 
+    req->result = UPD_REQ_OK;
     req->cb(req);
     upd_buf_clear(&oldbuf);
   } return true;
 
   default:
+    req->result = UPD_REQ_INVALID;
     return false;
   }
+  req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
 }
@@ -353,6 +363,7 @@ static bool stream_parse_req_(http_t_* ctx, upd_req_t* req) {
 
   if (HEDLEY_UNLIKELY(result == -1)) {
     upd_iso_unstack(ctx->file->iso, hreq);
+    req->result = UPD_REQ_OK;
     req->cb(req);
     return stream_output_http_error_(ctx, 400, "invalid request");
   }
@@ -360,6 +371,7 @@ static bool stream_parse_req_(http_t_* ctx, upd_req_t* req) {
   if (HEDLEY_LIKELY(result == -2)) {
     upd_iso_unstack(ctx->file->iso, hreq);
     io->size = 0;
+    req->result = UPD_REQ_OK;
     req->cb(req);
     return true;
   }
@@ -372,6 +384,7 @@ static bool stream_parse_req_(http_t_* ctx, upd_req_t* req) {
     utf8ncasecmp(hreq->method, "GET", 3) == 0;
   if (HEDLEY_UNLIKELY(!is_get)) {
     upd_iso_unstack(ctx->file->iso, hreq);
+    req->result = UPD_REQ_OK;
     req->cb(req);
     return stream_output_http_error_(ctx, 405, "unknown method");
   }
@@ -387,6 +400,7 @@ static bool stream_parse_req_(http_t_* ctx, upd_req_t* req) {
   if (HEDLEY_UNLIKELY(!pathfind)) {
     upd_file_unref(ctx->file);
     upd_iso_unstack(ctx->file->iso, hreq);
+    req->result = UPD_REQ_OK;
     req->cb(req);
     return stream_output_http_error_(ctx, 500, "pathfind failure");
   }
@@ -471,6 +485,7 @@ static void req_pathfind_cb_(upd_req_pathfind_t* pf) {
   return;
 
 ABORT:
+  req->req->result = UPD_REQ_OK;
   req->req->cb(req->req);
   upd_iso_unstack(ctx->file->iso, req);
   upd_file_unref(ctx->file);
@@ -501,6 +516,7 @@ static void req_bin_access_cb_(upd_req_t* req) {
   return;
 
 ABORT:
+  hreq->req->result = UPD_REQ_OK;
   hreq->req->cb(hreq->req);
   upd_iso_unstack(ctx->file->iso, hreq);
   upd_file_unref(ctx->file);
@@ -553,6 +569,7 @@ ABORT:
   upd_file_unlock(lock);
   upd_iso_unstack(ctx->file->iso, lock);
 
+  req->req->result = UPD_REQ_OK;
   req->req->cb(req->req);
   upd_iso_unstack(ctx->file->iso, req);
 
@@ -597,6 +614,7 @@ FINALIZE:
   upd_file_unlock(lock);
   upd_iso_unstack(ctx->file->iso, lock);
 
+  hreq->req->result = UPD_REQ_OK;
   hreq->req->cb(hreq->req);
   upd_iso_unstack(ctx->file->iso, hreq);
 
@@ -629,6 +647,7 @@ ABORT:
   upd_file_unlock(lock);
   upd_iso_unstack(ctx->file->iso, lock);
 
+  req->req->result = UPD_REQ_OK;
   req->req->cb(req->req);
   upd_iso_unstack(ctx->file->iso, req);
 
@@ -685,6 +704,7 @@ EXIT:
   upd_file_unlock(lock);
   upd_iso_unstack(ctx->file->iso, lock);
 
+  hreq->req->result = UPD_REQ_OK;
   hreq->req->cb(hreq->req);
   upd_iso_unstack(ctx->file->iso, hreq);
 
@@ -830,6 +850,8 @@ EXIT:
   }
 
   io->size = io->size - rem;
+
+  req->result = UPD_REQ_OK;
   req->cb(req);  /* We don't need io->buf anymore. :) */
 }
 
@@ -837,9 +859,15 @@ static void wsock_input_cb_(upd_req_t* req) {
   upd_file_lock_t* lock = req->udata;
   http_t_*         ctx  = lock->udata;
 
-  upd_buf_drop_head(&ctx->wsbuf, req->stream.io.size);
+  const upd_req_result_t result   = req->result;
+  const size_t           consumed = req->stream.io.size;
   upd_iso_unstack(ctx->file->iso, req);
 
+  if (HEDLEY_LIKELY(result == UPD_REQ_OK)) {
+    upd_buf_drop_head(&ctx->wsbuf, consumed);
+  } else {
+    stream_end_(ctx);
+  }
   upd_file_unlock(lock);
   upd_iso_unstack(ctx->file->iso, lock);
 
@@ -894,10 +922,11 @@ static void wsock_output_cb_(upd_req_t* req) {
   upd_file_lock_t* lock = req->udata;
   http_t_*         ctx  = lock->udata;
 
-  const upd_req_stream_io_t io = req->stream.io;
+  const upd_req_result_t    result = req->result;
+  const upd_req_stream_io_t io     = req->stream.io;
   upd_iso_unstack(ctx->file->iso, req);
 
-  if (HEDLEY_UNLIKELY(!io.size)) {
+  if (HEDLEY_UNLIKELY(result != UPD_REQ_OK || !io.size)) {
     goto EXIT;
   }
 

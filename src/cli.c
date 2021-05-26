@@ -365,7 +365,7 @@ static void cli_add_cb_(upd_req_t* req) {
   upd_file_lock_t* lock = req->udata;
   upd_cli_t*       cli  = lock->udata;
 
-  const bool ok = req->dir.entry.file;
+  const bool ok = req->result == UPD_REQ_OK;
   upd_iso_unstack(cli->iso, req);
 
   upd_file_unlock(lock);
@@ -470,9 +470,16 @@ static void cli_input_cb_(upd_req_t* req) {
   upd_iso_t*       iso  = req->file->iso;
   upd_cli_t*       cli  = lock->udata;
 
-  const size_t consumed = req->stream.io.size;
-
+  const upd_req_result_t result   = req->result;
+  const size_t           consumed = req->stream.io.size;
   upd_iso_unstack(iso, req);
+
+  if (HEDLEY_UNLIKELY(result != UPD_REQ_OK)) {
+    upd_file_unlock(lock);
+    upd_iso_unstack(cli->iso, lock);
+    upd_cli_delete(cli);
+    goto EXIT;
+  }
 
   const bool retry = cli->buf.parsing != cli->buf.size;
   cli->buf.parsing = 0;
@@ -488,8 +495,11 @@ static void cli_input_cb_(upd_req_t* req) {
     if (HEDLEY_UNLIKELY(!cli_try_parse_(cli))) {
       cli_logf_(cli, "continuous parse failure");
       upd_cli_delete(cli);
+      goto EXIT;
     }
   }
+
+EXIT:
   cli_unref_(cli);
 }
 
@@ -545,10 +555,16 @@ static void cli_output_cb_(upd_req_t* req) {
   upd_cli_t*       cli  = lock->udata;
   upd_iso_t*       iso  = cli->iso;
 
-  const upd_req_stream_io_t io = req->stream.io;
+  const upd_req_result_t    result = req->result;
+  const upd_req_stream_io_t io     = req->stream.io;
   upd_iso_unstack(iso, req);
 
-  if (HEDLEY_UNLIKELY(!io.size)) {
+  if (HEDLEY_UNLIKELY(result != UPD_REQ_OK)) {
+    cli_logf_(cli, "output request failed");
+    goto ABORT;
+  }
+
+  if (HEDLEY_UNLIKELY(io.size == 0)) {
     upd_file_unlock(lock);
     upd_iso_unstack(iso, lock);
     cli_unref_(cli);

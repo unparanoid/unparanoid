@@ -287,41 +287,55 @@ static bool bin_handle_(upd_req_t* req) {
     };
     break;
 
-  case UPD_REQ_BIN_READ:
+  case UPD_REQ_BIN_READ: {
     if (HEDLEY_UNLIKELY(!ctx->open)) {
       const bool ok = task_queue_with_dup_(&(task_t_) {
           .file = f,
           .exec = task_open_exec_cb_,
         });
       if (HEDLEY_UNLIKELY(!ok)) {
+        req->result = UPD_REQ_NOMEM;
         return false;
       }
     }
-    return task_queue_with_dup_(&(task_t_) {
+    const bool ok = task_queue_with_dup_(&(task_t_) {
         .file = f,
         .req  = req,
         .exec = task_read_exec_cb_,
       });
+    if (HEDLEY_UNLIKELY(!ok)) {
+      req->result = UPD_REQ_NOMEM;
+      return false;
+    }
+  } return true;
 
-  case UPD_REQ_BIN_WRITE:
+  case UPD_REQ_BIN_WRITE: {
     if (HEDLEY_UNLIKELY(!ctx->open)) {
       const bool ok = task_queue_with_dup_(&(task_t_) {
           .file = f,
           .exec = task_open_exec_cb_,
         });
       if (HEDLEY_UNLIKELY(!ok)) {
+        req->result = UPD_REQ_NOMEM;
         return false;
       }
     }
-    return task_queue_with_dup_(&(task_t_) {
+    const bool ok = task_queue_with_dup_(&(task_t_) {
         .file = f,
         .req  = req,
         .exec = task_write_exec_cb_,
       });
+    if (HEDLEY_UNLIKELY(!ok)) {
+      req->result = UPD_REQ_NOMEM;
+      return false;
+    }
+  } return true;
 
   default:
+    req->result = UPD_REQ_INVALID;
     return false;
   }
+  req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
 }
@@ -484,6 +498,7 @@ static void task_read_exec_cb_(task_t_* task) {
   upd_iso_t*  iso  = f->iso;
 
   if (HEDLEY_UNLIKELY(!ctx->open)) {
+    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
 
@@ -495,11 +510,13 @@ static void task_read_exec_cb_(task_t_* task) {
     sz = BUF_MAX_;
   }
   if (HEDLEY_UNLIKELY(sz == 0)) {
+    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
 
   task->buf = upd_iso_stack(iso, sz);
   if (HEDLEY_UNLIKELY(task->buf == NULL)) {
+    req->result = UPD_REQ_NOMEM;
     goto ABORT;
   }
 
@@ -510,6 +527,7 @@ static void task_read_exec_cb_(task_t_* task) {
     &iso->loop, &task->fsreq, ctx->fd, &buf, 1, off, task_read_cb_);
   if (HEDLEY_UNLIKELY(0 > err)) {
     upd_iso_unstack(iso, task->buf);
+    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
   return;
@@ -530,6 +548,7 @@ static void task_read_cb_(uv_fs_t* fsreq) {
   uv_fs_req_cleanup(fsreq);
 
   if (HEDLEY_UNLIKELY(result < 0)) {
+    req->result = UPD_REQ_ABORTED;
     req->bin.rw.size = 0;
     goto EXIT;
   }
@@ -540,6 +559,7 @@ static void task_read_cb_(uv_fs_t* fsreq) {
     .size   = result,
     .buf    = task->buf,
   };
+  req->result = UPD_REQ_OK;
 
 EXIT:
   req->cb(req);
@@ -554,6 +574,7 @@ static void task_write_exec_cb_(task_t_* task) {
   upd_iso_t*  iso  = f->iso;
 
   if (HEDLEY_UNLIKELY(!ctx->open)) {
+    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
 
@@ -565,6 +586,7 @@ static void task_write_exec_cb_(task_t_* task) {
   const int err = uv_fs_write(
     &iso->loop, &task->fsreq, ctx->fd, &buf, 1, off, task_write_cb_);
   if (HEDLEY_UNLIKELY(0 > err)) {
+    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
   return;
@@ -584,8 +606,10 @@ static void task_write_cb_(uv_fs_t* fsreq) {
 
   if (HEDLEY_UNLIKELY(result < 0)) {
     req->bin.rw.size = 0;
+    req->result = UPD_REQ_ABORTED;
     goto EXIT;
   }
+  req->result = UPD_REQ_OK;
   req->bin.rw.size = result;
 
 EXIT:
