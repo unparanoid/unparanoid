@@ -636,6 +636,9 @@ static void stream_deinit_(upd_file_t* f) {
   }
   upd_array_clear(&ctx->files);
 
+  upd_buf_clear(&ctx->in);
+  upd_buf_clear(&ctx->out);
+
   if (HEDLEY_LIKELY(ctx->dev)) {
     upd_file_unref(ctx->dev);
   }
