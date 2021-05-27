@@ -286,7 +286,6 @@ typedef struct upd_req_dir_entries_t {
 
 typedef struct upd_req_dir_new_t {
   upd_req_dir_entry_t entry;
-
   unsigned dir : 1;
 } upd_req_dir_new_t;
 
