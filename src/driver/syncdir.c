@@ -18,11 +18,10 @@ struct ctx_t_ {
 };
 
 struct task_t_ {
-  ctx_t_*    ctx;
-  upd_req_t* req;
-  task_t_*   next;
+  ctx_t_*  ctx;
+  task_t_* next;
 
-  size_t refcnt;
+  upd_req_t* req;
 
   void
   (*cb)(
@@ -71,11 +70,34 @@ syncdir_inherit_drvmap_(
   ctx_t_*    ctx,
   drvmap_t_* drvmap);
 
+static
+size_t
+syncdir_create_child_path_(
+  ctx_t_*        ctx,
+  uint8_t**      dst,
+  const uint8_t* name,
+  size_t         len);
+
 
 static
 void
 syncdir_watch_cb_(
   upd_file_watch_t* w);
+
+static
+void
+syncdir_open_cb_(
+  uv_fs_t* fsreq);
+
+static
+void
+syncdir_close_cb_(
+  uv_fs_t* fsreq);
+
+static
+void
+syncdir_mkdir_cb_(
+  uv_fs_t* fsreq);
 
 
 static
@@ -84,8 +106,8 @@ task_queue_with_dup_(
   const task_t_* src);
 
 static
-bool
-task_unref_(
+void
+task_finalize_(
   task_t_* task);
 
 
@@ -93,6 +115,11 @@ static
 void
 task_sync_n2u_cb_(
   task_t_* task);
+
+static
+void
+task_sync_n2u_lock_cb_(
+  upd_file_lock_t* lock);
 
 static
 void
@@ -147,13 +174,16 @@ static void syncdir_deinit_(upd_file_t* file) {
 }
 
 static bool syncdir_handle_(upd_req_t* req) {
-  ctx_t_* ctx = req->file->ctx;
+  upd_file_t* f   = req->file;
+  ctx_t_*     ctx = f->ctx;
+  upd_iso_t*  iso = f->iso;
 
   switch (req->type) {
   case UPD_REQ_DIR_ACCESS:
     req->dir.access = (upd_req_dir_access_t) {
       .list = true,
       .find = true,
+      .new  = true,
     };
     break;
 
@@ -176,6 +206,38 @@ static bool syncdir_handle_(upd_req_t* req) {
       }
     }
   } break;
+
+  case UPD_REQ_DIR_NEW: {
+    const upd_req_dir_new_t*   new   = &req->dir.new;
+    const upd_req_dir_entry_t* entry = &new->entry;
+
+    uv_fs_t* fsreq = upd_iso_stack(iso, sizeof(*fsreq));
+    if (HEDLEY_UNLIKELY(fsreq == NULL)) {
+      req->result = UPD_REQ_NOMEM;
+      return false;
+    }
+    *fsreq = (uv_fs_t) { .data = req, };
+
+    uint8_t* path;
+    syncdir_create_child_path_(ctx, &path, entry->name, entry->len);
+
+    upd_file_ref(f);
+
+    bool open;
+    if (new->dir) {
+      open = 0 <= uv_fs_mkdir(
+        &iso->loop, fsreq, (char*) path, S_IFDIR, syncdir_mkdir_cb_);
+    } else {
+      open = 0 <= uv_fs_open(
+        &iso->loop, fsreq, (char*) path, 0, O_WRONLY, syncdir_open_cb_);
+    }
+    upd_iso_unstack(iso, path);
+    if (HEDLEY_UNLIKELY(!open)) {
+      upd_file_unref(f);
+      req->result = UPD_REQ_ABORTED;
+      return false;
+    }
+  } return true;
 
   default:
     req->result = UPD_REQ_INVALID;
@@ -225,6 +287,30 @@ static void syncdir_inherit_drvmap_(ctx_t_* ctx, drvmap_t_* drvmap) {
   }
 }
 
+static size_t syncdir_create_child_path_(
+    ctx_t_* ctx, uint8_t** dst, const uint8_t* name, size_t len) {
+  upd_file_t* f   = ctx->file;
+  upd_iso_t*  iso = f->iso;
+
+  uint8_t* term = upd_iso_stack(iso, len+1);
+  if (HEDLEY_UNLIKELY(term == NULL)) {
+    return 0;
+  }
+  utf8ncpy(term, name, len);
+  term[len] = 0;
+
+  const size_t dstlen = cwk_path_join((char*) f->npath, (char*) term, NULL, 0);
+  *dst = upd_iso_stack(iso, dstlen+1);
+  if (HEDLEY_UNLIKELY(*dst == NULL)) {
+    upd_iso_unstack(iso, term);
+    return 0;
+  }
+  cwk_path_join((char*) f->npath, (char*) term, (char*) *dst, dstlen+1);
+  upd_iso_unstack(iso, term);
+
+  return dstlen;
+}
+
 
 static void syncdir_watch_cb_(upd_file_watch_t* w) {
   ctx_t_* ctx = w->udata;
@@ -242,6 +328,80 @@ static void syncdir_watch_cb_(upd_file_watch_t* w) {
   }
 }
 
+static void syncdir_open_cb_(uv_fs_t* fsreq) {
+  upd_req_t*  req = fsreq->data;
+  upd_file_t* f   = req->file;
+  upd_iso_t*  iso = f->iso;
+  ctx_t_*     ctx = f->ctx;
+
+  const ssize_t result = fsreq->result;
+  uv_fs_req_cleanup(fsreq);
+
+  if (HEDLEY_UNLIKELY(result < 0)) {
+    req->result = UPD_REQ_ABORTED;
+    req->cb(req);
+    goto ABORT;
+  }
+  const bool q = task_queue_with_dup_(&(task_t_) {
+      .ctx = ctx,
+      .req = req,
+      .cb  = task_sync_n2u_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!q)) {
+    req->result = UPD_REQ_ABORTED;
+    req->cb(req);
+  }
+
+  fsreq->data = ctx;
+  const bool close = uv_fs_close(&iso->loop, fsreq, result, syncdir_close_cb_);
+  if (HEDLEY_UNLIKELY(!close)) {
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  upd_iso_unstack(iso, fsreq);
+  upd_file_unref(f);
+}
+
+static void syncdir_close_cb_(uv_fs_t* fsreq) {
+  ctx_t_*     ctx = fsreq->data;
+  upd_file_t* f   = ctx->file;
+
+  uv_fs_req_cleanup(fsreq);
+  upd_file_unref(f);
+}
+
+static void syncdir_mkdir_cb_(uv_fs_t* fsreq) {
+  upd_req_t*  req = fsreq->data;
+  upd_file_t* f   = req->file;
+  upd_iso_t*  iso = f->iso;
+  ctx_t_*     ctx = f->ctx;
+
+  const ssize_t result = fsreq->result;
+  uv_fs_req_cleanup(fsreq);
+
+  if (HEDLEY_UNLIKELY(result < 0)) {
+    goto ABORT;
+  }
+  const bool q = task_queue_with_dup_(&(task_t_) {
+      .ctx = ctx,
+      .req = req,
+      .cb  = task_sync_n2u_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!q)) {
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  req->result = UPD_REQ_ABORTED;
+  req->cb(req);
+
+  upd_iso_unstack(iso, fsreq);
+  upd_file_unref(f);
+}
+
 
 static bool task_queue_with_dup_(const task_t_* src) {
   ctx_t_* ctx = src->ctx;
@@ -251,7 +411,6 @@ static bool task_queue_with_dup_(const task_t_* src) {
     return false;
   }
   *task = *src;
-  task->refcnt = 1;
 
   task_t_* prev = ctx->last_task;
 
@@ -265,52 +424,74 @@ static bool task_queue_with_dup_(const task_t_* src) {
   return true;
 }
 
-static bool task_unref_(task_t_* task) {
-  ctx_t_* ctx = task->ctx;
+static void task_finalize_(task_t_* task) {
+  ctx_t_*     ctx = task->ctx;
+  upd_file_t* f   = ctx->file;
+  upd_iso_t*  iso = f->iso;
 
-  if (HEDLEY_UNLIKELY(--task->refcnt == 0)) {
-    if (HEDLEY_UNLIKELY(ctx->last_task == task)) {
-      ctx->last_task = NULL;
-    }
-    if (HEDLEY_UNLIKELY(task->next)) {
-      task->next->cb(task->next);
-    }
-    upd_iso_unstack(ctx->file->iso, task);
-    upd_file_unref(ctx->file);
-    return true;
+  if (HEDLEY_UNLIKELY(ctx->last_task == task)) {
+    ctx->last_task = NULL;
   }
-  return false;
+  if (HEDLEY_UNLIKELY(task->next)) {
+    task->next->cb(task->next);
+  }
+  upd_iso_unstack(iso, task);
+  upd_file_unref(f);
 }
 
 static void task_sync_n2u_cb_(task_t_* task) {
-  ctx_t_* ctx = task->ctx;
+  ctx_t_*     ctx = task->ctx;
+  upd_file_t* f   = ctx->file;
 
+  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
+      .file  = f,
+      .udata = task,
+      .cb    = task_sync_n2u_lock_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!lock)) {
+    task_finalize_(task);
+    return;
+  }
+}
+
+static void task_sync_n2u_lock_cb_(upd_file_lock_t* lock) {
+  task_t_*    task = lock->udata;
+  ctx_t_*     ctx  = task->ctx;
+  upd_file_t* f    = ctx->file;
+  upd_iso_t*  iso  = f->iso;
+
+  if (HEDLEY_UNLIKELY(!lock->ok)) {
+    goto ABORT;
+  }
   if (HEDLEY_UNLIKELY(ctx->drvmap == NULL)) {
     goto ABORT;
   }
 
-  uv_fs_t* fsreq = upd_iso_stack(ctx->file->iso, sizeof(*fsreq));
+  uv_fs_t* fsreq = upd_iso_stack(iso, sizeof(*fsreq));
   if (HEDLEY_UNLIKELY(fsreq == NULL)) {
     goto ABORT;
   }
-  *fsreq = (uv_fs_t) { .data = task, };
+  *fsreq = (uv_fs_t) { .data = lock, };
 
-  uv_loop_t* loop = &ctx->file->iso->loop;
   const bool scandir = 0 <= uv_fs_scandir(
-    loop, fsreq, (char*) ctx->file->npath, 0, task_sync_n2u_scandir_cb_);
+    &iso->loop, fsreq, (char*) f->npath, 0, task_sync_n2u_scandir_cb_);
   if (HEDLEY_UNLIKELY(!scandir)) {
-    upd_iso_unstack(ctx->file->iso, fsreq);
+    upd_iso_unstack(iso, fsreq);
     goto ABORT;
   }
   return;
 
 ABORT:
-  task_unref_(task);
+  upd_file_unlock(lock);
+  upd_iso_unstack(iso, lock);
+
+  task_finalize_(task);
 }
 
 static void task_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
-  task_t_* task = fsreq->data;
-  ctx_t_*  ctx  = task->ctx;
+  upd_file_lock_t* lock = fsreq->data;
+  task_t_*         task = lock->udata;
+  ctx_t_*          ctx  = task->ctx;
 
   bool* rm       = NULL;
   bool  modified = false;
@@ -353,14 +534,9 @@ static void task_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
     }
 
     if (HEDLEY_UNLIKELY(!found)) {
-      const size_t pathlen = cwk_path_join(
-        (char*) ctx->file->npath, ne.name, NULL, 0);
-
-      uint8_t* path = upd_iso_stack(ctx->file->iso, pathlen+1);
-      if (HEDLEY_UNLIKELY(path == NULL)) {
-        continue;
-      }
-      cwk_path_join((char*) ctx->file->npath, ne.name, (char*) path, pathlen+1);
+      uint8_t* path;
+      const size_t pathlen = syncdir_create_child_path_(
+        ctx, &path, (uint8_t*) ne.name, utf8size_lazy(ne.name));
 
       const upd_driver_t* d =
         dir? &upd_driver_syncdir:
@@ -431,5 +607,11 @@ EXIT:
     upd_file_trigger(ctx->file, UPD_FILE_UPDATE);
   }
 
-  task_unref_(task);
+  if (HEDLEY_UNLIKELY(task->req)) {
+    task->req->cb(task->req);
+  }
+  task_finalize_(task);
+
+  upd_file_unlock(lock);
+  upd_iso_unstack(ctx->file->iso, lock);
 }
