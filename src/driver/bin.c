@@ -350,6 +350,8 @@ static bool task_queue_with_dup_(const task_t_* src) {
   if (HEDLEY_UNLIKELY(task == NULL)) {
     return false;
   }
+
+  upd_file_ref(f);
   *task = *src;
   if (HEDLEY_LIKELY(ctx->last_task)) {
     ctx->last_task->next = task;
@@ -358,7 +360,6 @@ static bool task_queue_with_dup_(const task_t_* src) {
     ctx->last_task = task;
     task->exec(task);
   }
-  upd_file_ref(f);
   return task;
 }
 
