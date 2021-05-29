@@ -3,12 +3,31 @@
 #include "common.h"
 
 
-typedef struct upd_driver_rule_t {
+typedef struct upd_driver_rule_t          upd_driver_rule_t;
+typedef struct upd_driver_load_external_t upd_driver_load_external_t;
+
+
+struct upd_driver_rule_t {
   uint8_t* ext;
   size_t   len;
 
   const upd_driver_t* driver;
-} upd_driver_rule_t;
+};
+
+struct upd_driver_load_external_t {
+  upd_iso_t* iso;
+
+  const uint8_t* npath;
+  size_t         len;
+
+  bool ok;
+
+  void* udata;
+
+  void
+  (*cb)(
+    upd_driver_load_external_t* load);
+};
 
 
 extern const upd_driver_t upd_driver_bin_r;
@@ -29,8 +48,13 @@ void
 upd_driver_setup(
   upd_iso_t* iso);
 
+HEDLEY_NON_NULL(1)
+bool
+upd_driver_load_external(
+  upd_driver_load_external_t* load);
 
-/* Callee takes the ownership. */
+
+/* Callee takes the ownership of the rules. */
 HEDLEY_NON_NULL(1)
 void
 upd_driver_syncdir_set_rules(

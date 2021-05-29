@@ -48,6 +48,12 @@ static inline size_t upd_path_dirname(const uint8_t* path, size_t len) {
   return len;
 }
 
+static inline const uint8_t* upd_path_basename(const uint8_t* path, size_t* len) {
+  const size_t offset = upd_path_dirname(path, *len);
+  *len -= offset;
+  return path + offset;
+}
+
 
 #if defined(UPD_TEST)
 static inline void upd_test_path(void) {
@@ -65,6 +71,10 @@ static inline void upd_test_path(void) {
     p2, sizeof(p2)-1) == utf8size_lazy("///hoge//piyo"));
 
   assert(upd_path_dirname(p2, sizeof(p2)-1) == utf8size_lazy("///hoge//"));
+
+  size_t l2 = sizeof(p2)-1;
+  assert(utf8cmp(upd_path_basename(p2, &l2), "piyo//////////////") == 0);
+  assert(l2 == sizeof("piyo//////////////")-1);
 
 # undef streq_
 }

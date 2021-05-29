@@ -15,31 +15,6 @@ srv_logf_(
 
 static
 void
-srv_lock_for_access_cb_(
-  upd_file_lock_t* lock);
-
-static
-void
-srv_access_cb_(
-  upd_req_t* req);
-
-static
-void
-srv_pathfind_cb_(
-  upd_req_pathfind_t* pf);
-
-static
-void
-srv_lock_dir_cb_(
-  upd_file_lock_t* l);
-
-static
-void
-srv_add_cb_(
-  upd_req_t* req);
-
-static
-void
 srv_conn_cb_(
   uv_stream_t* stream,
   int          status);
@@ -50,66 +25,50 @@ srv_close_cb_(
   uv_handle_t* handle);
 
 
-upd_srv_t* upd_srv_new_tcp(
-    upd_iso_t* iso, upd_file_t* prog, const uint8_t* addr, uint16_t port) {
-  struct sockaddr_in a = {0};
-  if (HEDLEY_UNLIKELY(0 > uv_ip4_addr((char*) addr, port, &a))) {
-    upd_iso_msgf(iso, "srv error: invalid address '%s:%"PRIu16"'\n", addr, port);
-    return NULL;
-  }
+static
+void
+srv_build_pathfind_prog_cb_(
+  upd_req_pathfind_t* pf);
 
-  char name[32] = {0};
-  const size_t namelen = snprintf(name, sizeof(name), "tcp-%"PRIu16, port);
+static
+void
+srv_build_lock_for_access_cb_(
+  upd_file_lock_t*);
 
-  upd_srv_t* srv = NULL;
-  if (HEDLEY_UNLIKELY(!upd_malloc(&srv, sizeof(*srv)+namelen+1))) {
-    upd_iso_msgf(iso, "srv error: allocation failure\n");
-    return NULL;
-  }
-  *srv = (upd_srv_t) {
-    .iso  = iso,
-    .prog = prog,
-    .name = (uint8_t*) (srv+1),
-  };
-  utf8ncpy(srv->name, name, namelen);
-  srv->name[namelen] = 0;
+static
+void
+srv_build_access_cb_(
+  upd_req_t* req);
 
-  if (HEDLEY_UNLIKELY(0 > uv_tcp_init(&iso->loop, &srv->uv.tcp))) {
-    srv_logf_(srv, "tcp server allocation failure");
-    upd_free(&srv);
-    return NULL;
-  }
+static
+void
+srv_build_pathfind_dir_cb_(
+  upd_req_pathfind_t* pf);
 
-  upd_file_ref(srv->prog);
-
-  if (HEDLEY_UNLIKELY(0 > uv_tcp_bind(&srv->uv.tcp, (struct sockaddr*) &a, 0))) {
-    srv_logf_(srv, "tcp bind failure (%s:%"PRIu16")", addr, port);
-    upd_srv_delete(srv);
-    return NULL;
-  }
-
-  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
-      .file  = prog,
-      .udata = srv,
-      .cb    = srv_lock_for_access_cb_,
-    });
-  if (HEDLEY_UNLIKELY(!lock)) {
-    srv_logf_(srv, "failed to allocate server program lock for access req");
-    upd_srv_delete(srv);
-    return NULL;
-  }
-  return srv;
-}
 
 void upd_srv_delete(upd_srv_t* srv) {
   upd_array_find_and_remove(&srv->iso->srv, srv);
 
-  if (HEDLEY_LIKELY(srv->dir)) {
-    upd_file_unref(srv->dir);
-  }
+  upd_file_unref(srv->dir);
   upd_file_unref(srv->prog);
 
   uv_close(&srv->uv.handle, srv_close_cb_);
+}
+
+
+bool upd_srv_build(upd_srv_build_t* b) {
+  b->srv = NULL;
+  const bool pf = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
+      .iso   = b->iso,
+      .path  = (uint8_t*) b->path,
+      .len   = b->pathlen,
+      .udata = b,
+      .cb    = srv_build_pathfind_prog_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!pf)) {
+    return false;
+  }
+  return true;
 }
 
 
@@ -124,162 +83,6 @@ static void srv_logf_(upd_srv_t* srv, const char* fmt, ...) {
   upd_iso_msgf(srv->iso, " (%s)\n", srv->name);
 }
 
-
-static void srv_lock_for_access_cb_(upd_file_lock_t* lock) {
-  upd_srv_t* srv = lock->udata;
-  upd_iso_t* iso = srv->iso;
-
-  if (HEDLEY_UNLIKELY(!lock->ok)) {
-    srv_logf_(srv, "failed to lock program for access req");
-    goto ABORT;
-  }
-
-  const bool access = upd_req_with_dup(&(upd_req_t) {
-      .file  = srv->prog,
-      .type  = UPD_REQ_PROG_ACCESS,
-      .cb    = srv_access_cb_,
-      .udata = lock,
-    });
-  if (HEDLEY_UNLIKELY(!access)) {
-    srv_logf_(srv, "program refused access req");
-    goto ABORT;
-  }
-  return;
-
-ABORT:
-  upd_file_unlock(lock);
-  upd_iso_unstack(iso, lock);
-  upd_srv_delete(srv);
-}
-
-static void srv_access_cb_(upd_req_t* req) {
-  upd_file_lock_t* lock = req->udata;
-  upd_srv_t*       srv  = lock->udata;
-  upd_iso_t*       iso  = srv->iso;
-
-  const bool executable = req->prog.access.exec;
-  upd_iso_unstack(iso, req);
-
-  upd_file_unlock(lock);
-  upd_iso_unstack(iso, lock);
-
-  if (HEDLEY_UNLIKELY(!executable)) {
-    srv_logf_(srv, "server program is not executable");
-    goto ABORT;
-  }
-
-  const bool pf = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
-      .iso   = iso,
-      .path  = (uint8_t*) SRV_PATH_,
-      .len   = utf8size_lazy(SRV_PATH_),
-      .udata = srv,
-      .cb    = srv_pathfind_cb_,
-    });
-  if (HEDLEY_UNLIKELY(!pf)) {
-    srv_logf_(srv, "'"SRV_PATH_"' pathfind failure");
-    goto ABORT;
-  }
-  return;
-
-ABORT:
-  upd_srv_delete(srv);
-}
-
-static void srv_pathfind_cb_(upd_req_pathfind_t* pf) {
-  upd_srv_t* srv = pf->udata;
-  upd_iso_t* iso = srv->iso;
-
-  upd_file_t* f = pf->len? NULL: pf->base;
-  upd_iso_unstack(iso, pf);
-
-  if (HEDLEY_UNLIKELY(f == NULL)) {
-    srv_logf_(srv, "'"SRV_PATH_"' is not found");
-    goto ABORT;
-  }
-
-  const bool ok = upd_file_lock_with_dup(&(upd_file_lock_t) {
-      .file  = f,
-      .ex    = true,
-      .udata = srv,
-      .cb    = srv_lock_dir_cb_,
-    });
-  if (HEDLEY_UNLIKELY(!ok)) {
-    srv_logf_(srv, "'"SRV_PATH_"' exlock failure");
-    goto ABORT;
-  }
-  return;
-
-ABORT:
-  upd_srv_delete(srv);
-}
-
-static void srv_lock_dir_cb_(upd_file_lock_t* lock) {
-  upd_srv_t* srv = lock->udata;
-  upd_iso_t* iso = srv->iso;
-
-  if (HEDLEY_UNLIKELY(!lock->ok)) {
-    srv_logf_(srv, "'"SRV_PATH_"' exlock failure");
-    goto ABORT;
-  }
-
-  srv->dir = upd_file_new(iso, &upd_driver_dir);
-  if (HEDLEY_UNLIKELY(srv->dir == NULL)) {
-    srv_logf_(srv, "dir creation failure");
-    goto ABORT;
-  }
-
-  const bool add = upd_req_with_dup(&(upd_req_t) {
-      .file = lock->file,
-      .type = UPD_REQ_DIR_ADD,
-      .dir  = { .entry = {
-        .file    = srv->dir,
-        .name    = (uint8_t*) srv->name,
-        .len     = utf8size_lazy(srv->name),
-        .weakref = true,
-      }, },
-      .udata = lock,
-      .cb    = srv_add_cb_,
-    });
-  if (HEDLEY_UNLIKELY(!add)) {
-    srv_logf_(srv, "'"SRV_PATH_"' refused add req");
-    goto ABORT;
-  }
-  return;
-
-ABORT:
-  upd_file_unlock(lock);
-  upd_iso_unstack(iso, lock);
-  upd_srv_delete(srv);
-}
-
-static void srv_add_cb_(upd_req_t* req) {
-  upd_file_lock_t* lock = req->udata;
-  upd_srv_t*       srv  = lock->udata;
-  upd_iso_t*       iso  = srv->iso;
-
-  const bool ok = req->result == UPD_REQ_OK;
-  upd_iso_unstack(iso, req);
-
-  upd_file_unlock(lock);
-  upd_iso_unstack(iso, lock);
-
-  if (HEDLEY_UNLIKELY(!ok)) {
-    srv_logf_(srv, "'"SRV_PATH_"' add req failure");
-    goto ABORT;
-  }
-  if (HEDLEY_UNLIKELY(0 > uv_listen(&srv->uv.stream, TCP_BACKLOG_, srv_conn_cb_))) {
-    srv_logf_(srv, "listen failure");
-    goto ABORT;
-  }
-  if (HEDLEY_UNLIKELY(!upd_array_insert(&iso->srv, srv, SIZE_MAX))) {
-    srv_logf_(srv, "registration failure");
-    goto ABORT;
-  }
-  return;
-
-ABORT:
-  upd_srv_delete(srv);
-}
 
 static void srv_conn_cb_(uv_stream_t* stream, int status) {
   upd_srv_t* srv = (void*) stream;
@@ -312,4 +115,184 @@ ABORT:
 static void srv_close_cb_(uv_handle_t* handle) {
   upd_srv_t* srv = (void*) handle;
   upd_free(&srv);
+}
+
+
+static void srv_build_pathfind_prog_cb_(upd_req_pathfind_t* pf) {
+  upd_srv_build_t* b   = pf->udata;
+  upd_iso_t*       iso = pf->iso;
+
+  b->prog = pf->len? NULL: pf->base;
+  upd_iso_unstack(iso, pf);
+
+  if (HEDLEY_UNLIKELY(b->prog == NULL)) {
+    upd_iso_msgf(iso, "program not found: %.*s\n", (int) b->pathlen, b->path);
+    goto ABORT;
+  }
+
+  upd_file_ref(b->prog);
+  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
+      .file  = b->prog,
+      .udata = b,
+      .cb    = srv_build_lock_for_access_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!lock)) {
+    upd_file_unref(b->prog);
+    upd_iso_msgf(iso, "failed to lock program file\n");
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  b->cb(b);
+}
+
+static void srv_build_lock_for_access_cb_(upd_file_lock_t* lock) {
+  upd_srv_build_t* b    = lock->udata;
+  upd_iso_t*       iso  = b->iso;
+
+  if (HEDLEY_UNLIKELY(!lock->ok)) {
+    upd_iso_msgf(iso, "failed to lock program for access req\n");
+    goto ABORT;
+  }
+  const bool ok = upd_req_with_dup(&(upd_req_t) {
+      .file  = b->prog,
+      .type  = UPD_REQ_PROG_ACCESS,
+      .udata = lock,
+      .cb    = srv_build_access_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!ok)) {
+    upd_iso_msgf(iso, "program access req refused\n");
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  upd_file_unlock(lock);
+  upd_iso_unstack(iso, lock);
+
+  upd_file_unref(b->prog);
+  b->cb(b);
+}
+
+static void srv_build_access_cb_(upd_req_t* req) {
+  upd_file_lock_t* lock = req->udata;
+  upd_srv_build_t* b    = lock->udata;
+  upd_iso_t*       iso  = b->iso;
+
+  const bool exec = req->prog.access.exec;
+  upd_iso_unstack(iso, req);
+
+  upd_file_unlock(lock);
+  upd_iso_unstack(iso, lock);
+
+  if (HEDLEY_UNLIKELY(!exec)) {
+    upd_iso_msgf(iso, "program is not executable\n");
+    goto ABORT;
+  }
+
+  uint8_t name[256];
+  const size_t namelen = snprintf(
+    (char*) name, sizeof(name),
+    "%.*s-%"PRIu16, (int) b->hostlen, b->host, b->port);
+  if (HEDLEY_UNLIKELY(namelen+1 >= sizeof(name))) {
+    upd_iso_msgf(iso, "too long hostname: %.*s\n", (int) b->hostlen, b->host);
+    goto ABORT;
+  }
+
+  const size_t len = cwk_path_join(SRV_PATH_, (char*) name, NULL, 0);
+
+  upd_req_pathfind_t* pf = upd_iso_stack(iso, sizeof(*pf)+len+1);
+  if (HEDLEY_UNLIKELY(pf == NULL)) {
+    upd_iso_msgf(iso, "pathfind req allocation failure\n");
+    goto ABORT;
+  }
+  *pf = (upd_req_pathfind_t) {
+    .iso    = b->iso,
+    .path   = (uint8_t*) (pf+1),
+    .len    = len,
+    .create = true,
+    .udata  = b,
+    .cb     = srv_build_pathfind_dir_cb_,
+  };
+  cwk_path_join(SRV_PATH_, (char*) name, (char*) pf->path, len+1);
+  upd_req_pathfind(pf);
+  return;
+
+ABORT:
+  upd_file_unref(b->prog);
+  b->cb(b);
+}
+
+static void srv_build_pathfind_dir_cb_(upd_req_pathfind_t* pf) {
+  upd_srv_build_t* b   = pf->udata;
+  upd_iso_t*       iso = pf->iso;
+
+  b->dir = pf->len? NULL: pf->base;
+  upd_iso_unstack(iso, pf);
+
+  if (HEDLEY_UNLIKELY(b->dir == NULL)) {
+    upd_iso_msgf(iso, "server directory creation failure\n");
+    goto ABORT;
+  }
+
+  uint8_t* host = upd_iso_stack(iso, b->hostlen+1);
+  if (HEDLEY_UNLIKELY(host == NULL)) {
+    upd_iso_msgf(iso, "host address allocation failure\n");
+    goto ABORT;
+  }
+  utf8ncpy(host, b->host, b->hostlen);
+  host[b->hostlen] = 0;
+
+  struct sockaddr_in addr = {0};
+  if (HEDLEY_UNLIKELY(0 > uv_ip4_addr((char*) b->host, b->port, &addr))) {
+    upd_iso_unstack(iso, host);
+    upd_iso_msgf(iso, "invalid address\n");
+    goto ABORT;
+  }
+  upd_iso_unstack(iso, host);
+
+  upd_srv_t* srv = NULL;
+  if (HEDLEY_UNLIKELY(!upd_malloc(&srv, sizeof(*b->srv)))) {
+    upd_iso_msgf(iso, "server allocation failure\n");
+    goto ABORT;
+  }
+  *srv = (upd_srv_t) {
+    .iso = iso,
+  };
+  if (HEDLEY_UNLIKELY(0 > uv_tcp_init(&iso->loop, &srv->uv.tcp))) {
+    upd_iso_msgf(iso, "tcp handle allocation failure\n");
+    upd_free(&b);
+    goto ABORT;
+  }
+
+  srv->prog = b->prog;
+  srv->dir  = b->dir;
+  upd_file_ref(b->dir);
+
+  const int bind = uv_tcp_bind(&srv->uv.tcp, (struct sockaddr*) &addr, 0);
+  if (HEDLEY_UNLIKELY(0 > bind)) {
+    upd_iso_msgf(iso, "tcp bind failure\n");
+    upd_srv_delete(srv);
+    goto EXIT;
+  }
+  const int listen = uv_listen(&srv->uv.stream, TCP_BACKLOG_, srv_conn_cb_);
+  if (HEDLEY_UNLIKELY(0 > listen)) {
+    upd_iso_msgf(iso, "tcp listen failure\n");
+    upd_srv_delete(srv);
+    goto EXIT;
+  }
+  if (HEDLEY_UNLIKELY(!upd_array_insert(&iso->srv, srv, SIZE_MAX))) {
+    upd_iso_msgf(iso, "server insertion failure\n");
+    upd_srv_delete(srv);
+    goto EXIT;
+  }
+  b->srv = srv;
+  goto EXIT;
+
+ABORT:
+  upd_file_unref(b->prog);
+
+EXIT:
+  b->cb(b);
 }

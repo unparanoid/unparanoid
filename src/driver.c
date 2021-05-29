@@ -50,6 +50,13 @@ void upd_driver_setup(upd_iso_t* iso) {
   }
 }
 
+bool upd_driver_load_external(upd_driver_load_external_t* load) {
+  upd_iso_msgf(load->iso, "load: %.*s\n", (int) load->len, load->npath);
+  load->ok = true;
+  load->cb(load);  /* TODO */
+  return true;
+}
+
 
 static void setup_install_(upd_file_t* dir, const upd_driver_t* drv) {
   upd_iso_t* iso = dir->iso;
