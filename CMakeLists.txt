@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.20)
 
 project(unparanoid C)
 
@@ -21,16 +21,24 @@ if(IS_BIG_ENDIAN)
   message(ERROR "big endian is not supported")
 endif()
 
+if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  set(UPD_C_FLAGS -Wall -Wextra -Werror -pedantic -Wno-missing-field-initializers)
+elseif (CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+  set(UPD_C_FLAGS /W2 /std:c11 /Zc:preprocessor-)
+else()
+  message(ERROR "unknown compiler")
+endif()
+
 
 # ---- core library ----
 add_library(libupd)
 set_target_properties(libupd
   PROPERTIES
-    PREFIX ""
+    PREFIX     ""
+    C_STANDARD 11
 )
 target_compile_options(libupd
-  PUBLIC
-    -Wall -Wextra -Werror -pedantic -Wno-missing-field-initializers
+  PUBLIC ${UPD_C_FLAGS}
 )
 target_compile_definitions(libupd
   PUBLIC
@@ -89,8 +97,6 @@ target_link_libraries(libupd
     picohttpparser
     utf8.h
     wsock.h
-
-    m
 )
 
 

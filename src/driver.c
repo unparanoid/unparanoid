@@ -192,7 +192,7 @@ static void load_work_cb_(uv_work_t* w) {
     return;
   }
 
-  uint8_t path[n];
+  uint8_t path[UPD_PATH_MAX];
   utf8ncpy(path, load->npath, load->npathlen);
   path[load->npathlen] = 0;
   utf8cat(path, EXTERNAL_DRIVER_EXT_);

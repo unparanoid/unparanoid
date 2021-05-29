@@ -17,6 +17,7 @@ target_sources(crypto-algorithms
 
 
 # ---- cwalk (https://github.com/likle/cwalk) ----
+set(IGNORE_WARNINGS ON)
 add_subdirectory(cwalk EXCLUDE_FROM_ALL)
 
 
@@ -44,43 +45,69 @@ add_subdirectory(libyaml EXCLUDE_FROM_ALL)
 add_library(libyaml ALIAS yaml)
 
 
-# ---- mimetype.h (https://github.com/falsycat/mimetype.h) ----
-add_subdirectory(mimetype.h EXCLUDE_FROM_ALL)
-
-
-# ---- luajit (https://github.com/LuaJIT/LuaJIT) ----
+# ---- luajit (https://github.com/LuaJIT/LuaJIT)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/luajit" DESTINATION .)
-set_directory_properties(
-  PROPERTIES
-    ADDITIONAL_CLEAN_FILES luajit/*
-)
 
-set(LUAJIT_MAKE make -j)
+if (WIN32)
+  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(LUAJIT_TYPE   SHARED)
+    set(LUAJIT_LIB    lua51.dll)
+    set(LUAJIT_IMPLIB lua51.lib)
+    add_custom_target(luajit-build
+      WORKING_DIRECTORY luajit/src
+      COMMAND           msvcbuild.bat debug
+      VERBATIM
+    )
+  else()
+    set(LUAJIT_TYPE  STATIC)
+    set(LUAJIT_LIB   lua51.lib)
+    add_custom_target(luajit-build
+      WORKING_DIRECTORY luajit/src
+      COMMAND           msvcbuild.bat static
+      VERBATIM
+    )
+  endif()
 
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(LUAJIT_LIB "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/libluajit-5.1.so.2")
-  set(LUAJIT_MAKE ${LUAJIT_MAKE} BUILDMODE=dynamic)
-  set(LUAJIT_MAKE ${LUAJIT_MAKE} && cp src/libluajit.so "${LUAJIT_LIB}")
 else()
-  set(LUAJIT_LIB "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/libluajit.a")
-  set(LUAJIT_MAKE ${LUAJIT_MAKE} BUILDMODE=static)
+  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(LUAJIT_TYPE SHARED)
+    set(LUAJIT_LIB  libluajit-5.1.so.2)
+    add_custom_target(luajit-build
+      WORKING_DIRECTORY luajit
+      COMMAND           make -j BUILDMODE=dynamic
+      COMMAND           cp src/libluajit.so src/libluajit-5.1.so.2
+      VERBATIM
+    )
+  else()
+    set(LUAJIT_TYPE STATIC)
+    set(LUAJIT_LIB  libluajit.a)
+    add_custom_target(luajit-build
+      WORKING_DIRECTORY luajit
+      COMMAND           make -j BUILDMODE=static
+      VERBATIM
+    )
+  endif()
 endif()
 
-add_custom_target(luajit-build
-  WORKING_DIRECTORY luajit
-  COMMAND           ${LUAJIT_MAKE}
+add_library(luajit-imported ${LUAJIT_TYPE} IMPORTED)
+set_target_properties(luajit-imported PROPERTIES
+  IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/${LUAJIT_LIB}"
+  IMPORTED_IMPLIB   "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/${LUAJIT_IMPLIB}"
+# INTERFACE_INCLUDE_DIRECTORIES doesn't work well ;(
 )
+add_dependencies(luajit-imported luajit-build)
 
 add_library(luajit INTERFACE)
-target_include_directories(luajit SYSTEM
-  INTERFACE luajit/src
-)
 target_link_libraries(luajit
-  INTERFACE "${LUAJIT_LIB}"
+  INTERFACE luajit-imported $<$<PLATFORM_ID:Linux>:m>
 )
-add_dependencies(luajit
-  luajit-build
+target_include_directories(luajit SYSTEM
+  INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/luajit/src"
 )
+
+
+# ---- mimetype.h (https://github.com/falsycat/mimetype.h) ----
+add_subdirectory(mimetype.h EXCLUDE_FROM_ALL)
 
 
 # ---- picohttpparser (https://github.com/h2o/picohttpparser) ----

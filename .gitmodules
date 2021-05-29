@@ -6,7 +6,7 @@
 	url = https://github.com/sheredom/utf8.h
 [submodule "thirdparty/cwalk"]
 	path = thirdparty/cwalk
-	url = https://github.com/likle/cwalk
+	url = https://github.com/falsycat/cwalk
 [submodule "thirdparty/picohttpparser"]
 	path = thirdparty/picohttpparser
 	url = https://github.com/h2o/picohttpparser
@@ -15,7 +15,7 @@
 	url = https://github.com/falsycat/wsock.h
 [submodule "thirdparty/crypto-algorithms"]
 	path = thirdparty/crypto-algorithms
-	url = https://github.com/B-Con/crypto-algorithms
+	url = https://github.com/falsycat/crypto-algorithms
 [submodule "thirdparty/mimetype.h"]
 	path = thirdparty/mimetype.h
 	url = https://github.com/falsycat/mimetype.h
