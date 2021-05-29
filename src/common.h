@@ -18,8 +18,11 @@
 #include <utf8.h>
 #include <uv.h>
 #include <yaml.h>
-#include <valgrind.h>
 #include <wsock.h>
+
+#if UPD_USE_VALGRIND
+# include <valgrind.h>
+#endif
 
 
 #define UPD_DECL_FUNC static inline

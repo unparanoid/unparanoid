@@ -73,7 +73,9 @@ static inline void* upd_iso_stack(upd_iso_t* iso, uint64_t len) {
   iso->stack.used += len;
   ++iso->stack.refcnt;
 
-  VALGRIND_MALLOCLIKE_BLOCK(ret, len, 0, 0);
+# if UPD_USE_VALGRIND
+    VALGRIND_MALLOCLIKE_BLOCK(ret, len, 0, 0);
+# endif
   return ret;
 }
 
@@ -88,9 +90,12 @@ static inline void upd_iso_unstack(upd_iso_t* iso, void* ptr) {
     upd_free(&ptr);
     return;
   }
-
   assert(iso->stack.refcnt);
-  VALGRIND_FREELIKE_BLOCK(ptr, 0);
+
+# if UPD_USE_VALGRIND
+    VALGRIND_FREELIKE_BLOCK(ptr, 0);
+# endif
+
   if (--iso->stack.refcnt == 0) {
     iso->stack.used = 0;
   }

@@ -34,6 +34,10 @@ target_compile_options(libupd
   PUBLIC
     -Wall -Wextra -Werror -pedantic -Wno-missing-field-initializers
 )
+target_compile_definitions(libupd
+  PUBLIC
+    UPD_USE_VALGRIND=$<BOOL:${VALGRIND_FOUND}>
+)
 target_include_directories(libupd SYSTEM
   PUBLIC
     include
