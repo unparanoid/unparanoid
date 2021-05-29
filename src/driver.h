@@ -18,9 +18,11 @@ struct upd_driver_load_external_t {
   upd_iso_t* iso;
 
   const uint8_t* npath;
-  size_t         len;
+  size_t npathlen;
 
-  bool ok;
+  const char* err;
+  bool        ok;
+  uv_lib_t*   lib;
 
   void* udata;
 

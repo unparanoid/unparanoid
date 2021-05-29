@@ -1,6 +1,15 @@
 #include "common.h"
 
 
+#define EXTERNAL_DRIVER_SYMBOL_ "upd_external_drivers"
+
+#if defined(__unix__)
+# define EXTERNAL_DRIVER_EXT_ ".x86_64.so"
+#elif defined(_WIN32) || defined(_WIN64)
+# define EXTERNAL_DRIVER_EXT_ ".x86_64.dll"
+#endif
+
+
 static
 void
 setup_install_(
@@ -31,6 +40,18 @@ setup_install_add_cb_(
   upd_req_t* req);
 
 
+static
+void
+load_work_cb_(
+  uv_work_t* w);
+
+static
+void
+load_work_after_cb_(
+  uv_work_t* w,
+  int        status);
+
+
 void upd_driver_setup(upd_iso_t* iso) {
   upd_driver_register(iso, &upd_driver_bin_r);
   upd_driver_register(iso, &upd_driver_bin_rw);
@@ -51,9 +72,27 @@ void upd_driver_setup(upd_iso_t* iso) {
 }
 
 bool upd_driver_load_external(upd_driver_load_external_t* load) {
-  upd_iso_msgf(load->iso, "load: %.*s\n", (int) load->len, load->npath);
-  load->ok = true;
-  load->cb(load);  /* TODO */
+  upd_iso_t* iso = load->iso;
+
+  load->lib = NULL;
+  if (HEDLEY_UNLIKELY(!upd_malloc(&load->lib, sizeof(*load->lib)))) {
+    return false;
+  }
+
+  uv_work_t* work = upd_iso_stack(iso, sizeof(*work));
+  if (HEDLEY_UNLIKELY(work == NULL)) {
+    upd_free(&load->lib);
+    return false;
+  }
+  *work = (uv_work_t) { .data = load, };
+
+  const int err =
+    uv_queue_work(&iso->loop, work, load_work_cb_, load_work_after_cb_);
+  if (HEDLEY_UNLIKELY(0 > err)) {
+    upd_free(&load->lib);
+    upd_iso_unstack(iso, work);
+    return false;
+  }
   return true;
 }
 
@@ -141,4 +180,71 @@ static void setup_install_add_cb_(upd_req_t* req) {
     upd_iso_msgf(iso, "driver '%s' installation failure\n", drv->name);
     return;
   }
+}
+
+
+static void load_work_cb_(uv_work_t* w) {
+  upd_driver_load_external_t* load = w->data;
+
+  const size_t n = load->npathlen + sizeof(EXTERNAL_DRIVER_EXT_);
+  if (HEDLEY_UNLIKELY(n > UPD_PATH_MAX)) {
+    load->err = "too long path";
+    return;
+  }
+
+  uint8_t path[n];
+  utf8ncpy(path, load->npath, load->npathlen);
+  path[load->npathlen] = 0;
+  utf8cat(path, EXTERNAL_DRIVER_EXT_);
+
+  const int err = uv_dlopen((char*) path, load->lib);
+  if (HEDLEY_UNLIKELY(0 > err)) {
+    load->err = uv_dlerror(load->lib);
+    return;
+  }
+}
+
+static void load_work_after_cb_(uv_work_t* w, int status) {
+  upd_driver_load_external_t* load = w->data;
+  upd_iso_t*                  iso  = load->iso;
+
+  upd_iso_unstack(iso, w);
+  if (HEDLEY_UNLIKELY(status < 0)) {
+    upd_iso_msgf(iso, "failed to load dynamic library: %s\n", load->npath);
+    goto ABORT;
+  }
+  if (HEDLEY_UNLIKELY(load->err)) {
+    upd_iso_msgf(iso,
+      "failed to load dynamic library: %s (%s)\n", load->npath, load->err);
+    goto ABORT;
+  }
+
+  const upd_driver_t** drivers;
+  const int dlsym = uv_dlsym(
+    load->lib, EXTERNAL_DRIVER_SYMBOL_, (void*) &drivers);
+  if (HEDLEY_UNLIKELY(dlsym)) {
+    uv_dlclose(load->lib);
+    upd_iso_msgf(iso,
+      "symbol '"EXTERNAL_DRIVER_SYMBOL_"' is not found: %s\n", load->npath);
+    goto ABORT;
+  }
+
+  if (HEDLEY_UNLIKELY(!upd_array_insert(&iso->libs, load->lib, SIZE_MAX))) {
+    uv_dlclose(load->lib);
+    upd_iso_msgf(iso, "external library insertion failure: %s\n", load->npath);
+    goto ABORT;
+  }
+
+  while (*drivers) {
+    upd_driver_register(iso, *drivers);
+    ++drivers;
+  }
+  load->ok = true;
+  goto EXIT;
+
+ABORT:
+  upd_free(&load->lib);
+
+EXIT:
+  load->cb(load);
 }

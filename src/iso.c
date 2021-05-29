@@ -135,6 +135,14 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   assert(iso->srv.n        == 0);
   assert(iso->cli.n        == 0);
 
+  /* unload all dynamic libraries */
+  for (size_t i = 0; i < iso->libs.n; ++i) {
+    uv_lib_t* lib = iso->libs.p[i];
+    uv_dlclose(lib);
+    upd_free(&lib);
+  }
+  upd_array_clear(&iso->libs);
+
   if (HEDLEY_UNLIKELY(0 > uv_loop_close(&iso->loop))) {
     return UPD_ISO_PANIC;
   }
@@ -241,7 +249,6 @@ static void iso_shutdown_timer_cb_(uv_timer_t* timer) {
 
 static void iso_walker_handle_(upd_file_t* f) {
   const uint64_t now = upd_iso_now(f->iso);
-
 
   const bool uncache =
     f->driver->uncache_period && f->last_req &&

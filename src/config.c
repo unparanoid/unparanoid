@@ -554,11 +554,11 @@ static void task_parse_driver_cb_(task_t_* task) {
     upd_iso_unstack(iso, rpath);
 
     *load = (upd_driver_load_external_t) {
-      .iso   = iso,
-      .npath = (uint8_t*) (load+1),
-      .len   = plen,
-      .udata = task,
-      .cb    = driver_load_cb_,
+      .iso      = iso,
+      .npath    = (uint8_t*) (load+1),
+      .npathlen = plen,
+      .udata    = task,
+      .cb       = driver_load_cb_,
     };
     ++task->refcnt;
     if (HEDLEY_UNLIKELY(!upd_driver_load_external(load))) {
@@ -847,8 +847,7 @@ static void driver_load_cb_(upd_driver_load_external_t* load) {
   upd_iso_t* iso  = ctx->iso;
 
   if (HEDLEY_UNLIKELY(!load->ok)) {
-    config_logf_(ctx,
-      "failed to load external driver: %.*s", (int) load->len, load->npath);
+    config_logf_(ctx, "failed to load external driver: %s", load->npath);
   }
   upd_iso_unstack(iso, load);
   task_unref_(task);

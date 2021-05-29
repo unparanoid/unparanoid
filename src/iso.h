@@ -14,6 +14,7 @@ struct upd_iso_t {
 
   upd_iso_status_t status;
 
+  upd_array_of(uv_lib_t*)           libs;
   upd_array_of(const upd_driver_t*) drivers;
   upd_array_of(upd_file_t*)         files;
   upd_array_of(upd_srv_t*)          srv;
