@@ -195,7 +195,10 @@ static bool prog_handle_(upd_req_t* req) {
       return false;
     }
     req->prog.exec = f;
-  } break;
+    req->result = UPD_REQ_OK;
+    req->cb(req);
+    upd_file_unref(f);
+  } return true;
   default:
     req->result = UPD_REQ_INVALID;
     return false;
@@ -488,6 +491,7 @@ static void session_exec_cb_(upd_req_t* req) {
   if (HEDLEY_UNLIKELY(ss->io == NULL)) {
     goto ABORT;
   }
+  upd_file_ref(ss->io);
 
   ss->watch = (upd_file_watch_t) {
     .file  = ss->io,

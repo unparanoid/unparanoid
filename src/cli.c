@@ -295,6 +295,7 @@ static void cli_exec_cb_(upd_req_t* req) {
     cli_logf_(cli, "exec req failure");
     goto ABORT;
   }
+  upd_file_ref(cli->io);
 
   cli->watch = (upd_file_watch_t) {
     .file  = cli->io,

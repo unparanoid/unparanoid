@@ -227,7 +227,10 @@ static bool prog_handle_(upd_req_t* req) {
       return false;
     }
     req->prog.exec = f;
-  } break;
+    req->result = UPD_REQ_OK;
+    req->cb(req);
+    upd_file_unref(f);
+  } return true;
   default:
     req->result = UPD_REQ_INVALID;
     return false;
@@ -666,6 +669,7 @@ static void req_exec_cb_(upd_req_t* req) {
     stream_output_http_error_(ctx, 403, "exec failure");
     goto EXIT;
   }
+  upd_file_ref(ctx->ws);
 
   uint8_t nonce[WSOCK_NONCE_OUT_SIZE_+1] = {0};
   if (HEDLEY_UNLIKELY(!req_calc_wsock_nonce_(nonce, hreq))) {

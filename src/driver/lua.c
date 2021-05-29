@@ -477,13 +477,17 @@ static bool prog_handle_(upd_req_t* req) {
 
   case UPD_REQ_PROG_EXEC: {
     req->prog.exec = NULL;
+    if (HEDLEY_LIKELY(ctx->clean && ctx->compiled)) {
+      upd_file_t* stf = prog_exec_(f);
+      req->prog.exec = stf;
+      req->result    = UPD_REQ_OK;
+      req->cb(req);
+      upd_file_unref(stf);
+      return true;
+    }
     if (HEDLEY_UNLIKELY(!f->npath)) {
       req->result = UPD_REQ_INVALID;
       return false;
-    }
-    if (HEDLEY_LIKELY(ctx->clean && ctx->compiled)) {
-      req->prog.exec = prog_exec_(f);
-      break;
     }
     const bool compile = upd_req_with_dup(&(upd_req_t) {
         .file  = f,
@@ -910,8 +914,15 @@ static void prog_exec_after_compile_cb_(upd_req_t* req) {
   upd_req_t*  origin = req->udata;
   upd_iso_unstack(iso, req);
 
-  origin->prog.exec = ctx->compiled? prog_exec_(f): NULL;
+  upd_file_t* stf = ctx->compiled? prog_exec_(f): NULL;
+
+  origin->prog.exec = stf;
+  origin->result    = stf? UPD_REQ_OK: UPD_REQ_ABORTED;
   origin->cb(origin);
+
+  if (HEDLEY_LIKELY(stf)) {
+    upd_file_unref(stf);
+  }
 }
 
 
@@ -1758,11 +1769,7 @@ static void lua_promise_req_cb_(upd_req_t* req) {
   case UPD_REQ_DIR_NEW:
   case UPD_REQ_DIR_NEWDIR:
   case UPD_REQ_DIR_RM:
-    if (HEDLEY_LIKELY(req->dir.entry.file)) {
-      lua_file_new_(lua, req->dir.entry.file);
-    } else {
-      lua_pushnil(lua);
-    }
+    lua_file_new_(lua, req->dir.entry.file);
     pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
     break;
 
@@ -1817,7 +1824,6 @@ static void lua_promise_req_cb_(upd_req_t* req) {
   case UPD_REQ_PROG_EXEC:
     lua_file_new_(lua, req->prog.exec);
     pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
-    upd_file_unref(req->prog.exec);
     break;
 
   case UPD_REQ_STREAM_ACCESS:
