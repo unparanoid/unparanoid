@@ -762,13 +762,13 @@ static void wsock_lock_for_input_cb_(upd_file_lock_t* lock) {
 
   const size_t prev_size = ctx->wsbuf.size;
 
-  if (HEDLEY_UNLIKELY(!lock->ok || ctx->state != WSOCK_)) {
-    goto EXIT;
-  }
-
   size_t         rem = io->size;
   const uint8_t* buf = io->buf;
   bool           end = false;
+
+  if (HEDLEY_UNLIKELY(!lock->ok || ctx->state != WSOCK_)) {
+    goto EXIT;
+  }
 
   while (rem) {
     wsock_t w = {0};

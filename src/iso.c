@@ -272,7 +272,7 @@ static void iso_walker_cb_(uv_timer_t* timer) {
 
   const upd_file_id_t needle = iso->walker.last_seen;
 
-  ssize_t i, l = 0, r = (ssize_t) iso->files.n - 1;
+  ssize_t i = 0, l = 0, r = (ssize_t) iso->files.n - 1;
   while (l < r) {
     i = (l+r)/2;
     if (HEDLEY_UNLIKELY(files[i]->id == needle)) {
