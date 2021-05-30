@@ -5,47 +5,44 @@ on:
 
 jobs:
   build-on-ubuntu:
-    name: 'Build on Ubuntu x86_64'
+    strategy:
+      fail-fast: false
+      matrix:
+        mode:
+          - { full: Debug,          short: debug }
+          - { full: RelWithDebInfo, short: fat   }
+          - { full: MinSizeRel,     short: slim  }
+
+    name: Build with ${{ matrix.mode.full }} on Ubuntu x86_64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
         with:
           submodules: true
 
-      - name: 'building upd (Debug)'
+      - name: build
         run: |
-          mkdir -p /tmp/upd/Debug
-          cd /tmp/upd/Debug
-          cmake -DCMAKE_BUILD_TYPE=Debug ${{ github.workspace }}
+          mkdir -p /tmp/upd
+          cd /tmp/upd
+          cmake -DCMAKE_BUILD_TYPE=${{ matrix.mode.full }} ${{ github.workspace }}
           make -j VERBOSE=1
 
-      - name: 'building upd (RelWithDebInfo)'
-        run: |
-          mkdir -p /tmp/upd/RelWithDebInfo
-          cd /tmp/upd/RelWithDebInfo
-          cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ${{ github.workspace }}
-          make -j VERBOSE=1
-
-      - name: 'building upd (MinSizeRel)'
-        run: |
-          mkdir -p /tmp/upd/MinSizeRel
-          cd /tmp/upd/MinSizeRel
-          cmake -DCMAKE_BUILD_TYPE=MinSizeRel ${{ github.workspace }}
-          make -j VERBOSE=1
-
-      - name: 'uploading artifacts'
+      - name: upload
         uses: actions/upload-artifact@v2
         with:
-          name: bin-elf-x86_64
-          path: |
-            /tmp/upd/Debug/upd
-            /tmp/upd/Debug/updtest
-            /tmp/upd/RelWithDebInfo/upd
-            /tmp/upd/MinSizeRel/upd
+          name: bin-elf-x86_64-${{ matrix.mode.short }}
+          path: /tmp/upd/upd
           if-no-files-found: ignore
 
-  build-on-msys2:
-    name: 'Build on Win64'
+  build-on-win64:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode:
+          - { full: RelWithDebInfo, short: fat   }
+          - { full: MinSizeRel,     short: slim  }
+
+    name: Build with ${{ matrix.mode.full }} on Win64
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2
@@ -54,36 +51,17 @@ jobs:
 
       - uses: ilammy/msvc-dev-cmd@v1
 
-      - name: 'building upd (Debug)'
+      - name: building
         run: |
-          mkdir -p /tmp/upd/Debug
-          cd /tmp/upd/Debug
-          cmake -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Debug ${{ github.workspace }}
-          cmake --build . --verbose
-
-      - name: 'building upd (RelWithDebInfo)'
-        run: |
-          mkdir -p /tmp/upd/RelWithDebInfo
-          cd /tmp/upd/RelWithDebInfo
-          cmake -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=RelWithDebInfo ${{ github.workspace }}
-          cmake --build . --verbose
-
-      - name: 'building upd (MinSizeRel)'
-        run: |
-          mkdir -p /tmp/upd/MinSizeRel
-          cd /tmp/upd/MinSizeRel
-          cmake -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=MinSizeRel ${{ github.workspace }}
+          mkdir -p /tmp/upd
+          cd /tmp/upd
+          cmake -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=${{ matrix.mode.full }} ${{ github.workspace }}
           cmake --build . --verbose
 
       - name: 'uploading artifacts'
         uses: actions/upload-artifact@v2
         with:
-          name: bin-coff-x86_64
-          path: |
-            /tmp/upd/Debug/upd.exe
-            /tmp/upd/Debug/updtest.exe
-            /tmp/upd/Debug/lua51.dll
-            /tmp/upd/RelWithDebInfo/upd.exe
-            /tmp/upd/MinSizeRel/upd.exe
+          name: upd-coff-x86_64-${{ matrix.mode.short }}
+          path: /tmp/upd/upd.exe
           if-no-files-found: ignore
 
