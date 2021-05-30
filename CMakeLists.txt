@@ -46,8 +46,8 @@ target_compile_definitions(libupd
 )
 target_include_directories(libupd SYSTEM
   PUBLIC
-    include
     "${VALGRIND_INCLUDE_DIRS}"
+    .
 )
 target_include_directories(libupd
   PUBLIC
@@ -55,7 +55,7 @@ target_include_directories(libupd
 )
 target_sources(libupd
   PUBLIC
-    include/libupd.h
+    libupd.h
   PRIVATE
     src/array.h
     src/buf.h
@@ -112,6 +112,24 @@ target_sources(upd
 )
 
 
+# ---- external driver example ----
+add_library(extdrv-hello SHARED)
+set_target_properties(extdrv-hello
+  PROPERTIES
+    PREFIX      ""
+    OUTPUT_NAME hello.x86_64
+    C_STANDARD  11
+)
+target_compile_options(extdrv-hello
+  PUBLIC ${UPD_C_FLAGS}
+)
+target_sources(extdrv-hello
+  PRIVATE
+    hello.c
+    libupd.h
+)
+
+
 # ---- test app ----
 if(BUILD_TESTING)
   add_executable(updtest)
@@ -123,7 +141,6 @@ if(BUILD_TESTING)
     PRIVATE
       src/test.c
   )
-
   add_test(
     NAME    updtest
     COMMAND $<TARGET_FILE:updtest>

@@ -30,8 +30,10 @@ jobs:
       - name: upload
         uses: actions/upload-artifact@v2
         with:
-          name: bin-elf-x86_64-${{ matrix.mode.short }}
-          path: /tmp/upd/upd
+          name: upd-elf-x86_64-${{ matrix.mode.short }}
+          path: |
+            /tmp/upd/upd
+            /tmp/upd/hello.x86_64.so
           if-no-files-found: ignore
 
   build-on-win64:
@@ -62,6 +64,8 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: upd-coff-x86_64-${{ matrix.mode.short }}
-          path: /tmp/upd/upd.exe
+          path: |
+            /tmp/upd/upd.exe
+            /tmp/upd/hello.x86_64.dll
           if-no-files-found: ignore
 

@@ -4,8 +4,16 @@
 #include <stdint.h>
 
 
+#if !defined(UPD_EXTERNAL_DRIVER) && defined(UPD_EXTERNAL_DRIVER_IMPL)
+# define UPD_EXTERNAL_DRIVER
+#endif
+
 #if !defined(UPD_DECL_FUNC)
-# define UPD_DECL_FUNC
+#  if defined(UPD_EXTERNAL_DRIVER)
+#    define UPD_DECL_FUNC static inline
+#  else
+#    define UPD_DECL_FUNC
+#  endif
 #endif
 
 
@@ -25,10 +33,12 @@ typedef uint8_t  upd_req_result_t;
 typedef uint8_t  upd_tensor_type_t;
 
 typedef
+void
 (*upd_iso_thread_main_t)(
   void* udata);
 
 typedef
+void
 (*upd_iso_work_cb_t)(
   upd_iso_t* iso, void* udata);
 
@@ -66,12 +76,6 @@ upd_iso_msg(
   upd_iso_t*     iso,
   const uint8_t* msg,
   uint64_t       len);
-
-UPD_DECL_FUNC
-void
-upd_iso_exit(
-  upd_iso_t*       iso,
-  upd_iso_status_t status);
 
 UPD_DECL_FUNC
 bool
@@ -117,17 +121,11 @@ struct upd_driver_t {
 };
 
 UPD_DECL_FUNC
-bool
-upd_driver_register(
-  upd_iso_t*          iso,
-  const upd_driver_t* driver);
-
-UPD_DECL_FUNC
 const upd_driver_t*
 upd_driver_lookup(
   upd_iso_t*     iso,
   const uint8_t* name,
-  size_t         len);
+  uint64_t       len);
 
 
 /*
@@ -310,14 +308,14 @@ typedef struct upd_req_dir_access_t {
 
 typedef struct upd_req_dir_entry_t {
   uint8_t*    name;
-  size_t      len;
+  uint64_t    len;
   upd_file_t* file;
   bool        weakref;
 } upd_req_dir_entry_t;
 
 typedef struct upd_req_dir_entries_t {
   upd_req_dir_entry_t** p;
-  size_t                n;
+  uint64_t              n;
 } upd_req_dir_entries_t;
 
 typedef struct upd_req_bin_access_t {
@@ -326,8 +324,8 @@ typedef struct upd_req_bin_access_t {
 } upd_req_bin_access_t;
 
 typedef struct upd_req_bin_rw_t {
-  size_t   offset;
-  size_t   size;
+  uint64_t offset;
+  uint64_t size;
   uint8_t* buf;
 } upd_req_bin_rw_t;
 
@@ -342,7 +340,7 @@ typedef struct upd_req_stream_access_t {
 } upd_req_stream_access_t;
 
 typedef struct upd_req_stream_io_t {
-  size_t   size;
+  uint64_t size;
   uint8_t* buf;
 } upd_req_stream_io_t;
 
@@ -364,7 +362,7 @@ typedef struct upd_req_tensor_meta_t {
 typedef struct upd_req_tensor_data_t {
   upd_req_tensor_meta_t meta;
   uint8_t* ptr;
-  size_t   size;
+  uint64_t size;
 } upd_req_tensor_data_t;
 
 struct upd_req_t {
@@ -429,3 +427,105 @@ static inline uint64_t upd_tensor_type_sizeof(upd_tensor_type_t t) {
   }
   return 0;
 }
+
+
+/* ---- IMPLEMENTATIONS FOR EXTERNAL DRIVERS ---- */
+typedef struct upd_host_t {
+  struct {
+    void* (*stack)(upd_iso_t* iso, uint64_t len);
+    void (*unstack)(upd_iso_t* iso, void* ptr);
+    uint64_t (*now)(upd_iso_t* iso);
+    void (*msg)(upd_iso_t* iso, const uint8_t* msg, uint64_t len);
+    bool (*start_thread)(upd_iso_t* iso, upd_iso_thread_main_t main, void* udata);
+    bool (*start_work)(upd_iso_t* iso, upd_iso_thread_main_t main, upd_iso_work_cb_t cb, void* udata);
+  } iso;
+
+  struct {
+    const upd_driver_t* (*lookup)(upd_iso_t* iso, const uint8_t* name, uint64_t len);
+  } driver;
+
+  struct {
+    upd_file_t* (*new)(upd_iso_t* iso, const upd_driver_t* driver);
+    upd_file_t* (*get)(upd_iso_t* iso, upd_file_id_t id);
+    void (*ref)(upd_file_t* f);
+    bool (*unref)(upd_file_t* f);
+    bool (*watch)(upd_file_watch_t* w);
+    void (*unwatch)(upd_file_watch_t* w);
+    void (*trigger)(upd_file_t* f, upd_file_event_t e);
+    bool (*lock)(upd_file_lock_t* k);
+    void (*unlock)(upd_file_lock_t* k);
+    bool (*trigger_async)(upd_file_t* f);
+  } file;
+
+  bool (*req)(upd_req_t* req);
+} upd_host_t;
+
+typedef struct upd_external_t {
+  const upd_host_t*    host;
+  const upd_driver_t** drivers;
+} upd_external_t;
+
+
+#if defined(UPD_EXTERNAL_DRIVER)
+
+#if defined(_WIN32)
+  __declspec(dllexport)
+#endif
+extern upd_external_t upd;
+
+static inline void* upd_iso_stack(upd_iso_t* iso, uint64_t len) {
+  return upd.host->iso.stack(iso, len);
+}
+static inline void upd_iso_unstack(upd_iso_t* iso, void* ptr) {
+  upd.host->iso.unstack(iso, ptr);
+}
+static inline uint64_t upd_iso_now(upd_iso_t* iso) {
+  return upd.host->iso.now(iso);
+}
+static inline void upd_iso_msg(upd_iso_t* iso, const uint8_t* msg, uint64_t len) {
+  upd.host->iso.msg(iso, msg, len);
+}
+static inline bool upd_iso_start_thread(upd_iso_t* iso, upd_iso_thread_main_t main, void* udata) {
+  return upd.host->iso.start_thread(iso, main, udata);
+}
+static inline bool upd_iso_start_work(upd_iso_t* iso, upd_iso_thread_main_t main, upd_iso_work_cb_t cb, void* udata) {
+  return upd.host->iso.start_work(iso, main, cb, udata);
+}
+static inline const upd_driver_t* upd_driver_lookup(upd_iso_t* iso, const uint8_t* name, uint64_t len) {
+  return upd.host->driver.lookup(iso, name, len);
+}
+static inline upd_file_t* upd_file_new(upd_iso_t* iso, const upd_driver_t* driver) {
+  return upd.host->file.new(iso, driver);
+}
+static inline upd_file_t* upd_file_get(upd_iso_t* iso, upd_file_id_t id) {
+  return upd.host->file.get(iso, id);
+}
+static inline void upd_file_ref(upd_file_t* f) {
+  upd.host->file.ref(f);
+}
+static inline bool upd_file_unref(upd_file_t* f) {
+  return upd.host->file.unref(f);
+}
+static inline bool upd_file_watch(upd_file_watch_t* w) {
+  return upd.host->file.watch(w);
+}
+static inline void upd_file_unwatch(upd_file_watch_t* w) {
+  upd.host->file.unwatch(w);
+}
+static inline void upd_file_trigger(upd_file_t* f, upd_file_event_t e) {
+  upd.host->file.trigger(f, e);
+}
+static inline bool upd_file_lock(upd_file_lock_t* k) {
+  return upd.host->file.lock(k);
+}
+static inline void upd_file_unlock(upd_file_lock_t* k) {
+  upd.host->file.unlock(k);
+}
+static inline bool upd_file_trigger_async(upd_file_t* f) {
+  return upd.host->file.trigger_async(f);
+}
+static inline bool upd_req(upd_req_t* req) {
+  return upd.host->req(req);
+}
+
+#endif  /* UPD_EXTERNAL_DRIVER_IMPL */

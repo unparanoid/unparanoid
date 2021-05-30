@@ -1,13 +1,41 @@
 #include "common.h"
 
 
-#define EXTERNAL_DRIVER_SYMBOL_ "upd_external_drivers"
+#define EXTERNAL_DRIVER_SYMBOL_ "upd"
 
 #if defined(__unix__)
 # define EXTERNAL_DRIVER_EXT_ ".x86_64.so"
 #elif defined(_WIN32) || defined(_WIN64)
 # define EXTERNAL_DRIVER_EXT_ ".x86_64.dll"
 #endif
+
+
+static const upd_host_t host_ = {
+  .iso = {
+    .stack        = upd_iso_stack,
+    .unstack      = upd_iso_unstack,
+    .now          = upd_iso_now,
+    .msg          = upd_iso_msg,
+    .start_thread = upd_iso_start_thread,
+    .start_work   = upd_iso_start_work,
+  },
+  .driver = {
+    .lookup = upd_driver_lookup,
+  },
+  .file = {
+    .new           = upd_file_new,
+    .get           = upd_file_get,
+    .ref           = upd_file_ref,
+    .unref         = upd_file_unref,
+    .watch         = upd_file_watch,
+    .unwatch       = upd_file_unwatch,
+    .trigger       = upd_file_trigger,
+    .lock          = upd_file_lock,
+    .unlock        = upd_file_unlock,
+    .trigger_async = upd_file_trigger_async,
+  },
+  .req = upd_req,
+};
 
 
 static
@@ -219,11 +247,12 @@ static void load_work_after_cb_(uv_work_t* w, int status) {
     goto ABORT;
   }
 
-  const upd_driver_t** drivers;
-  const int dlsym = uv_dlsym(
-    load->lib, EXTERNAL_DRIVER_SYMBOL_, (void*) &drivers);
-  if (HEDLEY_UNLIKELY(dlsym)) {
-    uv_dlclose(load->lib);
+  uv_lib_t* lib = load->lib;
+
+  upd_external_t* extdrv;
+  int err = uv_dlsym(lib, EXTERNAL_DRIVER_SYMBOL_, (void*) &extdrv);
+  if (HEDLEY_UNLIKELY(0 > err)) {
+    uv_dlclose(lib);
     upd_iso_msgf(iso,
       "symbol '"EXTERNAL_DRIVER_SYMBOL_"' is not found: %s\n", load->npath);
     goto ABORT;
@@ -235,9 +264,9 @@ static void load_work_after_cb_(uv_work_t* w, int status) {
     goto ABORT;
   }
 
-  while (*drivers) {
-    upd_driver_register(iso, *drivers);
-    ++drivers;
+  extdrv->host = &host_;
+  for (const upd_driver_t** d = extdrv->drivers; *d; ++d) {
+    upd_driver_register(iso, *d);
   }
   load->ok = true;
   goto EXIT;
