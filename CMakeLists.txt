@@ -7,12 +7,10 @@ project(unparanoid C)
 include(CTest)
 include(TestBigEndian)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LUA  REQUIRED IMPORTED_TARGET luajit)
-pkg_check_modules(UV   REQUIRED IMPORTED_TARGET libuv)
-pkg_check_modules(YAML REQUIRED IMPORTED_TARGET yaml-0.1)
-
-pkg_check_modules(VALGRIND valgrind)
+find_package(PkgConfig)
+if (PKG_CONFIG_FOUND)
+  pkg_check_modules(VALGRIND valgrind)
+endif()
 
 add_subdirectory(thirdparty)
 
@@ -84,11 +82,11 @@ target_link_libraries(libupd
     crypto-algorithms
     cwalk
     hedley
+    libuv
+    libyaml
+    luajit
     mimetype.h
     picohttpparser
-    PkgConfig::LUA
-    PkgConfig::UV
-    PkgConfig::YAML
     utf8.h
     wsock.h
 

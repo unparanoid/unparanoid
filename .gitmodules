@@ -19,3 +19,12 @@
 [submodule "thirdparty/mimetype.h"]
 	path = thirdparty/mimetype.h
 	url = https://github.com/falsycat/mimetype.h
+[submodule "thirdparty/libuv"]
+	path = thirdparty/libuv
+	url = https://github.com/libuv/libuv
+[submodule "thirdparty/libyaml"]
+	path = thirdparty/libyaml
+	url = https://github.com/yaml/libyaml
+[submodule "thirdparty/LuaJIT"]
+	path = thirdparty/luajit
+	url = https://github.com/LuaJIT/LuaJIT
