@@ -178,6 +178,11 @@ bool
 stream_handle_(
   upd_req_t* req);
 
+static
+void
+stream_teardown_resource_(
+  upd_file_t* f);
+
 static const upd_driver_t stream_ = {
   .name = (uint8_t*) "upd.lua.stream",
   .cats = (upd_req_cat_t[]) {
@@ -633,12 +638,7 @@ static bool stream_init_(upd_file_t* f) {
 static void stream_deinit_(upd_file_t* f) {
   stream_t_* ctx = f->ctx;
 
-  for (size_t i = 0; i < ctx->files.n; ++i) {
-    upd_file_t** udata = ctx->files.p[i];
-    upd_file_unref(*udata);
-    *udata = NULL;
-  }
-  upd_array_clear(&ctx->files);
+  stream_teardown_resource_(f);
 
   upd_buf_clear(&ctx->in);
   upd_buf_clear(&ctx->out);
@@ -718,6 +718,17 @@ static bool stream_handle_(upd_req_t* req) {
   req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
+}
+
+static void stream_teardown_resource_(upd_file_t* f) {
+  stream_t_* ctx = f->ctx;
+
+  for (size_t i = 0; i < ctx->files.n; ++i) {
+    upd_file_t** udata = ctx->files.p[i];
+    upd_file_unref(*udata);
+    *udata = NULL;
+  }
+  upd_array_clear(&ctx->files);
 }
 
 
@@ -962,13 +973,7 @@ static void stream_timer_cb_(uv_timer_t* timer) {
   switch (err) {
   case 0:
     ctx->state = STREAM_EXITED_;
-
-    for (size_t i = 0; i < ctx->files.n; ++i) {
-      upd_file_t** udata = ctx->files.p[i];
-      upd_file_unref(*udata);
-      *udata = NULL;
-    }
-    upd_array_clear(&ctx->files);
+    stream_teardown_resource_(stf);
     break;
   case LUA_YIELD:
     break;
@@ -1254,10 +1259,13 @@ static void lua_file_new_(lua_State* lua, upd_file_t* f) {
   lua_getfield(lua, LUA_REGISTRYINDEX, "File");
   lua_setmetatable(lua, -2);
 
-  if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->files, udata, SIZE_MAX))) {
-    luaL_error(lua, "file list insertion failure");
+  /* having self reference causes refcnt circulation */
+  if (HEDLEY_LIKELY(f != stf)) {
+    if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->files, udata, SIZE_MAX))) {
+      luaL_error(lua, "file list insertion failure");
+    }
+    upd_file_ref(f);
   }
-  upd_file_ref(f);
 }
 
 
