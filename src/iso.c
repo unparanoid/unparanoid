@@ -248,8 +248,23 @@ static void iso_shutdown_timer_cb_(uv_timer_t* timer) {
 
 
 static void iso_walker_handle_(upd_file_t* f) {
+  upd_file_t_* f_ = (void*) f;
+
   const uint64_t now = upd_iso_now(f->iso);
 
+  /* lock timeout handling */
+  for (size_t i = 0; i < f_->lock.pending.n;) {
+    upd_file_lock_t* k = f_->lock.pending.p[i];
+
+    const uint64_t thresh = k->basetime + k->timeout;
+    if (HEDLEY_UNLIKELY(now >= thresh)) {
+      upd_file_unlock(k);
+      continue;
+    }
+    ++i;
+  }
+
+  /* trigger uncache event */
   const bool uncache =
     f->driver->uncache_period && f->last_req &&
     f->last_req >= f->last_uncache;

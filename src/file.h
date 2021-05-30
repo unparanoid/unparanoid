@@ -158,6 +158,11 @@ static inline bool upd_file_lock(upd_file_lock_t* l) {
   if (HEDLEY_UNLIKELY(!upd_array_insert(&f->lock.pending, l, SIZE_MAX))) {
     return false;
   }
+
+  l->basetime = upd_iso_now(f->super.iso);
+  if (HEDLEY_UNLIKELY(l->timeout == 0)) {
+    l->timeout = UPD_FILE_LOCK_DEFAULT_TIMEOUT;
+  }
   upd_file_ref(&f->super);  /* for queing */
   return true;
 }

@@ -119,6 +119,8 @@ upd_driver_lookup(
  */
 #define UPD_FILE_ID_ROOT 0
 
+#define UPD_FILE_LOCK_DEFAULT_TIMEOUT 10000
+
 enum {
   /* upd_file_event_t */
   UPD_FILE_DELETE   = 0x00,
@@ -157,6 +159,9 @@ struct upd_file_watch_t {
 
 struct upd_file_lock_t {
   upd_file_t* file;
+
+  uint64_t basetime;
+  uint64_t timeout;
 
   upd_file_lock_cb_t cb;
   void*              udata;
