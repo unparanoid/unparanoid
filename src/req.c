@@ -91,27 +91,19 @@ static void pathfind_find_cb_(upd_req_t* req) {
 
   if (HEDLEY_UNLIKELY(req->dir.entry.file == NULL)) {
     if (pf->create) {
-      upd_file_t* f = upd_file_new(pf->iso, &upd_driver_dir);
-
-      if (HEDLEY_LIKELY(f)) {
-        pf->req = (upd_req_t) {
-          .file = pf->base,
-          .type = UPD_REQ_DIR_ADD,
-          .dir  = { .entry = {
-            .file = f,
-            .name = pf->path,
-            .len  = pf->term,
-          }, },
-          .udata = pf,
-          .cb    = pathfind_add_cb_,
-        };
-
-        const bool add = upd_req(&pf->req);
-        upd_file_unref(f);
-
-        if (HEDLEY_LIKELY(add)) {
-          return;
-        }
+      pf->req = (upd_req_t) {
+        .file = pf->base,
+        .type = UPD_REQ_DIR_NEWDIR,
+        .dir  = { .entry = {
+          .name = pf->path,
+          .len  = pf->term,
+        }, },
+        .udata = pf,
+        .cb    = pathfind_add_cb_,
+      };
+      const bool newdir = upd_req(&pf->req);
+      if (HEDLEY_LIKELY(newdir)) {
+        return;
       }
     }
     upd_file_unlock(&pf->lock);

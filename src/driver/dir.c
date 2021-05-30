@@ -92,15 +92,18 @@ static void dir_deinit_(upd_file_t* f) {
 }
 
 static bool dir_handle_(upd_req_t* req) {
-  dir_t_* ctx = req->file->ctx;
+  upd_file_t* f   = req->file;
+  dir_t_*     ctx = f->ctx;
+  upd_iso_t*  iso = f->iso;
 
   switch (req->type) {
   case UPD_REQ_DIR_ACCESS:
     req->dir.access = (upd_req_dir_access_t) {
-      .list = true,
-      .find = true,
-      .add  = true,
-      .rm   = true,
+      .list   = true,
+      .find   = true,
+      .add    = true,
+      .newdir = true,
+      .rm     = true,
     };
     break;
 
@@ -122,15 +125,16 @@ static bool dir_handle_(upd_req_t* req) {
 
   case UPD_REQ_DIR_ADD: {
     upd_req_dir_entry_t* re = &req->dir.entry;
-    if (HEDLEY_UNLIKELY(!upd_path_validate_name(re->name, re->len))) {
+
+    const bool valid =
+      re->file != NULL && re->len && upd_path_validate_name(re->name, re->len);
+    if (HEDLEY_UNLIKELY(!valid)) {
       req->result = UPD_REQ_ABORTED;
       return false;
     }
 
     size_t i;
-    const bool duplicated =
-      (re->len  && entry_find_by_name_(ctx, &i, re->name, re->len));
-    if (HEDLEY_UNLIKELY(duplicated)) {
+    if (HEDLEY_UNLIKELY(entry_find_by_name_(ctx, &i, re->name, re->len))) {
       req->result = UPD_REQ_ABORTED;
       return false;
     }
@@ -143,7 +147,44 @@ static bool dir_handle_(upd_req_t* req) {
       return false;
     }
     if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->children, e, SIZE_MAX))) {
-      upd_free(&e);
+      entry_delete_(e);
+      req->result = UPD_REQ_NOMEM;
+      return false;
+    }
+    req->dir.entry = e->super;
+  } break;
+
+  case UPD_REQ_DIR_NEWDIR: {
+    upd_req_dir_entry_t re = req->dir.entry;
+    req->dir.entry = (upd_req_dir_entry_t) {0};
+
+    const bool valid =
+      re.len && upd_path_validate_name(re.name, re.len) && !re.weakref;
+    if (HEDLEY_UNLIKELY(!valid)) {
+      req->result = UPD_REQ_INVALID;
+      return false;
+    }
+
+    size_t i;
+    if (HEDLEY_UNLIKELY(entry_find_by_name_(ctx, &i, re.name, re.len))) {
+      req->result = UPD_REQ_ABORTED;
+      return false;
+    }
+
+    re.file = upd_file_new(iso, &upd_driver_dir);
+    if (HEDLEY_UNLIKELY(re.file == NULL)) {
+      req->result = UPD_REQ_NOMEM;
+      return false;
+    }
+    entry_t_* e = entry_dup_(&re, ctx);
+    upd_file_unref(re.file);
+    if (HEDLEY_UNLIKELY(e == NULL)) {
+      req->result = UPD_REQ_NOMEM;
+      return false;
+    }
+
+    if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->children, e, SIZE_MAX))) {
+      entry_delete_(e);
       req->result = UPD_REQ_NOMEM;
       return false;
     }
