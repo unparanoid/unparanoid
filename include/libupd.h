@@ -353,11 +353,10 @@ typedef struct upd_req_tensor_access_t {
 } upd_req_tensor_access_t;
 
 typedef struct upd_req_tensor_meta_t {
-  uint8_t dim;
   uint8_t rank;
 
   upd_tensor_type_t* type;
-  uint64_t*          reso;
+  uint32_t*          reso;
 
   unsigned inplace : 1;
 } upd_req_tensor_meta_t;

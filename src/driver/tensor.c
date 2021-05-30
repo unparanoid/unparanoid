@@ -6,7 +6,8 @@
 
 
 typedef struct tensor_t_ {
-  upd_file_t* file;
+  upd_file_t*      file;
+  upd_file_watch_t watch;
 
   upd_req_tensor_meta_t meta;
 
@@ -14,7 +15,7 @@ typedef struct tensor_t_ {
   size_t   size;
 
   upd_tensor_type_t type[MAX_DIM_];
-  uint64_t          reso[MAX_RANK_];
+  uint32_t          reso[MAX_RANK_];
 } tensor_t_;
 
 
@@ -32,6 +33,7 @@ static
 bool
 tensor_handle_(
   upd_req_t* req);
+
 
 const upd_driver_t upd_driver_tensor = {
   .name = (uint8_t*) "upd.tensor",
@@ -78,33 +80,36 @@ static bool tensor_handle_(upd_req_t* req) {
     break;
 
   case UPD_REQ_TENSOR_ALLOC: {
-    const upd_req_tensor_meta_t* m = &req->tensor.meta;
-    if (HEDLEY_UNLIKELY(m->dim >= MAX_DIM_ || m->rank >= MAX_RANK_)) {
+    const upd_req_tensor_meta_t* m   = &req->tensor.meta;
+    const size_t                 dim = m->rank? m->reso[0]: 1;
+    if (HEDLEY_UNLIKELY(m->rank >= MAX_RANK_ || dim >= MAX_DIM_)) {
       req->result = UPD_REQ_INVALID;
       return false;
     }
+
     size_t n = 0;
-    for (size_t i = 0; i < m->dim; ++i) {
+    for (size_t i = 0; i < dim; ++i) {
       n += upd_tensor_type_sizeof(m->type[i]);
     }
-    for (size_t i = 0; i < m->rank; ++i) {
+    for (size_t i = 1; i < m->rank; ++i) {
       n *= m->reso[i];
     }
+
     if (HEDLEY_UNLIKELY(!upd_malloc(&ctx->data, n))) {
       req->result = UPD_REQ_NOMEM;
       return false;
     }
-    memcpy(ctx->type, m->type, sizeof(*m->type)*m->dim);
+    ctx->size = n;
+
+    memcpy(ctx->type, m->type, sizeof(*m->type)*dim);
     memcpy(ctx->reso, m->reso, sizeof(*m->reso)*m->rank);
-    if (HEDLEY_LIKELY(n)) {
-      ctx->meta = *m;
-      ctx->meta.type = ctx->type;
-      ctx->meta.reso = ctx->reso;
-      ctx->size = n;
-    } else {
-      ctx->meta = (upd_req_tensor_meta_t) {0};
-      ctx->size = 0;
-    }
+
+    ctx->meta = (upd_req_tensor_meta_t) {
+      .rank    = m->rank,
+      .type    = ctx->type,
+      .reso    = ctx->reso,
+      .inplace = true,
+    };
   } break;
 
   case UPD_REQ_TENSOR_META:
