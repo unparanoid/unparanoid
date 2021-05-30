@@ -13,7 +13,7 @@ struct upd_srv_t {
   upd_file_t* dir;
   upd_file_t* prog;
 
-  uint8_t* name;
+  uint8_t name[32];
 };
 
 
