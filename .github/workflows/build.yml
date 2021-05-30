@@ -13,7 +13,7 @@ jobs:
           - { full: RelWithDebInfo, short: fat   }
           - { full: MinSizeRel,     short: slim  }
 
-    name: Build with ${{ matrix.mode.full }} on Ubuntu x86_64
+    name: ${{ matrix.mode.short }} (Ubuntu x86_64)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -42,7 +42,7 @@ jobs:
           - { full: RelWithDebInfo, short: fat   }
           - { full: MinSizeRel,     short: slim  }
 
-    name: Build with ${{ matrix.mode.full }} on Win64
+    name: ${{ matrix.mode.short }} (Win64)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2
