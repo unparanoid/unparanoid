@@ -86,7 +86,9 @@ struct upd_driver_t {
   uint64_t uncache_period;
 
   struct {
-    unsigned npoll : 1;
+    unsigned npoll    : 1;
+    unsigned preproc  : 1;
+    unsigned postproc : 1;
   } flags;
 
   bool
@@ -128,6 +130,8 @@ enum {
   UPD_FILE_DELETE_N = 0x10,
   UPD_FILE_UPDATE_N = 0x11,
   UPD_FILE_UNCACHE  = 0x20,
+  UPD_FILE_PREPROC  = 0x30,
+  UPD_FILE_POSTPROC = 0x38,
 };
 
 struct upd_file_t {

@@ -9,6 +9,8 @@ typedef struct upd_file_t_ {
   upd_array_of(upd_file_watch_t*) watch;
 
   uv_fs_poll_t* poll;
+  uv_prepare_t* prepare;
+  uv_check_t*   check;
 
   struct {
     size_t refcnt;
