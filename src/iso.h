@@ -3,6 +3,10 @@
 #include "common.h"
 
 
+typedef struct upd_iso_thread_t upd_iso_thread_t;
+typedef struct upd_iso_work_t   upd_iso_work_t;
+
+
 struct upd_iso_t {
   uv_loop_t loop;
   uv_tty_t  out;
@@ -14,7 +18,11 @@ struct upd_iso_t {
 
   upd_iso_status_t status;
 
-  upd_array_of(uv_lib_t*)           libs;
+  uv_mutex_t mtx;
+
+  upd_array_of(upd_iso_thread_t*) threads;
+  upd_array_of(uv_lib_t*)         libs;
+
   upd_array_of(const upd_driver_t*) drivers;
   upd_array_of(upd_file_t*)         files;
   upd_array_of(upd_srv_t*)          srv;
@@ -38,6 +46,25 @@ struct upd_iso_t {
     uv_timer_t    timer;
     upd_file_id_t last_seen;
   } walker;
+};
+
+struct upd_iso_thread_t {
+  uv_thread_t super;
+
+  upd_iso_t* iso;
+
+  void*                 udata;
+  upd_iso_thread_main_t main;
+};
+
+struct upd_iso_work_t {
+  uv_work_t super;
+
+  upd_iso_t* iso;
+  void*      udata;
+
+  upd_iso_thread_main_t main;
+  upd_iso_work_cb_t     cb;
 };
 
 
@@ -156,4 +183,85 @@ HEDLEY_NON_NULL(1)
 static inline void upd_iso_exit(upd_iso_t* iso, upd_iso_status_t status) {
   iso->status = status;
   upd_iso_close_all_conn(iso);
+}
+
+static inline void upd_iso_thread_entrypoint_(void* udata) {
+  upd_iso_thread_t* th  = udata;
+  upd_iso_t*        iso = th->iso;
+
+  th->main(th->udata);
+
+  uv_mutex_lock(&iso->mtx);
+  upd_array_find_and_remove(&iso->threads, th);
+  uv_mutex_unlock(&iso->mtx);
+  free(th);
+}
+static inline bool upd_iso_start_thread(
+    upd_iso_t* iso, upd_iso_thread_main_t main, void* udata) {
+  /*  Implementations of upd_malloc and upd_free have no
+   * guarantee that they're thread safe */
+  upd_iso_thread_t* th = malloc(sizeof(*th));
+  if (HEDLEY_UNLIKELY(th == NULL)) {
+    return false;
+  }
+  *th = (upd_iso_thread_t) {
+    .iso   = iso,
+    .udata = udata,
+    .main  = main,
+  };
+
+  uv_mutex_lock(&iso->mtx);
+  const bool insert = upd_array_insert(&iso->threads, th, SIZE_MAX);
+  uv_mutex_unlock(&iso->mtx);
+
+  if (HEDLEY_UNLIKELY(!insert)) {
+    free(th);
+    return false;
+  }
+
+  const bool start = 0 <= uv_thread_create(
+    &th->super, upd_iso_thread_entrypoint_, th);
+  if (HEDLEY_UNLIKELY(!start)) {
+    uv_mutex_lock(&iso->mtx);
+    upd_array_find_and_remove(&iso->threads, th);
+    uv_mutex_unlock(&iso->mtx);
+    free(th);
+    return false;
+  }
+  return true;
+}
+
+static inline void upd_iso_work_entrypoint_(uv_work_t* work) {
+  upd_iso_work_t* w = (void*) work;
+  w->main(w->udata);
+}
+static inline void upd_iso_work_after_cb_(uv_work_t* work, int status) {
+  (void) status;
+
+  upd_iso_work_t* w = (void*) work;
+  w->cb(w->iso, w->udata);
+  upd_iso_unstack(w->iso, w);
+}
+static inline bool upd_iso_start_work(
+    upd_iso_t*            iso,
+    upd_iso_thread_main_t main,
+    upd_iso_work_cb_t     cb,
+    void*                 udata) {
+  upd_iso_work_t* w = upd_iso_stack(iso, sizeof(*w));
+  if (HEDLEY_UNLIKELY(w == NULL)) {
+    return false;
+  }
+  *w = (upd_iso_work_t) {
+    .iso   = iso,
+    .udata = udata,
+    .main  = main,
+    .cb    = cb,
+  };
+  const bool q = 0 <= uv_queue_work(
+    &iso->loop, &w->super, upd_iso_work_entrypoint_, upd_iso_work_after_cb_);
+  if (HEDLEY_UNLIKELY(!q)) {
+    upd_iso_unstack(iso, w);
+    return false;
+  }
+  return true;
 }

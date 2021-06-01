@@ -25,14 +25,12 @@ typedef uint8_t  upd_req_result_t;
 typedef uint8_t  upd_tensor_type_t;
 
 typedef
-void
-(*upd_file_watch_cb_t)(
-  upd_file_watch_t* w);
+(*upd_iso_thread_main_t)(
+  void* udata);
 
 typedef
-void
-(*upd_file_lock_cb_t)(
-  upd_file_lock_t* l);
+(*upd_iso_work_cb_t)(
+  upd_iso_t* iso, void* udata);
 
 
 /*
@@ -75,6 +73,21 @@ upd_iso_exit(
   upd_iso_t*       iso,
   upd_iso_status_t status);
 
+UPD_DECL_FUNC
+bool
+upd_iso_start_thread(
+  upd_iso_t*            iso,
+  upd_iso_thread_main_t main,
+  void*                 udata);
+
+UPD_DECL_FUNC
+bool
+upd_iso_start_work(
+  upd_iso_t*            iso,
+  upd_iso_thread_main_t main,
+  upd_iso_work_cb_t     cb,
+  void*                 udata);
+
 
 /*
  * ---- DRIVER INTERFACE ----
@@ -89,6 +102,7 @@ struct upd_driver_t {
     unsigned npoll    : 1;
     unsigned preproc  : 1;
     unsigned postproc : 1;
+    unsigned async    : 1;
   } flags;
 
   bool
@@ -132,6 +146,7 @@ enum {
   UPD_FILE_UNCACHE  = 0x20,
   UPD_FILE_PREPROC  = 0x30,
   UPD_FILE_POSTPROC = 0x38,
+  UPD_FILE_ASYNC    = 0x40,
 };
 
 struct upd_file_t {
@@ -155,8 +170,10 @@ struct upd_file_t {
 struct upd_file_watch_t {
   upd_file_t* file;
 
-  upd_file_watch_cb_t cb;
-  void*               udata;
+  void* udata;
+  void
+  (*cb)(
+    upd_file_watch_t* w);
 
   upd_file_event_t event;
 };
@@ -167,8 +184,10 @@ struct upd_file_lock_t {
   uint64_t basetime;
   uint64_t timeout;
 
-  upd_file_lock_cb_t cb;
-  void*              udata;
+  void* udata;
+  void
+  (*cb)(
+    upd_file_lock_t* k);
 
   unsigned ex : 1;
   unsigned ok : 1;
@@ -221,6 +240,12 @@ UPD_DECL_FUNC
 void
 upd_file_unlock(
   upd_file_lock_t* l);
+
+/* thread-safe */
+UPD_DECL_FUNC
+bool
+upd_file_trigger_async(
+  upd_file_t* f);
 
 
 /*

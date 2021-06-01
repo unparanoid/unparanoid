@@ -8,6 +8,7 @@ typedef struct upd_file_t_ {
 
   upd_array_of(upd_file_watch_t*) watch;
 
+  uv_async_t*   async;
   uv_fs_poll_t* poll;
   uv_prepare_t* prepare;
   uv_check_t*   check;
@@ -122,6 +123,12 @@ static inline void upd_file_trigger(upd_file_t* f, upd_file_event_t e) {
     w->event = e;
     w->cb(w);
   }
+}
+
+HEDLEY_NON_NULL(1)
+static inline bool upd_file_trigger_async(upd_file_t* f) {
+  upd_file_t_* f_ = (void*) f;
+  return f_->async && 0 <= uv_async_send(f_->async);
 }
 
 

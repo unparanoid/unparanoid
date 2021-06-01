@@ -6,6 +6,11 @@
 
 static
 bool
+file_init_async_(
+  upd_file_t_* f);
+
+static
+bool
 file_init_poll_(
   upd_file_t_* f);
 
@@ -33,6 +38,11 @@ file_normalize_npath_(
   size_t*        len,
   const uint8_t* src);
 
+
+static
+void
+file_async_cb_(
+  uv_async_t* f);
 
 static
 void
@@ -99,6 +109,7 @@ upd_file_t* upd_file_new_from_normalized_npath(
   }
 
   const bool ok   =
+    (!driver->flags.async          || file_init_async_(f))   &&
     (!driver->flags.npoll || !len  || file_init_poll_(f))    &&
     (!driver->flags.preproc        || file_init_prepare_(f)) &&
     (!driver->flags.postproc       || file_init_check_(f))   &&
@@ -132,6 +143,23 @@ void upd_file_delete(upd_file_t* f) {
   upd_free(&f_);
 }
 
+
+static bool file_init_async_(upd_file_t_* f) {
+  upd_iso_t* iso = f->super.iso;
+
+  if (HEDLEY_UNLIKELY(!upd_malloc(&f->async, sizeof(*f->async)))) {
+    return false;
+  }
+  *f->async = (uv_async_t) { .data = f, };
+
+  const int err = uv_async_init(&iso->loop, f->async, file_async_cb_);
+  if (HEDLEY_UNLIKELY(0 > err)) {
+    upd_free(&f->async);
+    return false;
+  }
+  uv_unref((uv_handle_t*) f->async);
+  return true;
+}
 
 static bool file_init_poll_(upd_file_t_* f) {
   upd_iso_t* iso = f->super.iso;
@@ -202,6 +230,10 @@ static bool file_init_check_(upd_file_t_* f) {
 }
 
 static void file_close_all_handlers_(upd_file_t_* f) {
+  if (f->async) {
+    uv_close((uv_handle_t*) f->async, file_handle_close_cb_);
+    f->async = NULL;
+  }
   if (f->poll) {
     uv_fs_poll_stop(f->poll);
     uv_close((uv_handle_t*) f->poll, file_handle_close_cb_);
@@ -264,6 +296,11 @@ static bool file_normalize_npath_(
   return true;
 }
 
+
+static void file_async_cb_(uv_async_t* handle) {
+  upd_file_t* f = handle->data;
+  upd_file_trigger(f, UPD_FILE_ASYNC);
+}
 
 static void file_poll_cb_(
     uv_fs_poll_t*    poll,

@@ -80,7 +80,8 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     0 <= uv_signal_start(&iso->sigint, iso_signal_cb_, SIGINT) &&
     0 <= uv_signal_start(&iso->sighup, iso_signal_cb_, SIGHUP) &&
     0 <= uv_timer_start(
-      &iso->walker.timer, iso_walker_cb_, WALKER_PERIOD_, WALKER_PERIOD_);
+      &iso->walker.timer, iso_walker_cb_, WALKER_PERIOD_, WALKER_PERIOD_) &&
+    0 <= uv_mutex_init(&iso->mtx);
   if (HEDLEY_UNLIKELY(!ok)) {
     return NULL;
   }
@@ -135,6 +136,25 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   assert(iso->srv.n        == 0);
   assert(iso->cli.n        == 0);
 
+  /* join all threads */
+  for (size_t i = 0; ; ++i) {
+    uv_thread_t* th = NULL;
+
+    uv_mutex_lock(&iso->mtx);
+    const size_t n  = iso->threads.n;
+    if (HEDLEY_UNLIKELY(i < n)) {
+      th = iso->threads.p[i];
+    }
+    uv_mutex_unlock(&iso->mtx);
+
+    if (HEDLEY_UNLIKELY(th == NULL)) {
+      break;
+    }
+    uv_thread_join(th);  /* ignore errors */
+  }
+  upd_array_clear(&iso->threads);
+  uv_mutex_destroy(&iso->mtx);
+
   /* unload all dynamic libraries */
   for (size_t i = 0; i < iso->libs.n; ++i) {
     uv_lib_t* lib = iso->libs.p[i];
@@ -143,10 +163,12 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   }
   upd_array_clear(&iso->libs);
 
+  /* closes loop */
   if (HEDLEY_UNLIKELY(0 > uv_loop_close(&iso->loop))) {
     return UPD_ISO_PANIC;
   }
 
+  /* forget all drivers */
   upd_array_clear(&iso->drivers);
 
   const upd_iso_status_t ret = iso->status;
