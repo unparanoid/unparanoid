@@ -8,10 +8,11 @@ typedef struct upd_file_t_ {
 
   upd_array_of(upd_file_watch_t*) watch;
 
-  uv_async_t*   async;
   uv_fs_poll_t* poll;
   uv_prepare_t* prepare;
   uv_check_t*   check;
+  uv_async_t*   async;
+  uv_timer_t*   timer;
 
   struct {
     size_t refcnt;
@@ -128,7 +129,30 @@ static inline void upd_file_trigger(upd_file_t* f, upd_file_event_t e) {
 HEDLEY_NON_NULL(1)
 static inline bool upd_file_trigger_async(upd_file_t* f) {
   upd_file_t_* f_ = (void*) f;
+  assert(f_->async);
+
   return f_->async && 0 <= uv_async_send(f_->async);
+}
+
+static inline void upd_file_trigger_timer_cb_(uv_timer_t* timer) {
+  upd_file_t_* f_ = timer->data;
+  upd_file_t*  f  = &f_->super;
+  assert(f_->timer);
+
+  if (HEDLEY_LIKELY(!upd_file_unref(f))) {
+    upd_file_trigger(f, UPD_FILE_TIMER);
+  }
+}
+HEDLEY_NON_NULL(1)
+static inline bool upd_file_trigger_timer(upd_file_t* f, uint64_t dur) {
+  upd_file_t_* f_ = (void*) f;
+
+  const int err = uv_timer_start(f_->timer, upd_file_trigger_timer_cb_, dur, 0);
+  if (HEDLEY_UNLIKELY(0 > err)) {
+    return false;
+  }
+  upd_file_ref(f);
+  return true;
 }
 
 
