@@ -248,7 +248,6 @@ static bool file_init_timer_(upd_file_t_* f) {
     upd_free(&f->timer);
     return false;
   }
-  uv_unref((uv_handle_t*) f->timer);
   return true;
 }
 
