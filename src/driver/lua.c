@@ -45,7 +45,7 @@ typedef enum stream_state_t_ {
 } stream_state_t_;
 
 struct stream_t_ {
-  uv_timer_t timer;
+  upd_file_watch_t watch;
 
   lua_State* lua;
 
@@ -183,6 +183,12 @@ stream_handle_(
 
 static
 void
+stream_exit_(
+  upd_file_t* f,
+  bool        ok);
+
+static
+void
 stream_teardown_resource_(
   upd_file_t* f);
 
@@ -191,6 +197,9 @@ static const upd_driver_t stream_ = {
   .cats = (upd_req_cat_t[]) {
     UPD_REQ_STREAM,
     0,
+  },
+  .flags = {
+    .timer = true,
   },
   .init   = stream_init_,
   .deinit = stream_deinit_,
@@ -255,13 +264,8 @@ stream_lua_hook_cb_(
 
 static
 void
-stream_timer_cb_(
-  uv_timer_t* timer);
-
-static
-void
-stream_close_cb_(
-  uv_handle_t* handle);
+stream_watch_cb_(
+  upd_file_watch_t* w);
 
 
 static
@@ -588,7 +592,7 @@ static upd_file_t* prog_exec_(upd_file_t* prf) {
     upd_file_unref(stf);
     return NULL;
   }
-  if (HEDLEY_UNLIKELY(0 > uv_timer_start(&st->timer, stream_timer_cb_, 0, 0))) {
+  if (HEDLEY_UNLIKELY(!upd_file_trigger_timer(stf, 0))) {
     logf_(prf, "failed to start runner");
     upd_file_unref(stf);
     return NULL;
@@ -645,10 +649,13 @@ static bool stream_init_(upd_file_t* f) {
     return false;
   }
   *ctx = (stream_t_) {
+    .watch = {
+      .file = f,
+      .cb   = stream_watch_cb_,
+    },
     .file = f,
   };
-
-  if (HEDLEY_UNLIKELY(0 > uv_timer_init(&f->iso->loop, &ctx->timer))) {
+  if (HEDLEY_UNLIKELY(!upd_file_watch(&ctx->watch))) {
     upd_free(&ctx);
     return false;
   }
@@ -658,6 +665,8 @@ static bool stream_init_(upd_file_t* f) {
 
 static void stream_deinit_(upd_file_t* f) {
   stream_t_* ctx = f->ctx;
+
+  upd_file_unwatch(&ctx->watch);
 
   stream_teardown_resource_(f);
 
@@ -677,8 +686,7 @@ static void stream_deinit_(upd_file_t* f) {
     luaL_unref(ctx->lua, LUA_REGISTRYINDEX, ctx->registry.thread);
     lua_gc(ctx->lua, LUA_GCCOLLECT, 0);
   }
-  uv_timer_stop(&ctx->timer);
-  uv_close((uv_handle_t*) &ctx->timer, stream_close_cb_);
+  upd_free(&ctx);
 }
 
 static bool stream_handle_(upd_req_t* req) {
@@ -708,10 +716,11 @@ static bool stream_handle_(upd_req_t* req) {
       return false;
     }
     if (HEDLEY_UNLIKELY(ctx->state == STREAM_PENDING_INPUT_)) {
-      const bool start =
-        0 <= uv_timer_start(&ctx->timer, stream_timer_cb_, 0, 0);
-      if (HEDLEY_UNLIKELY(!start)) {
-        assert(false);
+      if (HEDLEY_UNLIKELY(!upd_file_trigger_timer(f, 0))) {
+        logf_(ctx->prog, "failed to start lua runner on received");
+        stream_exit_(f, false);
+        req->result = UPD_REQ_ABORTED;
+        return false;
       }
     }
     req->stream.io.size = io.size;
@@ -739,6 +748,13 @@ static bool stream_handle_(upd_req_t* req) {
   req->result = UPD_REQ_OK;
   req->cb(req);
   return true;
+}
+
+static void stream_exit_(upd_file_t* f, bool ok) {
+  stream_t_* ctx = f->ctx;
+  ctx->state = ok? STREAM_EXITED_: STREAM_ABORTED_;
+  stream_teardown_resource_(f);
+  upd_file_trigger(f, UPD_FILE_UPDATE);
 }
 
 static void stream_teardown_resource_(upd_file_t* f) {
@@ -974,11 +990,15 @@ static void stream_lua_hook_cb_(lua_State* lua, lua_Debug* dbg) {
   lua_sethook(lua, stream_lua_destroy_hook_cb_, LUA_MASKLINE, 0);
 }
 
-static void stream_timer_cb_(uv_timer_t* timer) {
-  stream_t_*  ctx = (void*) timer;
-  upd_file_t* stf = ctx->file;
+static void stream_watch_cb_(upd_file_watch_t* w) {
+  upd_file_t* stf = w->file;
+  stream_t_*  ctx = stf->ctx;
   upd_file_t* prf = ctx->prog;
   lua_State*  lua = ctx->lua;
+
+  if (HEDLEY_LIKELY(w->event != UPD_FILE_TIMER)) {
+    return;
+  }
 
   lua_rawgeti(lua, LUA_REGISTRYINDEX, ctx->registry.func);
   lua_rawgeti(lua, LUA_REGISTRYINDEX, ctx->registry.ctx);
@@ -1001,7 +1021,7 @@ static void stream_timer_cb_(uv_timer_t* timer) {
   switch (err) {
   case 0:
     ctx->state = STREAM_EXITED_;
-    stream_teardown_resource_(stf);
+    stream_exit_(stf, true);
     break;
   case LUA_YIELD:
     break;
@@ -1013,7 +1033,7 @@ static void stream_timer_cb_(uv_timer_t* timer) {
     lua_getinfo(lua, "Sl", &dbg);
     logf_(prf, "runtime error (%s) (%s:%d)",
       lua_tostring(lua, -1), dbg.source, dbg.currentline);
-    ctx->state = STREAM_ABORTED_;
+    stream_exit_(stf, false);
   } break;
   }
   lua_settop(lua, 0);
@@ -1028,9 +1048,9 @@ static void stream_timer_cb_(uv_timer_t* timer) {
 
     switch ((intmax_t) ctx->state) {
     case STREAM_RUNNING_: {
-      const bool start = 0 <= uv_timer_start(&ctx->timer, stream_timer_cb_, 0, 0);
-      if (HEDLEY_UNLIKELY(!start)) {
-        assert(false);
+      if (HEDLEY_UNLIKELY(!upd_file_trigger_timer(stf, 0))) {
+        logf_(prf, "failed to start lua runner for resuming");
+        stream_exit_(stf, false);
       }
     } break;
     case STREAM_EXITED_:
@@ -1040,11 +1060,6 @@ static void stream_timer_cb_(uv_timer_t* timer) {
     }
   }
   upd_file_unref(stf);
-}
-
-static void stream_close_cb_(uv_handle_t* handle) {
-  stream_t_* ctx = (void*) handle;
-  upd_free(&ctx);
 }
 
 
@@ -1191,9 +1206,8 @@ static int lua_context_sleep_(lua_State* lua) {
     return luaL_error(lua, "negative duration: %"PRIiMAX"", (intmax_t) t);
   }
 
-  const bool start = 0 <= uv_timer_start(&ctx->timer, stream_timer_cb_, t, 0);
-  if (HEDLEY_UNLIKELY(!start)) {
-    assert(false);
+  if (HEDLEY_UNLIKELY(!upd_file_trigger_timer(f, t))) {
+    return luaL_error(lua, "failed to set timer for lua runner");
   }
   return lua_yield(lua, 0);
 }
@@ -1896,10 +1910,9 @@ static void lua_promise_finalize_(promise_t_* pro, bool ok) {
   pro->error = !ok;
 
   if (HEDLEY_UNLIKELY(pro == ctx->pending)) {
-    const bool start =
-      0 <= uv_timer_start(&ctx->timer, stream_timer_cb_, 0, 0);
-    if (HEDLEY_UNLIKELY(!start)) {
-      assert(false);
+    if (HEDLEY_UNLIKELY(!upd_file_trigger_timer(f, 0))) {
+      logf_(ctx->prog, "failed to start lua runner for handling promise");
+      stream_exit_(f, false);
     }
   }
   luaL_unref(ctx->lua, LUA_REGISTRYINDEX, pro->registry.self);
