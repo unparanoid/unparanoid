@@ -42,7 +42,6 @@ extern const upd_driver_t upd_driver_syncdir;
 extern const upd_driver_t upd_driver_tensor;
 
 extern const upd_driver_t upd_driver_prog_http;
-extern const upd_driver_t upd_driver_prog_parallelism;
 
 
 HEDLEY_NON_NULL(1)
