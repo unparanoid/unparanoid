@@ -153,7 +153,7 @@ prog_exec_(
 const upd_driver_t upd_driver_lua = {
   .name = (uint8_t*) "upd.lua",
   .cats = (upd_req_cat_t[]) {
-    UPD_REQ_BIN,
+    UPD_REQ_STREAM,
     UPD_REQ_PROG,
     0,
   },
@@ -454,18 +454,18 @@ static bool prog_handle_(upd_req_t* req) {
   upd_iso_t*  iso = f->iso;
 
   switch (req->type) {
-  case UPD_REQ_BIN_ACCESS:
-    req->bin.access = (upd_req_bin_access_t) {
+  case UPD_REQ_STREAM_ACCESS:
+    req->stream.access = (upd_req_stream_access_t) {
       .write = !f->npath,
     };
     break;
-  case UPD_REQ_BIN_WRITE: {
-    if (HEDLEY_UNLIKELY(f->npath || req->bin.rw.offset)) {
+  case UPD_REQ_STREAM_WRITE: {
+    if (HEDLEY_UNLIKELY(f->npath || req->stream.io.offset)) {
       req->result = UPD_REQ_INVALID;
       return false;
     }
-    ctx->buf  = req->bin.rw.buf;
-    ctx->size = req->bin.rw.size;
+    ctx->buf  = req->stream.io.buf;
+    ctx->size = req->stream.io.size;
     if (HEDLEY_UNLIKELY(!prog_compile_(f))) {
       req->result = UPD_REQ_ABORTED;
       return false;
@@ -696,12 +696,35 @@ static bool stream_handle_(upd_req_t* req) {
   switch (req->type) {
   case UPD_REQ_STREAM_ACCESS:
     req->stream.access = (upd_req_stream_access_t) {
-      .input  = true,
-      .output = true,
+      .read  = true,
+      .write = true,
     };
     break;
 
-  case UPD_REQ_STREAM_INPUT: {
+  case UPD_REQ_STREAM_READ: {
+    if (HEDLEY_UNLIKELY(req->stream.io.offset)) {
+      req->result = UPD_REQ_INVALID;
+      return false;
+    }
+    const bool alive = ctx->state & STREAM_FLAG_ALIVE_;
+    if (HEDLEY_UNLIKELY(ctx->out.size == 0 && !alive)) {
+      req->result = UPD_REQ_ABORTED;
+      return false;
+    }
+    req->stream.io = (upd_req_stream_io_t) {
+      .buf  = ctx->out.ptr,
+      .size = ctx->out.size,
+    };
+    req->result = UPD_REQ_OK;
+    req->cb(req);
+    upd_buf_clear(&ctx->out);
+  } return true;
+
+  case UPD_REQ_STREAM_WRITE: {
+    if (HEDLEY_UNLIKELY(req->stream.io.offset)) {
+      req->result = UPD_REQ_INVALID;
+      return false;
+    }
     const upd_req_stream_io_t io = req->stream.io;
     req->stream.io.size = 0;
     if (HEDLEY_UNLIKELY(!io.size)) {
@@ -725,21 +748,6 @@ static bool stream_handle_(upd_req_t* req) {
     }
     req->stream.io.size = io.size;
   } break;
-
-  case UPD_REQ_STREAM_OUTPUT: {
-    const bool alive = ctx->state & STREAM_FLAG_ALIVE_;
-    if (HEDLEY_UNLIKELY(ctx->out.size == 0 && !alive)) {
-      req->result = UPD_REQ_ABORTED;
-      return false;
-    }
-    req->stream.io = (upd_req_stream_io_t) {
-      .buf  = ctx->out.ptr,
-      .size = ctx->out.size,
-    };
-    req->result = UPD_REQ_OK;
-    req->cb(req);
-    upd_buf_clear(&ctx->out);
-  } return true;
 
   default:
     req->result = UPD_REQ_INVALID;
@@ -1601,77 +1609,6 @@ static int lua_req_dir_rm_(lua_State* lua) {
   lua_pushvalue(lua, index);
   return 1;
 }
-static int lua_req_bin_read_(lua_State* lua) {
-  const size_t n = lua_gettop(lua);
-  if (HEDLEY_UNLIKELY(n > 3 || (n == 3 && !lua_isnumber(lua, 3)))) {
-    return luaL_error(lua, "invalid args");
-  }
-  upd_file_t* f = lua_req_get_first_arg_(lua, true);
-
-  const lua_Integer size = luaL_checkinteger(lua, 2);
-  if (HEDLEY_UNLIKELY(size < 0)) {
-    return luaL_error(lua, "size must be 0 or more");
-  }
-
-  const lua_Integer offset = lua_tointeger(lua, 3);
-  if (HEDLEY_UNLIKELY(offset < 0)) {
-    return luaL_error(lua, "offset must be 0 or more");
-  }
-
-  promise_t_* pro = lua_promise_new_(lua, 0);
-  const int index = lua_gettop(lua);
-
-  pro->type = PROMISE_REQ_;
-  pro->req  = (upd_req_t) {
-    .file = f,
-    .type = UPD_REQ_BIN_READ,
-    .bin = { .rw = {
-      .offset = offset,
-      .size   = size,
-    }, },
-    .cb = lua_promise_req_cb_,
-  };
-  if (HEDLEY_UNLIKELY(!upd_req(&pro->req))) {
-    lua_promise_finalize_(pro, false);
-  }
-  lua_pushvalue(lua, index);
-  return 1;
-}
-static int lua_req_bin_write_(lua_State* lua) {
-  const size_t n = lua_gettop(lua);
-  if (HEDLEY_UNLIKELY(n > 3 || (n == 3 && !lua_isnumber(lua, 3)))) {
-    return luaL_error(lua, "invalid args");
-  }
-  upd_file_t* f = lua_req_get_first_arg_(lua, true);
-
-  size_t len;
-  const char* data = luaL_checklstring(lua, 2, &len);
-
-  const lua_Integer offset = lua_tointeger(lua, 3);
-  if (HEDLEY_UNLIKELY(offset < 0)) {
-    return luaL_error(lua, "offset must be 0 or more");
-  }
-
-  promise_t_* pro = lua_promise_new_(lua, len);
-  const int index = lua_gettop(lua);
-
-  pro->type = PROMISE_REQ_;
-  pro->req  = (upd_req_t) {
-    .file = f,
-    .type = UPD_REQ_BIN_WRITE,
-    .bin = { .rw = {
-      .buf    = memcpy(pro+1, data, len),
-      .offset = offset,
-      .size   = len,
-    }, },
-    .cb = lua_promise_req_cb_,
-  };
-  if (HEDLEY_UNLIKELY(!upd_req(&pro->req))) {
-    lua_promise_finalize_(pro, false);
-  }
-  lua_pushvalue(lua, index);
-  return 1;
-}
 static int lua_req_stream_input_(lua_State* lua) {
   return luaL_error(lua, "not implemented");
 }
@@ -1729,21 +1666,6 @@ static void lua_req_register_class_(lua_State* lua, upd_iso_t* iso) {
           lua_setfield(lua, -2, "rm");
         }
         lua_setfield(lua, -2, "dir");
-
-        lua_createtable(lua, 0, 0);
-        {
-          lua_pushinteger(lua, UPD_REQ_BIN_ACCESS);
-          lua_pushboolean(lua, false);
-          lua_pushcclosure(lua, lua_req_emit_no_args_, 2);
-          lua_setfield(lua, -2, "access");
-
-          lua_pushcfunction(lua, lua_req_bin_read_);
-          lua_setfield(lua, -2, "read");
-
-          lua_pushcfunction(lua, lua_req_bin_write_);
-          lua_setfield(lua, -2, "write");
-        }
-        lua_setfield(lua, -2, "bin");
 
         lua_createtable(lua, 0, 0);
         {
@@ -1981,37 +1903,6 @@ static void lua_promise_req_cb_(upd_req_t* req) {
     pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
     break;
 
-  case UPD_REQ_BIN_ACCESS:
-    lua_createtable(lua, 0, 0);
-    lua_createtable(lua, 0, 0);
-    {
-      lua_pushboolean(lua, req->bin.access.read);
-      lua_setfield(lua, -2, "read");
-
-      lua_pushboolean(lua, req->bin.access.write);
-      lua_setfield(lua, -2, "write");
-    }
-    lua_rawseti(lua, -2, 1);
-    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
-    break;
-
-  case UPD_REQ_BIN_READ:
-    lua_createtable(lua, 0, 0);
-    {
-      lua_pushlstring(lua, (char*) req->bin.rw.buf, req->bin.rw.size);
-      lua_rawseti(lua, -2, 1);
-
-      lua_pushinteger(lua, req->bin.rw.offset);
-      lua_rawseti(lua, -2, 2);
-    }
-    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
-    break;
-
-  case UPD_REQ_BIN_WRITE:
-    lua_pushinteger(lua, req->bin.rw.size);
-    pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
-    break;
-
   case UPD_REQ_PROG_ACCESS:
     lua_createtable(lua, 0, 0);
     lua_createtable(lua, 0, 0);
@@ -2038,23 +1929,23 @@ static void lua_promise_req_cb_(upd_req_t* req) {
     lua_createtable(lua, 0, 0);
     lua_createtable(lua, 0, 0);
     {
-      lua_pushboolean(lua, req->stream.access.input);
-      lua_setfield(lua, -2, "input");
+      lua_pushboolean(lua, req->stream.access.read);
+      lua_setfield(lua, -2, "read");
 
-      lua_pushboolean(lua, req->stream.access.output);
-      lua_setfield(lua, -2, "output");
+      lua_pushboolean(lua, req->stream.access.write);
+      lua_setfield(lua, -2, "write");
     }
     lua_rawseti(lua, -2, 1);
     pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
     break;
 
-  case UPD_REQ_STREAM_INPUT:
-    lua_pushinteger(lua, req->stream.io.size);
+  case UPD_REQ_STREAM_READ:
+    lua_pushlstring(lua, (char*) req->stream.io.buf, req->stream.io.size);
     pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
     break;
 
-  case UPD_REQ_STREAM_OUTPUT:
-    lua_pushlstring(lua, (char*) req->stream.io.buf, req->stream.io.size);
+  case UPD_REQ_STREAM_WRITE:
+    lua_pushinteger(lua, req->stream.io.size);
     pro->registry.result = luaL_ref(lua, LUA_REGISTRYINDEX);
     break;
 

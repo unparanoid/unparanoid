@@ -29,7 +29,7 @@ test_handle_(
 static const upd_driver_t test_drv_ = {
   .name = (uint8_t*) "falsycat.test",
   .cats = (upd_req_cat_t[]) {
-    UPD_REQ_BIN,
+    UPD_REQ_STREAM,
     0,
   },
   .init   = test_init_,
@@ -56,17 +56,17 @@ static void test_deinit_(upd_file_t* f) {
 }
 static bool test_handle_(upd_req_t* req) {
   switch (req->type) {
-  case UPD_REQ_BIN_ACCESS:
-    req->bin.access = (upd_req_bin_access_t) {
+  case UPD_REQ_STREAM_ACCESS:
+    req->stream.access = (upd_req_stream_access_t) {
       .read = true,
     };
     break;
-  case UPD_REQ_BIN_READ:
-    if (req->bin.rw.offset) {
+  case UPD_REQ_STREAM_READ:
+    if (req->stream.io.offset) {
       req->result = UPD_REQ_ABORTED;
       return false;
     }
-    req->bin.rw = (upd_req_bin_rw_t) {
+    req->stream.io = (upd_req_stream_io_t) {
       .buf  = (uint8_t*) "Hello World!",
       .size = 12,
     };

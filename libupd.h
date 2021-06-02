@@ -259,10 +259,9 @@ upd_file_unlock(
  */
 #define UPD_REQ_CAT_EACH(f)  \
   f(0x0000, DIR)  \
-  f(0x0001, BIN)  \
-  f(0x0002, PROG)  \
-  f(0x0003, STREAM)  \
-  f(0x0004, TENSOR)
+  f(0x0001, PROG)  \
+  f(0x0002, STREAM)  \
+  f(0x0003, TENSOR)
 
 #define UPD_REQ_TYPE_EACH(f)  \
   f(DIR, 0x0000, ACCESS)  \
@@ -273,17 +272,13 @@ upd_file_unlock(
   f(DIR, 0x0039, NEWDIR)  \
   f(DIR, 0x0040, RM)  \
 \
-  f(BIN, 0x0000, ACCESS)  \
-  f(BIN, 0x0001, READ)  \
-  f(BIN, 0x0002, WRITE)  \
-\
   f(PROG, 0x0000, ACCESS)  \
   f(PROG, 0x0010, COMPILE)  \
   f(PROG, 0x0020, EXEC)  \
 \
   f(STREAM, 0x0000, ACCESS)  \
-  f(STREAM, 0x0010, INPUT)  \
-  f(STREAM, 0x0020, OUTPUT)  \
+  f(STREAM, 0x0010, READ)  \
+  f(STREAM, 0x0020, WRITE)  \
 \
   f(TENSOR, 0x0000, ACCESS)  \
   f(TENSOR, 0x0010, ALLOC)  \
@@ -326,28 +321,18 @@ typedef struct upd_req_dir_entries_t {
   uint64_t              n;
 } upd_req_dir_entries_t;
 
-typedef struct upd_req_bin_access_t {
-  unsigned read  : 1;
-  unsigned write : 1;
-} upd_req_bin_access_t;
-
-typedef struct upd_req_bin_rw_t {
-  uint64_t offset;
-  uint64_t size;
-  uint8_t* buf;
-} upd_req_bin_rw_t;
-
 typedef struct upd_req_prog_access_t {
   unsigned compile : 1;
   unsigned exec    : 1;
 } upd_req_prog_access_t;
 
 typedef struct upd_req_stream_access_t {
-  unsigned input  : 1;
-  unsigned output : 1;
+  unsigned read  : 1;
+  unsigned write : 1;
 } upd_req_stream_access_t;
 
 typedef struct upd_req_stream_io_t {
+  uint64_t offset;
   uint64_t size;
   uint8_t* buf;
 } upd_req_stream_io_t;
@@ -390,10 +375,6 @@ struct upd_req_t {
       upd_req_dir_entry_t   entry;
       upd_req_dir_entries_t entries;
     } dir;
-    union {
-      upd_req_bin_access_t access;
-      upd_req_bin_rw_t     rw;
-    } bin;
     union {
       upd_req_prog_access_t access;
       upd_file_t*           exec;

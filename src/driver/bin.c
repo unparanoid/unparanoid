@@ -75,7 +75,7 @@ bin_handle_(
 const upd_driver_t upd_driver_bin_r = {
   .name = (uint8_t*) "upd.bin.r",
   .cats = (upd_req_cat_t[]) {
-    UPD_REQ_BIN,
+    UPD_REQ_STREAM,
     0,
   },
   .uncache_period = FILE_CLOSE_PERIOD_,
@@ -90,7 +90,7 @@ const upd_driver_t upd_driver_bin_r = {
 const upd_driver_t upd_driver_bin_rw = {
   .name = (uint8_t*) "upd.bin.rw",
   .cats = (upd_req_cat_t[]) {
-    UPD_REQ_BIN,
+    UPD_REQ_STREAM,
     0,
   },
   .uncache_period = FILE_CLOSE_PERIOD_,
@@ -105,7 +105,7 @@ const upd_driver_t upd_driver_bin_rw = {
 const upd_driver_t upd_driver_bin_w = {
   .name = (uint8_t*) "upd.bin.w",
   .cats = (upd_req_cat_t[]) {
-    UPD_REQ_BIN,
+    UPD_REQ_STREAM,
     0,
   },
   .uncache_period = FILE_CLOSE_PERIOD_,
@@ -280,14 +280,14 @@ static bool bin_handle_(upd_req_t* req) {
   bin_t_*     ctx = f->ctx;
 
   switch (req->type) {
-  case UPD_REQ_BIN_ACCESS:
-    req->bin.access = (upd_req_bin_access_t) {
+  case UPD_REQ_STREAM_ACCESS:
+    req->stream.access = (upd_req_stream_access_t) {
       .read  = ctx->read,
       .write = ctx->write,
     };
     break;
 
-  case UPD_REQ_BIN_READ: {
+  case UPD_REQ_STREAM_READ: {
     if (HEDLEY_UNLIKELY(!ctx->read)) {
       req->result = UPD_REQ_ABORTED;
       return false;
@@ -313,7 +313,7 @@ static bool bin_handle_(upd_req_t* req) {
     }
   } return true;
 
-  case UPD_REQ_BIN_WRITE: {
+  case UPD_REQ_STREAM_WRITE: {
     if (HEDLEY_UNLIKELY(!ctx->write)) {
       req->result = UPD_REQ_ABORTED;
       return false;
@@ -511,7 +511,7 @@ static void task_read_exec_cb_(task_t_* task) {
     goto ABORT;
   }
 
-  size_t sz = req->bin.rw.size;
+  size_t sz = req->stream.io.size;
   if (HEDLEY_LIKELY(sz > ctx->bytes)) {
     sz = ctx->bytes;
   }
@@ -531,7 +531,7 @@ static void task_read_exec_cb_(task_t_* task) {
 
   const uv_buf_t buf = uv_buf_init((char*) task->buf, sz);
 
-  const size_t off = req->bin.rw.offset;
+  const size_t off = req->stream.io.offset;
   const int    err = uv_fs_read(
     &iso->loop, &task->fsreq, ctx->fd, &buf, 1, off, task_read_cb_);
   if (HEDLEY_UNLIKELY(0 > err)) {
@@ -542,7 +542,8 @@ static void task_read_exec_cb_(task_t_* task) {
   return;
 
 ABORT:
-  req->bin.rw.size = 0;
+  req->stream.io.size = 0;
+  req->result = UPD_REQ_ABORTED;
   req->cb(req);
   task_finalize_(task);
 }
@@ -557,13 +558,13 @@ static void task_read_cb_(uv_fs_t* fsreq) {
   uv_fs_req_cleanup(fsreq);
 
   if (HEDLEY_UNLIKELY(result < 0)) {
+    req->stream.io.size = 0;
     req->result = UPD_REQ_ABORTED;
-    req->bin.rw.size = 0;
     goto EXIT;
   }
 
-  const size_t off = req->bin.rw.offset;
-  req->bin.rw = (upd_req_bin_rw_t) {
+  const size_t off = req->stream.io.offset;
+  req->stream.io = (upd_req_stream_io_t) {
     .offset = off,
     .size   = result,
     .buf    = task->buf,
@@ -587,10 +588,10 @@ static void task_write_exec_cb_(task_t_* task) {
     goto ABORT;
   }
 
-  const size_t sz  = req->bin.rw.size;
-  const size_t off = req->bin.rw.offset;
+  const size_t sz  = req->stream.io.size;
+  const size_t off = req->stream.io.offset;
 
-  const uv_buf_t buf = uv_buf_init((char*) req->bin.rw.buf, sz);
+  const uv_buf_t buf = uv_buf_init((char*) req->stream.io.buf, sz);
 
   const int err = uv_fs_write(
     &iso->loop, &task->fsreq, ctx->fd, &buf, 1, off, task_write_cb_);
@@ -601,7 +602,8 @@ static void task_write_exec_cb_(task_t_* task) {
   return;
 
 ABORT:
-  req->bin.rw.size = 0;
+  req->stream.io.size = 0;
+  req->result = UPD_REQ_ABORTED;
   req->cb(req);
   task_finalize_(task);
 }
@@ -614,12 +616,12 @@ static void task_write_cb_(uv_fs_t* fsreq) {
   uv_fs_req_cleanup(fsreq);
 
   if (HEDLEY_UNLIKELY(result < 0)) {
-    req->bin.rw.size = 0;
+    req->stream.io.size = 0;
     req->result = UPD_REQ_ABORTED;
     goto EXIT;
   }
   req->result = UPD_REQ_OK;
-  req->bin.rw.size = result;
+  req->stream.io.size = result;
 
 EXIT:
   req->cb(req);

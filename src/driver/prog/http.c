@@ -139,7 +139,7 @@ req_pathfind_cb_(
 
 static
 void
-req_bin_access_cb_(
+req_stream_access_cb_(
   upd_req_t* req);
 
 static
@@ -198,7 +198,7 @@ wsock_lock_for_output_cb_(
 
 static
 void
-wsock_output_cb_(
+wsock_read_cb_(
   upd_req_t* req);
 
 
@@ -274,28 +274,16 @@ static bool stream_handle_(upd_req_t* req) {
   switch (req->type) {
   case UPD_REQ_STREAM_ACCESS:
     req->stream.access = (upd_req_stream_access_t) {
-      .input  = true,
-      .output = true,
+      .read  = true,
+      .write = true,
     };
     break;
 
-  case UPD_REQ_STREAM_INPUT:
-    switch (ctx->state) {
-    case REQUEST_:
-      return stream_parse_req_(ctx, req);
-    case RESPONSE_:
-      req->stream.io.size = 0;
-      req->result = UPD_REQ_OK;
-      req->cb(req);
-      return true;
-    case WSOCK_:
-      return stream_pipe_wsock_input_(ctx, req);
-    default:
+  case UPD_REQ_STREAM_READ: {
+    if (HEDLEY_UNLIKELY(req->stream.io.offset)) {
       req->result = UPD_REQ_INVALID;
       return false;
     }
-
-  case UPD_REQ_STREAM_OUTPUT: {
     if (HEDLEY_UNLIKELY(ctx->state == END_ && !ctx->out.size)) {
       req->result = UPD_REQ_ABORTED;
       return false;
@@ -311,6 +299,26 @@ static bool stream_handle_(upd_req_t* req) {
     req->cb(req);
     upd_buf_clear(&oldbuf);
   } return true;
+
+  case UPD_REQ_STREAM_WRITE:
+    if (HEDLEY_UNLIKELY(req->stream.io.offset)) {
+      req->result = UPD_REQ_INVALID;
+      return false;
+    }
+    switch (ctx->state) {
+    case REQUEST_:
+      return stream_parse_req_(ctx, req);
+    case RESPONSE_:
+      req->stream.io.size = 0;
+      req->result = UPD_REQ_OK;
+      req->cb(req);
+      return true;
+    case WSOCK_:
+      return stream_pipe_wsock_input_(ctx, req);
+    default:
+      req->result = UPD_REQ_INVALID;
+      return false;
+    }
 
   default:
     req->result = UPD_REQ_INVALID;
@@ -477,9 +485,9 @@ static void req_pathfind_cb_(upd_req_pathfind_t* pf) {
 
   const bool access = upd_req_with_dup(&(upd_req_t) {
       .file  = req->file,
-      .type  = UPD_REQ_BIN_ACCESS,
+      .type  = UPD_REQ_STREAM_ACCESS,
       .udata = req,
-      .cb    = req_bin_access_cb_,
+      .cb    = req_stream_access_cb_,
     });
   if (HEDLEY_UNLIKELY(!access)) {
     stream_output_http_error_(ctx, 403, "refused access request");
@@ -494,12 +502,12 @@ ABORT:
   upd_file_unref(ctx->file);
 }
 
-static void req_bin_access_cb_(upd_req_t* req) {
+static void req_stream_access_cb_(upd_req_t* req) {
   req_t_*     hreq = req->udata;
   http_t_*    ctx  = hreq->ctx;
   upd_file_t* f    = req->file;
 
-  const bool readable = req->bin.access.read;
+  const bool readable = req->stream.access.read;
   upd_iso_unstack(ctx->file->iso, req);
 
   if (HEDLEY_UNLIKELY(!readable)) {
@@ -555,8 +563,8 @@ static void req_lock_for_read_cb_(upd_file_lock_t* lock) {
 
   const bool read = upd_req_with_dup(&(upd_req_t) {
       .file  = req->file,
-      .type  = UPD_REQ_BIN_READ,
-      .bin   = { .rw = {
+      .type  = UPD_REQ_STREAM_READ,
+      .stream = { .io = {
         .size = UINT64_MAX,
       }, },
       .udata = lock,
@@ -584,12 +592,12 @@ static void req_read_cb_(upd_req_t* req) {
   req_t_*          hreq = lock->udata;
   http_t_*         ctx  = hreq->ctx;
 
-  const upd_req_bin_rw_t rw = req->bin.rw;
-  if (!rw.size) {
+  const upd_req_stream_io_t io = req->stream.io;
+  if (!io.size) {
     goto FINALIZE;
   }
 
-  if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->out, rw.buf, rw.size))) {
+  if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->out, io.buf, io.size))) {
     upd_iso_msgf(ctx->file->iso,
       "HTTP response was too long, so we trimmed it! X(\n");
     goto FINALIZE;
@@ -598,9 +606,9 @@ static void req_read_cb_(upd_req_t* req) {
 
   *req = (upd_req_t) {
       .file  = req->file,
-      .type  = UPD_REQ_BIN_READ,
-      .bin   = { .rw = {
-        .offset = rw.offset + rw.size,
+      .type  = UPD_REQ_STREAM_READ,
+      .stream = { .io = {
+        .offset = io.offset + io.size,
         .size   = UINT64_MAX,
       }, },
       .udata = lock,
@@ -831,7 +839,7 @@ EXIT:
     lock->udata = ctx;
     const bool input = upd_req_with_dup(&(upd_req_t) {
         .file = ctx->ws,
-        .type = UPD_REQ_STREAM_INPUT,
+        .type = UPD_REQ_STREAM_WRITE,
         .stream = { .io = {
           .size = ctx->wsbuf.size,
           .buf  = ctx->wsbuf.ptr,
@@ -902,13 +910,13 @@ static void wsock_lock_for_output_cb_(upd_file_lock_t* lock) {
   if (HEDLEY_UNLIKELY(!lock->ok)) {
     goto ABORT;
   }
-  const bool output = upd_req_with_dup(&(upd_req_t) {
+  const bool read = upd_req_with_dup(&(upd_req_t) {
       .file  = ctx->ws,
-      .type  = UPD_REQ_STREAM_OUTPUT,
+      .type  = UPD_REQ_STREAM_READ,
       .udata = lock,
-      .cb    = wsock_output_cb_,
+      .cb    = wsock_read_cb_,
     });
-  if (HEDLEY_UNLIKELY(!output)) {
+  if (HEDLEY_UNLIKELY(!read)) {
     goto ABORT;
   }
   return;
@@ -922,7 +930,7 @@ ABORT:
   upd_file_unref(ctx->file);
 }
 
-static void wsock_output_cb_(upd_req_t* req) {
+static void wsock_read_cb_(upd_req_t* req) {
   upd_file_lock_t* lock = req->udata;
   http_t_*         ctx  = lock->udata;
 
