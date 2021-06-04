@@ -448,6 +448,34 @@ typedef struct upd_host_t {
   } file;
 
   bool (*req)(upd_req_t* req);
+
+# define UPD_HOST_INSTANCE {  \
+    .iso = {  \
+      .stack        = upd_iso_stack,  \
+      .unstack      = upd_iso_unstack,  \
+      .now          = upd_iso_now,  \
+      .msg          = upd_iso_msg,  \
+      .start_thread = upd_iso_start_thread,  \
+      .start_work   = upd_iso_start_work,  \
+    },  \
+    .driver = {  \
+      .lookup = upd_driver_lookup,  \
+    },  \
+    .file = {  \
+      .new           = upd_file_new,  \
+      .get           = upd_file_get,  \
+      .ref           = upd_file_ref,  \
+      .unref         = upd_file_unref,  \
+      .watch         = upd_file_watch,  \
+      .unwatch       = upd_file_unwatch,  \
+      .trigger       = upd_file_trigger,  \
+      .trigger_async = upd_file_trigger_async,  \
+      .trigger_timer = upd_file_trigger_timer,  \
+      .lock          = upd_file_lock,  \
+      .unlock        = upd_file_unlock,  \
+    },  \
+    .req = upd_req,  \
+  }
 } upd_host_t;
 
 typedef struct upd_external_t {

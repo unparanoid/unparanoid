@@ -9,33 +9,7 @@
 # define EXTERNAL_DRIVER_EXT_ ".x86_64.dll"
 #endif
 
-
-static const upd_host_t host_ = {
-  .iso = {
-    .stack        = upd_iso_stack,
-    .unstack      = upd_iso_unstack,
-    .now          = upd_iso_now,
-    .msg          = upd_iso_msg,
-    .start_thread = upd_iso_start_thread,
-    .start_work   = upd_iso_start_work,
-  },
-  .driver = {
-    .lookup = upd_driver_lookup,
-  },
-  .file = {
-    .new           = upd_file_new,
-    .get           = upd_file_get,
-    .ref           = upd_file_ref,
-    .unref         = upd_file_unref,
-    .watch         = upd_file_watch,
-    .unwatch       = upd_file_unwatch,
-    .trigger       = upd_file_trigger,
-    .lock          = upd_file_lock,
-    .unlock        = upd_file_unlock,
-    .trigger_async = upd_file_trigger_async,
-  },
-  .req = upd_req,
-};
+static const upd_host_t host_ = UPD_HOST_INSTANCE;
 
 
 static
