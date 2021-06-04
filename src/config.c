@@ -30,6 +30,13 @@ struct ctx_t_ {
   task_t_* last_task;
 };
 
+typedef struct config_field_t_ {
+  const char*      name;
+  yaml_node_t**    node;
+  yaml_node_type_t type;
+} config_field_t_;
+
+
 struct task_t_ {
   ctx_t_*  ctx;
   task_t_* next;
@@ -82,6 +89,20 @@ config_lognf_(
   yaml_node_t* n,
   const char*  fmt,
   ...);
+
+static
+void
+config_find_all_fields_(
+  ctx_t_*                ctx,
+  yaml_node_t*           node,
+  const config_field_t_* fields);
+
+static
+bool
+config_toimax_(
+  ctx_t_*      ctx,
+  yaml_node_t* node,
+  intmax_t*    i);
 
 
 static
@@ -226,6 +247,95 @@ static void config_lognf_(ctx_t_* ctx, yaml_node_t* n, const char* fmt, ...) {
   upd_iso_msgf(ctx->iso,
     " (%s:%zu:%zu)\n",
     ctx->fpath, n->start_mark.line+1, n->start_mark.column+1);
+}
+
+static void config_find_all_fields_(
+    ctx_t_* ctx, yaml_node_t* node, const config_field_t_* fields) {
+  if (HEDLEY_UNLIKELY(node->type != YAML_MAPPING_NODE)) {
+    config_lognf_(ctx, node, "expected mapping node");
+    return;
+  }
+
+  size_t used = 0;
+
+  yaml_node_pair_t* beg = node->data.mapping.pairs.start;
+  yaml_node_pair_t* end = node->data.mapping.pairs.top;
+  for (yaml_node_pair_t* itr = beg; itr < end; ++itr) {
+    yaml_node_t* key = yaml_document_get_node(&ctx->doc, itr->key);
+    yaml_node_t* val = yaml_document_get_node(&ctx->doc, itr->value);
+
+    if (HEDLEY_UNLIKELY(key == NULL)) {
+      config_lognf_(ctx, node, "found null key");
+      continue;
+    }
+    if (HEDLEY_UNLIKELY(key->type != YAML_SCALAR_NODE)) {
+      config_lognf_(ctx, key, "key must be scalar");
+      continue;
+    }
+    if (HEDLEY_UNLIKELY(val == NULL)) {
+      config_lognf_(ctx, key, "found null value");
+      continue;
+    }
+
+    const uint8_t* k    = key->data.scalar.value;
+    const size_t   klen = key->data.scalar.length;
+
+    /* check if the key is known */
+    const config_field_t_* field = NULL;
+    for (const config_field_t_* f = fields; f->name && !field; ++f) {
+      const bool match = utf8ncmp(f->name, k, klen) == 0 && f->name[klen] == 0;
+      if (HEDLEY_UNLIKELY(match)) {
+        field = f;
+      }
+    }
+    if (HEDLEY_UNLIKELY(!field)) {
+      config_lognf_(ctx, key, "unknown field");
+      continue;
+    }
+    if (HEDLEY_UNLIKELY(val->type != field->type)) {
+      config_lognf_(ctx, key, "incompatible type");
+      continue;
+    }
+    if (HEDLEY_UNLIKELY(*field->node)) {
+      config_lognf_(ctx, key, "duplicated field");
+      continue;
+    }
+    *field->node = val;
+    ++used;
+  }
+  if (HEDLEY_UNLIKELY(used != (size_t) (end-beg))) {
+    config_lognf_(ctx, node, "some fields in the mapping have no effects");
+  }
+}
+
+static bool config_toimax_(ctx_t_* ctx, yaml_node_t* node, intmax_t* i) {
+  if (HEDLEY_UNLIKELY(node->type != YAML_SCALAR_NODE)) {
+    config_lognf_(ctx, node, "expected scalar node");
+    return false;
+  }
+  const uint8_t* v    = node->data.scalar.value;
+  const size_t   vlen = node->data.scalar.length;
+
+  char temp[32];
+  if (HEDLEY_UNLIKELY(vlen+1 > sizeof(temp))) {
+    config_lognf_(ctx, node, "too long integer specification");
+    return false;
+  }
+  utf8ncpy(temp, v, vlen);
+  temp[vlen] = 0;
+
+  char* end;
+  const intmax_t x = strtoimax(temp, &end, 0);
+  if (HEDLEY_UNLIKELY(end != temp+vlen)) {
+    config_lognf_(ctx, node, "invalid integer");
+    return false;
+  }
+  if (HEDLEY_UNLIKELY(x == INTMAX_MAX || x == INTMAX_MIN)) {
+    config_lognf_(ctx, node, "overflown integer");
+    return false;
+  }
+  *i = x;
+  return true;
 }
 
 
@@ -481,17 +591,45 @@ static void task_parse_require_cb_(task_t_* task) {
   for (; itr < end; ++itr) {
     yaml_node_t* val = yaml_document_get_node(doc, *itr);
     if (HEDLEY_UNLIKELY(val == NULL)) {
-      continue;
-    }
-    if (HEDLEY_UNLIKELY(val->type != YAML_SCALAR_NODE)) {
-      config_lognf_(ctx, val, "scalar expected");
+      config_lognf_(ctx, node, "null item found");
       continue;
     }
 
-    const size_t   vlen = val->data.scalar.length;
-    const uint8_t* v    = val->data.scalar.value;
-    config_lognf_(ctx, val, "require: %.*s", (int) vlen, v);
-    /* TODO */
+    struct {
+      yaml_node_t* src;
+      yaml_node_t* pkg;
+    } fields = { NULL };
+    config_find_all_fields_(ctx, val, (config_field_t_[]) {
+        { "src", &fields.src, YAML_SCALAR_NODE,   },
+        { "pkg", &fields.pkg, YAML_SEQUENCE_NODE, },
+        { NULL },
+      });
+    if (HEDLEY_UNLIKELY(!fields.src || !fields.pkg)) {
+      config_lognf_(ctx, node, "'src' and 'pkg' fields required");
+      continue;
+    }
+
+    const uint8_t* src    = fields.src->data.scalar.value;
+    const size_t   srclen = fields.src->data.scalar.length;
+
+    yaml_node_item_t* itr = fields.pkg->data.sequence.items.start;
+    yaml_node_item_t* end = fields.pkg->data.sequence.items.top;
+    for (; itr < end; ++itr) {
+      yaml_node_t* val = yaml_document_get_node(doc, *itr);
+      if (HEDLEY_UNLIKELY(val == NULL)) {
+        config_lognf_(ctx, fields.pkg, "null item found");
+        continue;
+      }
+      if (HEDLEY_UNLIKELY(val->type != YAML_SCALAR_NODE)) {
+        config_lognf_(ctx, val, "expected scalar node");
+        continue;
+      }
+      const uint8_t* v    = val->data.scalar.value;
+      const size_t   vlen = val->data.scalar.length;
+      upd_iso_msgf(ctx->iso,
+        "pkg: installing %.*s from %.*s\n", (int) vlen, v, (int) srclen, src);
+      /* TODO */
+    }
   }
 
 EXIT:
@@ -599,9 +737,38 @@ static void task_parse_file_cb_(task_t_* task) {
       config_lognf_(ctx, key, "key must be scalar");
       continue;
     }
-    if (HEDLEY_UNLIKELY(val->type != YAML_MAPPING_NODE)) {
-      config_lognf_(ctx, val, "value must be mapping");
-      continue;
+
+    struct {
+      yaml_node_t* npath;
+      yaml_node_t* driver;
+      yaml_node_t* rules;
+    } fields = { NULL };
+    config_find_all_fields_(ctx, val, (config_field_t_[]) {
+        { "npath",  &fields.npath,  YAML_SCALAR_NODE,  },
+        { "driver", &fields.driver, YAML_SCALAR_NODE,  },
+        { "rules",  &fields.rules,  YAML_MAPPING_NODE, },
+        { NULL },
+      });
+
+    const upd_driver_t* driver = &upd_driver_syncdir;
+    if (fields.driver) {
+      const size_t   vlen = fields.driver->data.scalar.length;
+      const uint8_t* v    = fields.driver->data.scalar.value;
+      driver = upd_driver_lookup(iso, v, vlen);
+      if (HEDLEY_UNLIKELY(driver == NULL)) {
+        config_lognf_(ctx, fields.driver, "unknown driver");
+        continue;
+      }
+    }
+    if (driver == &upd_driver_syncdir) {
+      if (HEDLEY_UNLIKELY(!fields.rules)) {
+        config_lognf_(ctx, key, "upd.syncdir requires rules");
+        continue;
+      }
+    } else {
+      if (HEDLEY_UNLIKELY(fields.rules)) {
+        config_lognf_(ctx, key, "rules are ignored");
+      }
     }
 
     const uint8_t* k    = key->data.scalar.value;
@@ -613,6 +780,10 @@ static void task_parse_file_cb_(task_t_* task) {
 
     size_t         blen = klen;
     const uint8_t* b    = upd_path_basename(k, &blen);
+    if (HEDLEY_UNLIKELY(blen == 0)) {
+      config_lognf_(ctx, key, "empty path");
+      continue;
+    }
 
     task_file_t_* ftask = upd_iso_stack(iso, sizeof(*ftask));
     if (HEDLEY_UNLIKELY(ftask == NULL)) {
@@ -626,82 +797,12 @@ static void task_parse_file_cb_(task_t_* task) {
       .dirlen  = upd_path_dirname(k, klen),
       .name    = b,
       .namelen = blen,
+      .driver  = driver,
+      .rules   = fields.rules,
     };
-
-    yaml_node_pair_t* itr = val->data.mapping.pairs.start;
-    yaml_node_pair_t* end = val->data.mapping.pairs.top;
-    for (; itr < end; ++itr) {
-      yaml_node_t* key = yaml_document_get_node(doc, itr->key);
-      yaml_node_t* val = yaml_document_get_node(doc, itr->value);
-      if (HEDLEY_UNLIKELY(key == NULL || val == NULL)) {
-        config_lognf_(ctx, ftask->node, "yaml fatal error");
-        continue;
-      }
-      if (HEDLEY_UNLIKELY(key->type != YAML_SCALAR_NODE)) {
-        config_lognf_(ctx, key, "key must be scalar");
-        continue;
-      }
-
-      const size_t   klen = key->data.scalar.length;
-      const uint8_t* k    = key->data.scalar.value;
-
-#     define match_(v) (sizeof(v) == klen+1 && utf8ncmp(k, v, klen) == 0)
-      if (match_("npath")) {
-        if (HEDLEY_UNLIKELY(val->type != YAML_SCALAR_NODE)) {
-          config_lognf_(ctx, val, "value must be scalar");
-          continue;
-        }
-        ftask->npath    = val->data.scalar.value;
-        ftask->npathlen = val->data.scalar.length;
-
-      } else if (match_("driver")) {
-        if (HEDLEY_UNLIKELY(val->type != YAML_SCALAR_NODE)) {
-          config_lognf_(ctx, val, "value must be scalar");
-          continue;
-        }
-        ftask->driver = upd_driver_lookup(
-          iso, val->data.scalar.value, val->data.scalar.length);
-        if (HEDLEY_UNLIKELY(ftask->driver == NULL)) {
-          config_lognf_(ctx, val, "unknown driver");
-          continue;
-        }
-
-      } else if (match_("rules")) {
-        if (HEDLEY_UNLIKELY(val->type != YAML_MAPPING_NODE)) {
-          config_lognf_(ctx, val, "value must be mapping");
-          continue;
-        }
-        ftask->rules = val;
-
-      } else {
-        config_lognf_(ctx, key, "unknown key: %.*s", (int) klen, k);
-        continue;
-      }
-#     undef match_
-    }
-
-    if (ftask->driver == NULL) {
-      ftask->driver = &upd_driver_syncdir;
-    }
-
-    if (HEDLEY_UNLIKELY(ftask->namelen == 0)) {
-      upd_iso_unstack(iso, ftask);
-      config_lognf_(ctx, key, "empty path");
-      continue;
-    }
-    if (HEDLEY_UNLIKELY(ftask->npathlen == 0)) {
-      upd_iso_unstack(iso, ftask);
-      config_lognf_(ctx, key, "empty npath");
-      continue;
-    }
-    if (ftask->rules) {
-      if (HEDLEY_UNLIKELY(ftask->driver != &upd_driver_syncdir)) {
-        config_lognf_(ctx, key, "rules is ignored");
-      }
-    } else {
-      if (HEDLEY_UNLIKELY(ftask->driver == &upd_driver_syncdir)) {
-        config_lognf_(ctx, key, "rules must specified");
-      }
+    if (HEDLEY_UNLIKELY(fields.npath)) {
+      ftask->npath    = fields.npath->data.scalar.value;
+      ftask->npathlen = fields.npath->data.scalar.length;
     }
 
     ++task->refcnt;
@@ -752,8 +853,27 @@ static void task_parse_server_cb_(task_t_* task) {
       config_lognf_(ctx, key, "key must be scalar");
       continue;
     }
-    if (HEDLEY_UNLIKELY(val->type != YAML_MAPPING_NODE)) {
-      config_lognf_(ctx, key, "value must be mapping");
+
+    struct {
+      yaml_node_t* host;
+      yaml_node_t* port;
+    } fields = { NULL };
+    config_find_all_fields_(ctx, val, (config_field_t_[]) {
+        { "host", &fields.host, YAML_SCALAR_NODE, },
+        { "port", &fields.port, YAML_SCALAR_NODE, },
+        { NULL },
+      });
+    if (HEDLEY_UNLIKELY(!fields.host || !fields.port)) {
+      config_lognf_(ctx, key, "'host' and 'port' required");
+      continue;
+    }
+
+    intmax_t port;
+    if (HEDLEY_UNLIKELY(!config_toimax_(ctx, fields.port, &port))) {
+      continue;
+    }
+    if (HEDLEY_UNLIKELY(port <= 0 || UINT16_MAX < port)) {
+      config_lognf_(ctx, fields.port, "invalid port number");
       continue;
     }
 
@@ -767,64 +887,13 @@ static void task_parse_server_cb_(task_t_* task) {
       .iso     = iso,
       .path    = key->data.scalar.value,
       .pathlen = key->data.scalar.length,
+      .port    = port,
       .udata   = task,
       .cb      = server_build_cb_,
     };
-
-    yaml_node_pair_t* itr = val->data.mapping.pairs.start;
-    yaml_node_pair_t* end = val->data.mapping.pairs.top;
-    for (; itr < end; ++itr) {
-      yaml_node_t* key = yaml_document_get_node(doc, itr->key);
-      yaml_node_t* val = yaml_document_get_node(doc, itr->value);
-      if (HEDLEY_UNLIKELY(key == NULL || val == NULL)) {
-        config_lognf_(ctx, node, "yaml fatal error");
-        continue;
-      }
-      if (HEDLEY_UNLIKELY(key->type != YAML_SCALAR_NODE)) {
-        config_lognf_(ctx, key, "key must be scalar");
-        continue;
-      }
-      if (HEDLEY_UNLIKELY(val->type != YAML_SCALAR_NODE)) {
-        config_lognf_(ctx, val, "value must be scalar");
-        continue;
-      }
-
-      const size_t   klen = key->data.scalar.length;
-      const uint8_t* k    = key->data.scalar.value;
-      const size_t   vlen = val->data.scalar.length;
-      const uint8_t* v    = val->data.scalar.value;
-
-#     define match_(v) (sizeof(v) == klen+1 && utf8ncmp(k, v, klen) == 0)
-      if (match_("host")) {
-        b->host    = v;
-        b->hostlen = vlen;
-
-      } else if (match_("port")) {
-        char temp[32];
-        if (HEDLEY_UNLIKELY(vlen+1 > sizeof(temp))) {
-          config_lognf_(ctx, val, "too long port number specification");
-          continue;
-        }
-        utf8ncpy(temp, v, vlen);
-        temp[vlen] = 0;
-
-        char* end;
-        const uintmax_t x = strtoumax(temp, &end, 0);
-        if (HEDLEY_UNLIKELY(end != temp+vlen)) {
-          config_lognf_(ctx, val, "invalid port number");
-          continue;
-        }
-        if (HEDLEY_UNLIKELY(x <= 0 || UINT16_MAX < x)) {
-          config_lognf_(ctx, val, "port number out of range");
-          continue;
-        }
-        b->port = x;
-
-      } else {
-        config_lognf_(ctx, key, "unknown key: %.*s", (int) klen, k);
-        continue;
-      }
-#     undef match_
+    if (HEDLEY_LIKELY(fields.host)) {
+      b->host    = fields.host->data.scalar.value;
+      b->hostlen = fields.host->data.scalar.length;
     }
 
     ++task->refcnt;
