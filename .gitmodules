@@ -28,3 +28,6 @@
 [submodule "thirdparty/LuaJIT"]
 	path = thirdparty/luajit
 	url = https://github.com/LuaJIT/LuaJIT
+[submodule "thirdparty/curl"]
+	path = thirdparty/curl
+	url = https://github.com/curl/curl

@@ -89,6 +89,7 @@ target_link_libraries(libupd
     crypto-algorithms
     cwalk
     hedley
+    libcurl
     libuv
     libyaml
     luajit

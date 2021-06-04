@@ -1,5 +1,11 @@
 set(BUILD_TESTING OFF)
 
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(BUILD_SHARED_LIBS ON)
+else()
+  set(BUILD_SHARED_LIBS OFF)
+endif()
+
 
 # ---- crypto-algorithms (https://github.com/B-Con/crypto-algorithms) ----
 add_library(crypto-algorithms EXCLUDE_FROM_ALL)
@@ -14,6 +20,11 @@ target_sources(crypto-algorithms
     crypto-algorithms/base64.c
     crypto-algorithms/sha1.c
 )
+
+
+# ---- curl (https://github.com/curl/curl) ----
+set(CMAKE_USE_OPENSSL off)
+add_subdirectory(curl EXCLUDE_FROM_ALL)
 
 
 # ---- cwalk (https://github.com/likle/cwalk) ----
@@ -33,7 +44,7 @@ target_sources(hedley
 
 # ---- libuv (https://github.com/libuv/libuv)
 add_subdirectory(libuv EXCLUDE_FROM_ALL)
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+if (BUILD_SHARED_LIBS)
   add_library(libuv ALIAS uv)
 else()
   add_library(libuv ALIAS uv_a)
@@ -49,7 +60,7 @@ add_library(libyaml ALIAS yaml)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/luajit" DESTINATION .)
 
 if (WIN32)
-  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  if (BUILD_SHARED_LIBS)
     set(LUAJIT_TYPE   SHARED)
     set(LUAJIT_LIB    lua51.dll)
     set(LUAJIT_IMPLIB lua51.lib)
@@ -69,7 +80,7 @@ if (WIN32)
   endif()
 
 else()
-  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  if (BUILD_SHARED_LIBS)
     set(LUAJIT_TYPE SHARED)
     set(LUAJIT_LIB  libluajit-5.1.so.2)
     add_custom_target(luajit-build
