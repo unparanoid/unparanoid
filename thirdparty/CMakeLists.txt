@@ -23,7 +23,10 @@ target_sources(crypto-algorithms
 
 
 # ---- curl (https://github.com/curl/curl) ----
-set(CMAKE_USE_OPENSSL off)
+set(HTTP_ONLY ON)
+if (WIN32)
+  set(CMAKE_USE_SCHANNEL  ON)
+endif()
 add_subdirectory(curl EXCLUDE_FROM_ALL)
 
 

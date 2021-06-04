@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <base64.h>
+#include <curl/curl.h>
 #include <cwalk.h>
 #include <hedley.h>
 #include <lauxlib.h>

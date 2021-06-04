@@ -3,6 +3,7 @@
 
 int main(int argc, char** argv) {
   argv = uv_setup_args(argc, argv);
+  curl_global_init(CURL_GLOBAL_ALL);
 
   for (;;) {
     printf(
@@ -30,10 +31,14 @@ int main(int argc, char** argv) {
 
     case UPD_ISO_SHUTDOWN:
       printf("isolated machine exited gracefully X)\n");
-      return EXIT_SUCCESS;
+      goto EXIT;
 
     case UPD_ISO_REBOOT:
       continue;
     }
   }
+
+EXIT:
+  curl_global_cleanup();
+  return EXIT_SUCCESS;
 }
