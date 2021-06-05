@@ -36,7 +36,9 @@ struct upd_pkg_install_t {
   size_t         namelen;
 
   uint8_t hash[SHA1_BLOCK_SIZE];
-  bool    check_hash;
+
+  unsigned check_hash : 1;
+  unsigned verify_ssl : 1;
 
   void* udata;
   void

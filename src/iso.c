@@ -7,6 +7,21 @@
 #define WALKER_FILES_PER_PERIOD_ 1000
 
 
+typedef struct curl_t_ {
+  upd_iso_t* iso;
+
+  void*             udata;
+  upd_iso_curl_cb_t cb;
+} curl_t_;
+
+typedef struct curl_sock_t_ {
+  upd_iso_t* iso;
+
+  uv_poll_t     poll;
+  curl_socket_t fd;
+} curl_sock_t_;
+
+
 static
 bool
 iso_get_paths_(
@@ -38,13 +53,53 @@ iso_shutdown_timer_cb_(
 
 static
 void
-iso_walker_handle_(
+walker_handle_(
   upd_file_t* f);
+
 
 static
 void
-iso_walker_cb_(
+curl_check_(
+  upd_iso_t* iso);
+
+
+static
+void
+walker_cb_(
   uv_timer_t* timer);
+
+static
+int
+curl_socket_cb_(
+  CURL*         curl,
+  curl_socket_t s,
+  int           act,
+  void*         udata,
+  void*         sockp);
+
+static
+void
+curl_start_timer_cb_(
+  CURLM* curl,
+  long   ms,
+  void*  udata);
+
+static
+void
+curl_timer_cb_(
+  uv_timer_t* timer);
+
+static
+void
+curl_poll_cb_(
+  uv_poll_t* poll,
+  int        status,
+  int        event);
+
+static
+void
+curl_sock_close_cb_(
+  uv_handle_t* handle);
 
 
 upd_iso_t* upd_iso_new(size_t stacksz) {
@@ -67,9 +122,13 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     .walker = {
       .timer = { .data = iso, },
     },
+    .curl = {
+      .timer = { .data = iso, },
+    },
   };
 
-  const bool ok =
+  /* init uv handles */
+  const bool uv_ok =
     iso_get_paths_(iso) &&
     0 <= uv_loop_init(&iso->loop) &&
     0 <= uv_tty_init(&iso->loop, &iso->out, 1, 0) &&
@@ -80,15 +139,33 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     0 <= uv_signal_start(&iso->sigint, iso_signal_cb_, SIGINT) &&
     0 <= uv_signal_start(&iso->sighup, iso_signal_cb_, SIGHUP) &&
     0 <= uv_timer_start(
-      &iso->walker.timer, iso_walker_cb_, WALKER_PERIOD_, WALKER_PERIOD_) &&
+      &iso->walker.timer, walker_cb_, WALKER_PERIOD_, WALKER_PERIOD_) &&
     0 <= uv_mutex_init(&iso->mtx);
-  if (HEDLEY_UNLIKELY(!ok)) {
+  if (HEDLEY_UNLIKELY(!uv_ok)) {
     return NULL;
   }
   uv_unref((uv_handle_t*) &iso->sigint);
   uv_unref((uv_handle_t*) &iso->sighup);
   uv_unref((uv_handle_t*) &iso->walker.timer);
 
+  /* init curl */
+  iso->curl.ctx = curl_multi_init();
+  if (HEDLEY_UNLIKELY(iso->curl.ctx == NULL)) {
+    return NULL;
+  }
+  const bool curl_ok =
+    0 <= uv_timer_init(&iso->loop, &iso->curl.timer) &&
+    !curl_multi_setopt(
+      iso->curl.ctx, CURLMOPT_SOCKETFUNCTION, curl_socket_cb_) &&
+    !curl_multi_setopt(iso->curl.ctx, CURLMOPT_SOCKETDATA, iso) &&
+    !curl_multi_setopt(
+      iso->curl.ctx, CURLMOPT_TIMERFUNCTION, curl_start_timer_cb_) &&
+    !curl_multi_setopt(iso->curl.ctx, CURLMOPT_TIMERDATA, iso);
+  if (HEDLEY_UNLIKELY(!curl_ok)) {
+    return NULL;
+  }
+
+  /* init filesystem */
   upd_file_t* root = upd_file_new(iso, &upd_driver_dir);
   if (HEDLEY_UNLIKELY(root == NULL)) {
     return NULL;
@@ -113,12 +190,15 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
+  assert(iso->srv.n == 0);
+  assert(iso->cli.n == 0);
 
   /* cleanup root directory */
   upd_file_unref(iso->files.p[0]);
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
+  assert(iso->files.n == 0);
 
   /* close all system handlers */
   uv_close((uv_handle_t*) &iso->out,            NULL);
@@ -126,15 +206,11 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   uv_close((uv_handle_t*) &iso->sighup,         NULL);
   uv_close((uv_handle_t*) &iso->shutdown_timer, NULL);
   uv_close((uv_handle_t*) &iso->walker.timer,   NULL);
+  uv_close((uv_handle_t*) &iso->curl.timer,     NULL);
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
-
-  /* make sure that all resources have been freed X) */
   assert(iso->stack.refcnt == 0);
-  assert(iso->files.n      == 0);
-  assert(iso->srv.n        == 0);
-  assert(iso->cli.n        == 0);
 
   /* join all threads */
   for (size_t i = 0; ; ++i) {
@@ -162,6 +238,9 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
     upd_free(&pkg);
   }
   upd_array_clear(&iso->pkgs);
+
+  /* cleanup curl */
+  curl_multi_cleanup(iso->curl.ctx);
 
   /* unload all dynamic libraries */
   for (size_t i = 0; i < iso->libs.n; ++i) {
@@ -193,6 +272,28 @@ void upd_iso_close_all_conn(upd_iso_t* iso) {
   }
   uv_signal_stop(&iso->sigint);
   uv_signal_stop(&iso->sighup);
+}
+
+
+bool upd_iso_curl_perform(
+    upd_iso_t* iso, CURL* curl, upd_iso_curl_cb_t cb, void* udata) {
+  curl_t_* ctx = upd_iso_stack(iso, sizeof(*ctx));
+  if (HEDLEY_UNLIKELY(ctx == NULL)) {
+    return false;
+  }
+  *ctx = (curl_t_) {
+    .iso   = iso,
+    .udata = udata,
+    .cb    = cb,
+  };
+  const bool ok =
+    !curl_easy_setopt(curl, CURLOPT_PRIVATE, ctx) &&
+    !curl_multi_add_handle(iso->curl.ctx, curl);
+  if (HEDLEY_UNLIKELY(!ok)) {
+    upd_iso_unstack(iso, ctx);
+    return false;
+  }
+  return true;
 }
 
 
@@ -240,6 +341,60 @@ static void iso_create_dir_(upd_iso_t* iso, const char* path) {
 }
 
 
+static void walker_handle_(upd_file_t* f) {
+  upd_file_t_* f_ = (void*) f;
+
+  const uint64_t now = upd_iso_now(f->iso);
+
+  /* lock timeout handling */
+  for (size_t i = 0; i < f_->lock.pending.n;) {
+    upd_file_lock_t* k = f_->lock.pending.p[i];
+
+    const uint64_t thresh = k->basetime + k->timeout;
+    if (HEDLEY_UNLIKELY(now >= thresh)) {
+      upd_file_unlock(k);
+      continue;
+    }
+    ++i;
+  }
+
+  /* trigger uncache event */
+  const bool uncache =
+    f->driver->uncache_period && f->last_req &&
+    f->last_req >= f->last_uncache;
+  if (HEDLEY_UNLIKELY(uncache)) {
+    const uint64_t t = now > f->last_req? now - f->last_req: 0;
+    if (HEDLEY_UNLIKELY(t > f->driver->uncache_period)) {
+      upd_file_trigger(f, UPD_FILE_UNCACHE);
+      f->last_uncache = now;
+    }
+  }
+}
+
+
+static void curl_check_(upd_iso_t* iso) {
+  CURLM* multi = iso->curl.ctx;
+
+  CURLMsg* msg;
+  int      pending;
+  while ((msg = curl_multi_info_read(multi, &pending))) {
+    if (msg->msg == CURLMSG_DONE) {
+      CURL* curl = msg->easy_handle;
+
+      curl_t_* ctx;
+      const bool getinfo =
+        !curl_easy_getinfo(curl, CURLINFO_PRIVATE, (void*) &ctx);
+      if (HEDLEY_UNLIKELY(!getinfo)) {
+        continue;
+      }
+      curl_multi_remove_handle(multi, curl);
+      ctx->cb(curl, ctx->udata);
+      upd_iso_unstack(ctx->iso, ctx);
+    }
+  }
+}
+
+
 static void iso_create_dir_cb_(upd_req_pathfind_t* pf) {
   upd_iso_t* iso = pf->base->iso;
 
@@ -283,37 +438,7 @@ static void iso_shutdown_timer_cb_(uv_timer_t* timer) {
 }
 
 
-static void iso_walker_handle_(upd_file_t* f) {
-  upd_file_t_* f_ = (void*) f;
-
-  const uint64_t now = upd_iso_now(f->iso);
-
-  /* lock timeout handling */
-  for (size_t i = 0; i < f_->lock.pending.n;) {
-    upd_file_lock_t* k = f_->lock.pending.p[i];
-
-    const uint64_t thresh = k->basetime + k->timeout;
-    if (HEDLEY_UNLIKELY(now >= thresh)) {
-      upd_file_unlock(k);
-      continue;
-    }
-    ++i;
-  }
-
-  /* trigger uncache event */
-  const bool uncache =
-    f->driver->uncache_period && f->last_req &&
-    f->last_req >= f->last_uncache;
-  if (HEDLEY_UNLIKELY(uncache)) {
-    const uint64_t t = now > f->last_req? now - f->last_req: 0;
-    if (HEDLEY_UNLIKELY(t > f->driver->uncache_period)) {
-      upd_file_trigger(f, UPD_FILE_UNCACHE);
-      f->last_uncache = now;
-    }
-  }
-}
-
-static void iso_walker_cb_(uv_timer_t* timer) {
+static void walker_cb_(uv_timer_t* timer) {
   upd_iso_t*   iso   = timer->data;
   upd_file_t** files = (void*) iso->files.p;
 
@@ -344,7 +469,96 @@ static void iso_walker_cb_(uv_timer_t* timer) {
       i = 0;
     }
     upd_file_t* f = iso->files.p[i++];
-    iso_walker_handle_(f);
+    walker_handle_(f);
     iso->walker.last_seen = f->id;
   }
+}
+
+
+static int curl_socket_cb_(
+    CURL* curl, curl_socket_t s, int act, void* userp, void* sockp) {
+  upd_iso_t*    iso   = userp;
+  curl_sock_t_* sock  = sockp;
+  CURLM*        multi = iso->curl.ctx;
+
+  curl_t_* ctx;
+  curl_easy_getinfo(curl, CURLINFO_PRIVATE, &ctx);
+
+  switch (act) {
+  case CURL_POLL_IN:
+  case CURL_POLL_OUT:
+  case CURL_POLL_INOUT: {
+    if (HEDLEY_UNLIKELY(sock == NULL)) {
+      sock = upd_iso_stack(iso, sizeof(*sock));
+      if (HEDLEY_UNLIKELY(sock == NULL)) {
+        upd_iso_msgf(iso, "curl: socket context allocation failure\n");
+        return 1;
+      }
+      *sock = (curl_sock_t_) {
+        .iso  = ctx->iso,
+        .fd   = s,
+        .poll = { .data = sock, },
+      };
+      const int init = uv_poll_init_socket(&iso->loop, &sock->poll, s);
+      if (HEDLEY_UNLIKELY(0 > init)) {
+        upd_iso_unstack(iso, sock);
+        upd_iso_msgf(iso, "curl: poll init failure\n");
+        return 1;
+      }
+    }
+    curl_multi_assign(multi, s, sock);
+
+    int ev = 0;
+    if (act != CURL_POLL_OUT) ev |= UV_READABLE;
+    if (act != CURL_POLL_IN)  ev |= UV_WRITABLE;
+    uv_poll_start(&sock->poll, ev, curl_poll_cb_);
+  } break;
+
+  case CURL_POLL_REMOVE:
+    if (HEDLEY_LIKELY(sock)) {   
+      uv_poll_stop(&sock->poll);
+      uv_close((uv_handle_t*) &sock->poll, curl_sock_close_cb_);
+      curl_multi_assign(multi, s, NULL);
+    }
+    break;
+  }
+  return 0;
+}
+
+static void curl_start_timer_cb_(CURLM* multi, long ms, void* udata) {
+  upd_iso_t* iso = udata;
+  (void) multi;
+
+  if (ms < 0) ms = 1;
+  uv_timer_start(&iso->curl.timer, curl_timer_cb_, ms, 0);
+}
+
+static void curl_timer_cb_(uv_timer_t* timer) {
+  upd_iso_t* iso = timer->data;
+
+  int temp;
+  curl_multi_socket_action(iso->curl.ctx, CURL_SOCKET_TIMEOUT, 0, &temp);
+  curl_check_(iso);
+}
+
+static void curl_poll_cb_(uv_poll_t* poll, int status, int event) {
+  curl_sock_t_* sock = poll->data;
+  upd_iso_t*    iso  = sock->iso;
+
+  if (HEDLEY_UNLIKELY(status < 0)) {
+    upd_iso_msgf(iso, "curl: poll failure\n");
+  }
+
+  int flags = 0;
+  if (event & UV_READABLE) flags |= CURL_CSELECT_IN;
+  if (event & UV_WRITABLE) flags |= CURL_CSELECT_OUT;
+
+  int temp;
+  curl_multi_socket_action(iso->curl.ctx, sock->fd, flags, &temp);
+  curl_check_(iso);
+}
+
+static void curl_sock_close_cb_(uv_handle_t* handle) {
+  curl_sock_t_* sock = handle->data;
+  upd_iso_unstack(sock->iso, sock);
 }

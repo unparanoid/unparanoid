@@ -48,6 +48,11 @@ struct upd_iso_t {
     uv_timer_t    timer;
     upd_file_id_t last_seen;
   } walker;
+
+  struct {
+    CURLM*     ctx;
+    uv_timer_t timer;
+  } curl;
 };
 
 struct upd_iso_thread_t {
@@ -75,7 +80,7 @@ upd_iso_t*
 upd_iso_new(
   size_t stacksz);
 
-/* The isolated instance is deleted after running. */
+/* The isolated instance is deleted automatically after running. */
 HEDLEY_NON_NULL(1)
 upd_iso_status_t
 upd_iso_run(
@@ -85,6 +90,22 @@ HEDLEY_NON_NULL(1)
 void
 upd_iso_close_all_conn(
   upd_iso_t* iso);
+
+
+typedef
+void
+(*upd_iso_curl_cb_t)(
+  CURL* curl,
+  void* udata);
+
+HEDLEY_NON_NULL(1, 2)
+bool
+upd_iso_curl_perform(
+  upd_iso_t*        iso,
+  CURL*             curl,
+  upd_iso_curl_cb_t cb,
+  void*             udata);
+
 
 
 HEDLEY_NON_NULL(1)
