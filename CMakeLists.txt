@@ -71,6 +71,8 @@ target_sources(libupd
     src/iso.c
     src/memory.h
     src/path.h
+    src/pkg.c
+    src/pkg.h
     src/req.c
     src/req.h
     src/srv.c

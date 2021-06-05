@@ -3,7 +3,10 @@
 
 int main(int argc, char** argv) {
   argv = uv_setup_args(argc, argv);
-  curl_global_init(CURL_GLOBAL_ALL);
+  if (HEDLEY_UNLIKELY(curl_global_init(CURL_GLOBAL_ALL))) {
+    fprintf(stderr, "curl init failure\n");
+    return EXIT_FAILURE;
+  }
 
   for (;;) {
     printf(

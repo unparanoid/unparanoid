@@ -155,6 +155,14 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   upd_array_clear(&iso->threads);
   uv_mutex_destroy(&iso->mtx);
 
+  /* forget all packages */
+  for (size_t i = 0; i < iso->pkgs.n; ++i) {
+    upd_pkg_t* pkg = iso->pkgs.p[i];
+    assert(!pkg->install);
+    upd_free(&pkg);
+  }
+  upd_array_clear(&iso->pkgs);
+
   /* unload all dynamic libraries */
   for (size_t i = 0; i < iso->libs.n; ++i) {
     uv_lib_t* lib = iso->libs.p[i];
@@ -198,6 +206,12 @@ static bool iso_get_paths_(upd_iso_t* iso) {
   iso->path.runtime[len] = 0;
   cwk_path_normalize(
     (char*) iso->path.runtime, (char*) iso->path.runtime, UPD_PATH_MAX);
+
+  const size_t pkgpath = cwk_path_join(
+    (char*) iso->path.runtime, "pkg", (char*) iso->path.pkg, UPD_PATH_MAX);
+  if (HEDLEY_UNLIKELY(pkgpath >= UPD_PATH_MAX)) {
+    return false;
+  }
 
   len = UPD_PATH_MAX;
   const bool cwd = 0 <= uv_cwd((char*) iso->path.working, &len);

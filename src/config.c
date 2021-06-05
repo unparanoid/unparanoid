@@ -160,6 +160,12 @@ task_parse_server_cb_(
 
 static
 void
+pkg_install_cb_(
+  upd_pkg_install_t* inst);
+
+
+static
+void
 driver_load_cb_(
   upd_driver_load_external_t* load);
 
@@ -626,9 +632,28 @@ static void task_parse_require_cb_(task_t_* task) {
       }
       const uint8_t* v    = val->data.scalar.value;
       const size_t   vlen = val->data.scalar.length;
-      upd_iso_msgf(ctx->iso,
-        "pkg: installing %.*s from %.*s\n", (int) vlen, v, (int) srclen, src);
-      /* TODO */
+
+      upd_pkg_install_t* inst = upd_iso_stack(ctx->iso, sizeof(*inst));
+      if (HEDLEY_UNLIKELY(inst == NULL)) {
+        config_lognf_(ctx, val, "pkg install context allocation failure");
+        break;
+      }
+      *inst = (upd_pkg_install_t) {
+        .iso     = ctx->iso,
+        .src     = src,
+        .srclen  = srclen,
+        .name    = v,
+        .namelen = vlen,
+        .udata   = task,
+        .cb      = pkg_install_cb_,
+      };
+      ++task->refcnt;
+      if (HEDLEY_UNLIKELY(!upd_pkg_install(inst))) {
+        task_unref_(task);
+        upd_iso_unstack(ctx->iso, inst);
+        config_lognf_(ctx, val, "pkg install failure");
+        continue;
+      }
     }
   }
 
@@ -906,6 +931,20 @@ static void task_parse_server_cb_(task_t_* task) {
   }
 
 EXIT:
+  task_unref_(task);
+}
+
+
+static void pkg_install_cb_(upd_pkg_install_t* inst) {
+  task_t_*   task = inst->udata;
+  ctx_t_*    ctx  = task->ctx;
+  upd_iso_t* iso  = ctx->iso;
+
+  if (HEDLEY_UNLIKELY(inst->state != UPD_PKG_INSTALL_DONE)) {
+    config_logf_(ctx,
+      "failed to install %.*s", (int) inst->namelen, inst->name);
+  }
+  upd_iso_unstack(iso, inst);
   task_unref_(task);
 }
 
