@@ -130,6 +130,13 @@ download_unref_(
 
 
 static
+bool
+rmdir_(
+  upd_iso_t*     iso,
+  const uint8_t* path);
+
+
+static
 void
 pkg_mkdir_cb_(
   mkdir_t_* md);
@@ -138,11 +145,6 @@ static
 void
 pkg_download_cb_(
   download_t_* d);
-
-static
-void
-pkg_abort_fs_cleanup_cb_(
-  uv_fs_t* fsreq);
 
 
 static
@@ -189,6 +191,17 @@ void
 download_complete_cb_(
   CURL* curl,
   void* udata);
+
+
+static
+void
+rmdir_scandir_cb_(
+  uv_fs_t* fsreq);
+
+static
+void
+rmdir_unstack_cb_(
+  uv_fs_t* fsreq);
 
 
 bool upd_pkg_install(upd_pkg_install_t* inst) {
@@ -399,40 +412,19 @@ static upd_pkg_t* pkg_new_(upd_pkg_install_t* inst) {
 
 static void pkg_finalize_install_(upd_pkg_install_t* inst, bool ok) {
   upd_iso_t* iso = inst->iso;
+  inst->pkg->install = NULL;
 
   if (HEDLEY_LIKELY(ok)) {
-    inst->pkg->install = NULL;
     inst->state = UPD_PKG_INSTALL_DONE;
 
   } else {
-    upd_array_find_and_remove(&inst->iso->pkgs, inst->pkg);
     inst->state = UPD_PKG_INSTALL_ABORTED;
 
-    static const char* msg =
-      "the broken pkg remaining on native filesystem because of low memory, "
-      "please delete '%s' by yourself :(";
-
-    /* delete a dir of the broken pkg */
-    uv_fs_t* fsreq = upd_iso_stack(iso, sizeof(*fsreq));
-    if (HEDLEY_UNLIKELY(fsreq == NULL)) {
-      upd_free(&inst->pkg);
-      pkg_logf_(inst, msg, inst->pkg->npath);
+    if (HEDLEY_UNLIKELY(!rmdir_(iso, inst->pkg->npath))) {
+      pkg_logf_(inst,
+        "the broken pkg remaining on native filesystem because of low memory, "
+        "please delete '%s' by yourself :(", inst->pkg->npath);
       goto EXIT;
-    }
-    *fsreq = (uv_fs_t) { .data = iso, };
-
-    /* TODO: recursive rmdir */
-    const int rmdir = uv_fs_rmdir(
-      &iso->loop, fsreq, (char*) inst->pkg->npath, pkg_abort_fs_cleanup_cb_);
-    upd_free(&inst->pkg);
-    if (HEDLEY_LIKELY(rmdir >= 0)) {
-
-    } else if (rmdir == UV_ENOENT) {
-      upd_iso_unstack(iso, fsreq);
-
-    } else {
-      pkg_logf_(inst, msg, inst->pkg->npath);
-      upd_iso_unstack(iso, fsreq);
     }
   }
 
@@ -613,8 +605,7 @@ static bool download_parse_tar_(download_t_* d) {
   const uint8_t typeflag = chunk[TAR_TYPE_OFFSET_];
   switch (typeflag) {
   case 0:
-  case '0':
-  case '1': {  /* file */
+  case '0': {  /* file */
     pkg_logf_(inst, "file: %.100s (%zu)", name, size);
     d->tar.frecv = 0;
     d->tar.fsize = size;
@@ -629,7 +620,7 @@ static bool download_parse_tar_(download_t_* d) {
       download_open_cb_);
     if (HEDLEY_UNLIKELY(0 > open)) {
       download_unref_(d);
-      pkg_logf_(inst, "file open failure");
+      pkg_logf_(inst, "file open failure (%s)", uv_err_name(open));
       return false;
     }
   } return true;
@@ -646,7 +637,7 @@ static bool download_parse_tar_(download_t_* d) {
       download_mkdir_cb_);
     if (HEDLEY_UNLIKELY(0 > mkdir)) {
       download_unref_(d);
-      pkg_logf_(inst, "mkdir failure");
+      pkg_logf_(inst, "mkdir failure (%s)", uv_err_name(mkdir));
       return false;
     }
   } return true;
@@ -672,6 +663,27 @@ static void download_unref_(download_t_* d) {
     }
     d->cb(d);
   }
+}
+
+
+static bool rmdir_(upd_iso_t* iso, const uint8_t* path) {
+  if (HEDLEY_UNLIKELY(utf8size_lazy(path) >= UPD_PATH_MAX)) {
+    return false;
+  }
+
+  uv_fs_t* fsreq = upd_iso_stack(iso, sizeof(*fsreq));
+  if (HEDLEY_UNLIKELY(fsreq == NULL)) {
+    return false;
+  }
+  *fsreq = (uv_fs_t) { .data = iso, };
+
+  const int scandir = uv_fs_scandir(
+    &iso->loop, fsreq, (char*) path, 0, rmdir_scandir_cb_);
+  if (HEDLEY_UNLIKELY(0 > scandir)) {
+    upd_iso_unstack(iso, fsreq);
+    return false;
+  }
+  return true;
 }
 
 
@@ -792,12 +804,6 @@ ABORT:
   pkg_finalize_install_(inst, false);
 }
 
-static void pkg_abort_fs_cleanup_cb_(uv_fs_t* fsreq) {
-  upd_iso_t* iso = fsreq->data;
-  uv_fs_req_cleanup(fsreq);
-  upd_iso_unstack(iso, fsreq);
-}
-
 
 static void mkdir_stat_cb_(uv_fs_t* fsreq) {
   mkdir_t_* md = (void*) fsreq;
@@ -871,7 +877,7 @@ static void download_open_cb_(uv_fs_t* fsreq) {
   uv_fs_req_cleanup(fsreq);
 
   if (HEDLEY_UNLIKELY(result < 0)) {
-    pkg_logf_(inst, "file open failure");
+    pkg_logf_(inst, "file open failure (%s)", uv_err_name(result));
     inst->abort = true;
     goto EXIT;
   }
@@ -979,4 +985,63 @@ static void download_complete_cb_(CURL* curl, void* udata) {
 
 EXIT:
   download_unref_(d);
+}
+
+
+static void rmdir_scandir_cb_(uv_fs_t* fsreq) {
+  upd_iso_t* iso = fsreq->data;
+
+  uint8_t self[UPD_PATH_MAX];
+  utf8cpy(self, fsreq->path);
+
+  uv_dirent_t e;
+  while (0 <= uv_fs_scandir_next(fsreq, &e)) {
+    uint8_t path[UPD_PATH_MAX];
+
+    const size_t join = cwk_path_join(
+      (char*) self, e.name, (char*) path, UPD_PATH_MAX);
+    if (HEDLEY_UNLIKELY(join >= UPD_PATH_MAX)) {
+      upd_iso_msgf(iso, "rmdir error: too long path\n");
+      continue;
+    }
+
+    if (e.type == UV_DIRENT_DIR) {
+      if (HEDLEY_UNLIKELY(!rmdir_(iso, path))) {
+        upd_iso_msgf(iso, "rmdir error: subreq failure\n");
+        continue;
+      }
+    } else {
+      uv_fs_t* fsreq = upd_iso_stack(iso, sizeof(*fsreq));
+      if (HEDLEY_UNLIKELY(fsreq == NULL)) {
+        upd_iso_msgf(iso, "rmdir error: subreq allocation failure\n");
+        continue;
+      }
+      *fsreq = (uv_fs_t) { .data = iso, };
+      const int unlink = uv_fs_unlink(
+        &iso->loop, fsreq, (char*) path, rmdir_unstack_cb_);
+      if (HEDLEY_UNLIKELY(0 > unlink)) {
+        upd_iso_unstack(iso, fsreq);
+        upd_iso_msgf(iso, "rmdir error: unlink failure\n");
+        continue;
+      }
+    }
+  }
+  uv_fs_req_cleanup(fsreq);
+
+  const int rmdir = uv_fs_rmdir(
+    &iso->loop, fsreq, (char*) self, rmdir_unstack_cb_);
+  if (HEDLEY_UNLIKELY(0 > rmdir)) {
+    upd_iso_msgf(iso, "rmdir error: remove failure\n");
+    upd_iso_unstack(iso, fsreq);
+  }
+}
+
+static void rmdir_unstack_cb_(uv_fs_t* fsreq) {
+  upd_iso_t* iso = fsreq->data;
+
+  if (HEDLEY_UNLIKELY(fsreq->result < 0)) {
+    upd_iso_msgf(iso, "rmdir error: %s\n", uv_err_name(fsreq->result));
+  }
+  uv_fs_req_cleanup(fsreq);
+  upd_iso_unstack(iso, fsreq);
 }
