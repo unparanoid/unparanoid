@@ -606,7 +606,7 @@ static void download_open_cb_(uv_fs_t* fsreq) {
     !curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, download_recv_cb_) &&
     !curl_easy_setopt(curl, CURLOPT_WRITEDATA, d) &&
     !curl_easy_setopt(curl, CURLOPT_URL, inst->pkg->url) &&
-    !curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, (bool) inst->verify_ssl);
+    !curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, (long) inst->verify_ssl);
   if (HEDLEY_UNLIKELY(!setopt)) {
     pkg_logf_(inst, "curl setopt failure");
     goto ABORT;
@@ -667,7 +667,7 @@ static void download_complete_cb_(CURL* curl, void* udata) {
   download_t_*       d    = udata;
   upd_pkg_install_t* inst = d->inst;
 
-  int res;
+  long res;
   const bool getinfo =
     !curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res);
 
@@ -676,7 +676,7 @@ static void download_complete_cb_(CURL* curl, void* udata) {
     goto ABORT;
   }
   if (HEDLEY_UNLIKELY(res < 200 || 300 <= res)) {
-    pkg_logf_(inst, "http error (%d)", res);
+    pkg_logf_(inst, "http error (%ld)", res);
     goto ABORT;
   }
   download_finalize_(d, true);
