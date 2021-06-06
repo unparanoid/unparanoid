@@ -53,10 +53,17 @@ struct upd_pkg_install_t {
   /* internal params */
   upd_pkg_install_state_t state;
   const char*             msg;
+
+  bool abort;
 };
 
 
 HEDLEY_NON_NULL(1)
 bool
 upd_pkg_install(
+  upd_pkg_install_t* inst);
+
+HEDLEY_NON_NULL(1)
+void
+upd_pkg_abort_install(
   upd_pkg_install_t* inst);

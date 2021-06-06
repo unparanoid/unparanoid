@@ -15,6 +15,7 @@ struct upd_iso_t {
   uv_signal_t sighup;
 
   uv_timer_t shutdown_timer;
+  uv_idle_t  destroyer;
 
   upd_iso_status_t status;
 
@@ -88,7 +89,7 @@ upd_iso_run(
 
 HEDLEY_NON_NULL(1)
 void
-upd_iso_close_all_conn(
+upd_iso_start_destroyer(
   upd_iso_t* iso);
 
 
@@ -205,7 +206,7 @@ static inline void upd_iso_msgf(upd_iso_t* iso, const char* fmt, ...) {
 HEDLEY_NON_NULL(1)
 static inline void upd_iso_exit(upd_iso_t* iso, upd_iso_status_t status) {
   iso->status = status;
-  upd_iso_close_all_conn(iso);
+  upd_iso_start_destroyer(iso);
 }
 
 static inline void upd_iso_thread_entrypoint_(void* udata) {

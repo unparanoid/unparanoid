@@ -36,7 +36,6 @@ struct download_t_ {
   uv_fs_t fsreq;
 
   unsigned open  : 1;
-  unsigned abort : 1;
   unsigned ok    : 1;
 
   void
@@ -189,6 +188,10 @@ bool upd_pkg_install(upd_pkg_install_t* inst) {
   };
   mkdir_(md);
   return true;
+}
+
+void upd_pkg_abort_install(upd_pkg_install_t* inst) {
+  inst->abort = true;
 }
 
 
@@ -522,6 +525,11 @@ static void pkg_mkdir_cb_(mkdir_t_* md) {
     goto ABORT;
   }
 
+  if (HEDLEY_UNLIKELY(inst->abort)) {
+    pkg_logf_(inst, "aborting installation");
+    goto ABORT;
+  }
+
   download_t_* d = upd_iso_stack(iso, sizeof(*d));
   if (HEDLEY_UNLIKELY(d == NULL)) {
     pkg_logf_(inst, "download context allocation failure");
@@ -559,7 +567,11 @@ static void pkg_download_cb_(download_t_* d) {
   upd_iso_unstack(iso, d);
 
   if (HEDLEY_UNLIKELY(!downloaded)) {
-    pkg_logf_(inst, "pkg download failure");
+    goto ABORT;
+  }
+
+  if (HEDLEY_UNLIKELY(inst->abort)) {
+    pkg_logf_(inst, "aborting installation");
     goto ABORT;
   }
 
@@ -632,7 +644,7 @@ static size_t download_recv_cb_(
   if (HEDLEY_UNLIKELY(realsize == 0)) {
     return 0;
   }
-  if (HEDLEY_UNLIKELY(d->abort)) {
+  if (HEDLEY_UNLIKELY(inst->abort)) {
     return 0;
   }
 
@@ -658,7 +670,7 @@ static void download_write_cb_(uv_fs_t* fsreq) {
 
   if (HEDLEY_UNLIKELY(result < 0)) {
     pkg_logf_(inst, "failed to write downloaded data");
-    d->abort = true;
+    inst->abort = true;
   }
   curl_easy_pause(d->curl, 0);
 }

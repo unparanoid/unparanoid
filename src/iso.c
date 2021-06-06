@@ -36,6 +36,18 @@ iso_create_dir_(
 
 static
 void
+walker_handle_(
+  upd_file_t* f);
+
+
+static
+void
+curl_check_(
+  upd_iso_t* iso);
+
+
+static
+void
 iso_create_dir_cb_(
   upd_req_pathfind_t* pf);
 
@@ -53,20 +65,15 @@ iso_shutdown_timer_cb_(
 
 static
 void
-walker_handle_(
-  upd_file_t* f);
-
-
-static
-void
-curl_check_(
-  upd_iso_t* iso);
+destroyer_cb_(
+  uv_idle_t* idle);
 
 
 static
 void
 walker_cb_(
   uv_timer_t* timer);
+
 
 static
 int
@@ -114,6 +121,7 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     .sigint         = { .data = iso, },
     .sighup         = { .data = iso, },
     .shutdown_timer = { .data = iso, },
+    .destroyer      = { .data = iso, },
 
     .stack = {
       .size = stacksz,
@@ -136,6 +144,7 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     0 <= uv_signal_init(&iso->loop, &iso->sighup) &&
     0 <= uv_timer_init(&iso->loop, &iso->walker.timer) &&
     0 <= uv_timer_init(&iso->loop, &iso->shutdown_timer) &&
+    0 <= uv_idle_init(&iso->loop, &iso->destroyer) &&
     0 <= uv_signal_start(&iso->sigint, iso_signal_cb_, SIGINT) &&
     0 <= uv_signal_start(&iso->sighup, iso_signal_cb_, SIGHUP) &&
     0 <= uv_timer_start(
@@ -146,6 +155,7 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
   }
   uv_unref((uv_handle_t*) &iso->sigint);
   uv_unref((uv_handle_t*) &iso->sighup);
+  uv_unref((uv_handle_t*) &iso->destroyer);
   uv_unref((uv_handle_t*) &iso->walker.timer);
 
   /* init curl */
@@ -184,12 +194,6 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
-
-  /* shutdown all sockets */
-  upd_iso_close_all_conn(iso);
-  if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
-    return UPD_ISO_PANIC;
-  }
   assert(iso->srv.n == 0);
   assert(iso->cli.n == 0);
 
@@ -205,6 +209,7 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   uv_close((uv_handle_t*) &iso->sigint,         NULL);
   uv_close((uv_handle_t*) &iso->sighup,         NULL);
   uv_close((uv_handle_t*) &iso->shutdown_timer, NULL);
+  uv_close((uv_handle_t*) &iso->destroyer,      NULL);
   uv_close((uv_handle_t*) &iso->walker.timer,   NULL);
   uv_close((uv_handle_t*) &iso->curl.timer,     NULL);
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
@@ -263,15 +268,8 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   return ret;
 }
 
-void upd_iso_close_all_conn(upd_iso_t* iso) {
-  while (iso->srv.n) {
-    upd_srv_delete(iso->srv.p[0]);
-  }
-  while (iso->cli.n) {
-    upd_cli_delete(iso->cli.p[0]);
-  }
-  uv_signal_stop(&iso->sigint);
-  uv_signal_stop(&iso->sighup);
+void upd_iso_start_destroyer(upd_iso_t* iso) {
+  uv_idle_start(&iso->destroyer, destroyer_cb_);
 }
 
 
@@ -431,10 +429,32 @@ static void iso_signal_cb_(uv_signal_t* sig, int signum) {
   }
 }
 
+
 static void iso_shutdown_timer_cb_(uv_timer_t* timer) {
   upd_iso_t* iso = timer->data;
   upd_iso_msgf(iso, "shutting down...\n");
   upd_iso_exit(iso, UPD_ISO_SHUTDOWN);
+}
+
+
+static void destroyer_cb_(uv_idle_t* idle) {
+  upd_iso_t* iso = idle->data;
+
+  while (iso->srv.n) {
+    upd_srv_delete(iso->srv.p[0]);
+  }
+  while (iso->cli.n) {
+    upd_cli_delete(iso->cli.p[0]);
+  }
+  uv_signal_stop(&iso->sigint);
+  uv_signal_stop(&iso->sighup);
+
+  for (size_t i = 0; i < iso->pkgs.n; ++i) {
+    upd_pkg_t* pkg = iso->pkgs.p[i];
+    if (HEDLEY_UNLIKELY(pkg->install)) {
+      upd_pkg_abort_install(pkg->install);
+    }
+  }
 }
 
 
