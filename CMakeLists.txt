@@ -99,6 +99,7 @@ target_link_libraries(libupd
     picohttpparser
     utf8.h
     wsock.h
+    zlib_
 )
 
 

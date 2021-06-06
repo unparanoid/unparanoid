@@ -23,11 +23,14 @@ target_sources(crypto-algorithms
 
 
 # ---- curl (https://github.com/curl/curl) ----
-set(HTTP_ONLY ON)
-if (WIN32)
-  set(CMAKE_USE_SCHANNEL  ON)
-endif()
-add_subdirectory(curl EXCLUDE_FROM_ALL)
+function(include_curl)
+  set(HTTP_ONLY ON)
+  if (WIN32)
+    set(CMAKE_USE_SCHANNEL  ON)
+  endif()
+  add_subdirectory(curl EXCLUDE_FROM_ALL)
+endfunction()
+include_curl()
 
 
 # ---- cwalk (https://github.com/likle/cwalk) ----
@@ -60,64 +63,67 @@ add_library(libyaml ALIAS yaml)
 
 
 # ---- luajit (https://github.com/LuaJIT/LuaJIT)
-file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/luajit" DESTINATION .)
+function (include_luajit)
+  file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/luajit" DESTINATION .)
 
-if (WIN32)
-  if (BUILD_SHARED_LIBS)
-    set(LUAJIT_TYPE   SHARED)
-    set(LUAJIT_LIB    lua51.dll)
-    set(LUAJIT_IMPLIB lua51.lib)
-    add_custom_target(luajit-build
-      WORKING_DIRECTORY luajit/src
-      COMMAND           msvcbuild.bat debug
-      VERBATIM
-    )
+  if (WIN32)
+    if (BUILD_SHARED_LIBS)
+      set(LUAJIT_TYPE   SHARED)
+      set(LUAJIT_LIB    lua51.dll)
+      set(LUAJIT_IMPLIB lua51.lib)
+      add_custom_target(luajit-build
+        WORKING_DIRECTORY luajit/src
+        COMMAND           msvcbuild.bat debug
+        VERBATIM
+      )
+    else()
+      set(LUAJIT_TYPE  STATIC)
+      set(LUAJIT_LIB   lua51.lib)
+      add_custom_target(luajit-build
+        WORKING_DIRECTORY luajit/src
+        COMMAND           msvcbuild.bat static
+        VERBATIM
+      )
+    endif()
+
   else()
-    set(LUAJIT_TYPE  STATIC)
-    set(LUAJIT_LIB   lua51.lib)
-    add_custom_target(luajit-build
-      WORKING_DIRECTORY luajit/src
-      COMMAND           msvcbuild.bat static
-      VERBATIM
-    )
+    if (BUILD_SHARED_LIBS)
+      set(LUAJIT_TYPE SHARED)
+      set(LUAJIT_LIB  libluajit-5.1.so.2)
+      add_custom_target(luajit-build
+        WORKING_DIRECTORY luajit
+        COMMAND           make -j BUILDMODE=dynamic
+        COMMAND           cp src/libluajit.so src/libluajit-5.1.so.2
+        VERBATIM
+      )
+    else()
+      set(LUAJIT_TYPE STATIC)
+      set(LUAJIT_LIB  libluajit.a)
+      add_custom_target(luajit-build
+        WORKING_DIRECTORY luajit
+        COMMAND           make -j BUILDMODE=static
+        VERBATIM
+      )
+    endif()
   endif()
 
-else()
-  if (BUILD_SHARED_LIBS)
-    set(LUAJIT_TYPE SHARED)
-    set(LUAJIT_LIB  libluajit-5.1.so.2)
-    add_custom_target(luajit-build
-      WORKING_DIRECTORY luajit
-      COMMAND           make -j BUILDMODE=dynamic
-      COMMAND           cp src/libluajit.so src/libluajit-5.1.so.2
-      VERBATIM
-    )
-  else()
-    set(LUAJIT_TYPE STATIC)
-    set(LUAJIT_LIB  libluajit.a)
-    add_custom_target(luajit-build
-      WORKING_DIRECTORY luajit
-      COMMAND           make -j BUILDMODE=static
-      VERBATIM
-    )
-  endif()
-endif()
-
-add_library(luajit-imported ${LUAJIT_TYPE} IMPORTED)
-set_target_properties(luajit-imported PROPERTIES
-  IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/${LUAJIT_LIB}"
-  IMPORTED_IMPLIB   "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/${LUAJIT_IMPLIB}"
+  add_library(luajit-imported ${LUAJIT_TYPE} IMPORTED)
+  set_target_properties(luajit-imported PROPERTIES
+    IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/${LUAJIT_LIB}"
+    IMPORTED_IMPLIB   "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/${LUAJIT_IMPLIB}"
 # INTERFACE_INCLUDE_DIRECTORIES doesn't work well ;(
-)
-add_dependencies(luajit-imported luajit-build)
+  )
+  add_dependencies(luajit-imported luajit-build)
 
-add_library(luajit INTERFACE)
-target_link_libraries(luajit
-  INTERFACE luajit-imported $<$<PLATFORM_ID:Linux>:m>
-)
-target_include_directories(luajit SYSTEM
-  INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/luajit/src"
-)
+  add_library(luajit INTERFACE)
+  target_link_libraries(luajit
+    INTERFACE luajit-imported $<$<PLATFORM_ID:Linux>:m>
+  )
+  target_include_directories(luajit SYSTEM BEFORE
+    INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/luajit/src"
+  )
+endfunction()
+include_luajit()
 
 
 # ---- mimetype.h (https://github.com/falsycat/mimetype.h) ----
@@ -147,3 +153,18 @@ target_sources(utf8.h
 
 # ---- wsock.h (https://github.com/falsycat/wsock.h) ----
 add_subdirectory(wsock.h EXCLUDE_FROM_ALL)
+
+
+# ---- zlib (https://github.com/madler/zlib) ----
+add_subdirectory(zlib EXCLUDE_FROM_ALL)
+target_include_directories(zlib SYSTEM BEFORE
+  PUBLIC zlib
+)
+target_include_directories(zlibstatic SYSTEM BEFORE
+  PUBLIC zlib
+)
+if (BUILD_SHARED_LIBS)
+  add_library(zlib_ ALIAS zlib)
+else()
+  add_library(zlib_ ALIAS zlibstatic)
+endif()
