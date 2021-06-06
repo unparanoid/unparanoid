@@ -31,12 +31,11 @@ struct download_t_ {
 
   CURL*   curl;
   uv_file file;
-  size_t  wrote;
 
-  uv_fs_t fsreq;
+  z_stream z;
 
-  unsigned open  : 1;
   unsigned ok    : 1;
+  unsigned abort : 1;
 
   void
   (*cb)(
@@ -114,8 +113,14 @@ pkg_abort_fs_cleanup_cb_(
 
 static
 void
-download_open_cb_(
+mkdir_stat_cb_(
   uv_fs_t* fsreq);
+
+static
+void
+mkdir_mkdir_cb_(
+  uv_fs_t* fsreq);
+
 
 static
 size_t
@@ -127,30 +132,9 @@ download_recv_cb_(
 
 static
 void
-download_write_cb_(
-  uv_fs_t* fsreq);
-
-static
-void
 download_complete_cb_(
   CURL* curl,
   void* udata);
-
-static
-void
-download_close_cb_(
-  uv_fs_t* fsreq);
-
-
-static
-void
-mkdir_stat_cb_(
-  uv_fs_t* fsreq);
-
-static
-void
-mkdir_mkdir_cb_(
-  uv_fs_t* fsreq);
 
 
 bool upd_pkg_install(upd_pkg_install_t* inst) {
@@ -479,37 +463,54 @@ static void mkdir_down_(mkdir_t_* md) {
 }
 
 
+static bool download_inflate_(download_t_* d) {
+  upd_pkg_install_t* inst = d->inst;
+  z_stream*          z    = &d->z;
+
+  if (HEDLEY_UNLIKELY(z->avail_in == 0 || d->abort)) {
+    curl_easy_pause(d->curl, 0);
+    return true;
+  }
+
+  uint8_t buf[1024];
+  z->avail_out = sizeof(buf);
+  z->next_out  = buf;
+
+  const int ret = inflate(z, Z_NO_FLUSH);
+  switch (ret) {
+  case Z_NEED_DICT:
+  case Z_DATA_ERROR:
+    pkg_logf_(inst, "invalid gzip format");
+    return false;
+  case Z_MEM_ERROR:
+    pkg_logf_(inst, "zlib memory error");
+    return false;
+  case Z_STREAM_END:
+    d->abort = true;
+  }
+
+  /* TODO */
+  const size_t recv = sizeof(buf) - z->avail_out;
+  pkg_logf_(inst, "recv %zu bytes", recv);
+  if (HEDLEY_LIKELY(z->avail_out == 0)) {
+    return download_inflate_(d);
+  }
+  return true;
+}
+
 static void download_finalize_(download_t_* d, bool ok) {
-  upd_iso_t* iso  = d->iso;
-  CURL*      curl = d->curl;
-  uv_file    file = d->file;
-  const bool open = d->open;
+  curl_easy_cleanup(d->curl);
+  inflateEnd(&d->z);
 
   d->ok = ok;
   d->cb(d);
-
-  if (HEDLEY_LIKELY(curl)) {
-    curl_easy_cleanup(curl);
-  }
-  if (HEDLEY_LIKELY(open)) {
-    uv_fs_t* fsreq = upd_iso_stack(iso, sizeof(*fsreq));
-    if (HEDLEY_UNLIKELY(fsreq == NULL)) {
-      return;
-    }
-    *fsreq = (uv_fs_t) { .data = iso, };
-
-    const int close = uv_fs_close(&iso->loop, fsreq, file, download_close_cb_);
-    if (HEDLEY_LIKELY(0 > close)) {
-      upd_iso_unstack(iso, fsreq);
-      return;
-    }
-  }
 }
 
 
 static void pkg_mkdir_cb_(mkdir_t_* md) {
   upd_pkg_install_t* inst = md->inst;
   upd_iso_t*         iso  = inst->iso;
+  upd_pkg_t*         pkg  = inst->pkg;
 
   const bool exists  = md->exists;
   const bool created = md->created;
@@ -536,22 +537,49 @@ static void pkg_mkdir_cb_(mkdir_t_* md) {
     goto ABORT;
   }
   *d = (download_t_) {
-    .iso   = iso,
-    .inst  = inst,
-    .fsreq = { .data = d, },
-    .cb    = pkg_download_cb_,
+    .iso  = iso,
+    .inst = inst,
+    .z    = {
+      .zalloc   = Z_NULL,
+      .zfree    = Z_NULL,
+      .opaque   = Z_NULL,
+      .avail_in = 0,
+      .next_in  = Z_NULL,
+    },
+    .cb   = pkg_download_cb_,
   };
-  const int open = uv_fs_open(
-    &iso->loop,
-    &d->fsreq,
-    (char*) inst->pkg->npath_archive,
-    O_WRONLY | O_CREAT,
-    0600,
-    download_open_cb_);
-  if (HEDLEY_UNLIKELY(0 > open)) {
+
+  CURL* curl = curl_easy_init();
+  if (HEDLEY_UNLIKELY(curl == NULL)) {
     upd_iso_unstack(iso, d);
-    pkg_logf_(inst, "archive file open failure");
+    pkg_logf_(inst, "curl init failure");
     goto ABORT;
+  }
+  d->curl = curl;
+
+  if (HEDLEY_UNLIKELY(z_inflateInit2(&d->z, 15+32) != Z_OK)) {
+    curl_easy_cleanup(curl);
+    upd_iso_unstack(iso, d);
+    pkg_logf_(inst, "zlib stream init failure");
+    goto ABORT;
+  }
+
+  const bool setopt =
+    !curl_easy_setopt(curl, CURLOPT_NOPROGRESS, true) &&
+    !curl_easy_setopt(curl, CURLOPT_NOSIGNAL, true) &&
+    !curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, download_recv_cb_) &&
+    !curl_easy_setopt(curl, CURLOPT_WRITEDATA, d) &&
+    !curl_easy_setopt(curl, CURLOPT_URL, pkg->url) &&
+    !curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, (long) inst->verify_ssl);
+  if (HEDLEY_UNLIKELY(!setopt)) {
+    pkg_logf_(inst, "curl setopt failure");
+    download_finalize_(curl, false);
+    return;
+  }
+  if (HEDLEY_UNLIKELY(!upd_iso_curl_perform(iso, curl, download_complete_cb_, d))) {
+    pkg_logf_(inst, "curl perform failure");
+    download_finalize_(curl, false);
+    return;
   }
   return;
 
@@ -577,7 +605,7 @@ static void pkg_download_cb_(download_t_* d) {
 
   /* TODO */
   pkg_logf_(inst, "%s -> %s", inst->pkg->url, inst->pkg->npath);
-  pkg_finalize_install_(inst, true);
+  pkg_finalize_install_(inst, false);
   return;
 
 ABORT:
@@ -585,120 +613,6 @@ ABORT:
 }
 
 static void pkg_abort_fs_cleanup_cb_(uv_fs_t* fsreq) {
-  upd_iso_t* iso = fsreq->data;
-  uv_fs_req_cleanup(fsreq);
-  upd_iso_unstack(iso, fsreq);
-}
-
-
-static void download_open_cb_(uv_fs_t* fsreq) {
-  download_t_*       d    = fsreq->data;
-  upd_pkg_install_t* inst = d->inst;
-  upd_iso_t*         iso  = inst->iso;
-
-  const ssize_t result = fsreq->result;
-  uv_fs_req_cleanup(fsreq);
-
-  if (HEDLEY_UNLIKELY(result < 0)) {
-    pkg_logf_(inst, "archive file open failure");
-    goto ABORT;
-  }
-  d->open = true;
-  d->file = result;
-
-  CURL* curl = curl_easy_init();
-  if (HEDLEY_UNLIKELY(curl == NULL)) {
-    pkg_logf_(inst, "curl init failure");
-    goto ABORT;
-  }
-  d->curl = curl;
-  const bool setopt =
-    !curl_easy_setopt(curl, CURLOPT_NOPROGRESS, true) &&
-    !curl_easy_setopt(curl, CURLOPT_NOSIGNAL, true) &&
-    !curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, download_recv_cb_) &&
-    !curl_easy_setopt(curl, CURLOPT_WRITEDATA, d) &&
-    !curl_easy_setopt(curl, CURLOPT_URL, inst->pkg->url) &&
-    !curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, (long) inst->verify_ssl);
-  if (HEDLEY_UNLIKELY(!setopt)) {
-    pkg_logf_(inst, "curl setopt failure");
-    goto ABORT;
-  }
-
-  if (HEDLEY_UNLIKELY(!upd_iso_curl_perform(iso, curl, download_complete_cb_, d))) {
-    pkg_logf_(inst, "curl perform failure");
-    goto ABORT;
-  }
-  return;
-
-ABORT:
-  download_finalize_(d, false);
-}
-
-static size_t download_recv_cb_(
-    void* data, size_t size, size_t nmemb, void* udata) {
-  download_t_*       d    = udata;
-  upd_pkg_install_t* inst = d->inst;
-  upd_iso_t*         iso  = d->iso;
-
-  const size_t realsize = size * nmemb;
-  if (HEDLEY_UNLIKELY(realsize == 0)) {
-    return 0;
-  }
-  if (HEDLEY_UNLIKELY(inst->abort)) {
-    return 0;
-  }
-
-  const uv_buf_t buf = uv_buf_init(data, realsize);
-
-  const int write = uv_fs_write(
-    &iso->loop, &d->fsreq, d->file, &buf, 1, d->wrote, download_write_cb_);
-  if (HEDLEY_UNLIKELY(0 > write)) {
-    pkg_logf_(inst, "failed to write downloaded data");
-    return 0;
-  }
-  d->wrote += realsize;
-  curl_easy_pause(d->curl, CURLPAUSE_RECV);
-  return realsize;
-}
-
-static void download_write_cb_(uv_fs_t* fsreq) {
-  download_t_*       d    = fsreq->data;
-  upd_pkg_install_t* inst = d->inst;
-
-  const ssize_t result = fsreq->result;
-  uv_fs_req_cleanup(fsreq);
-
-  if (HEDLEY_UNLIKELY(result < 0)) {
-    pkg_logf_(inst, "failed to write downloaded data");
-    inst->abort = true;
-  }
-  curl_easy_pause(d->curl, 0);
-}
-
-static void download_complete_cb_(CURL* curl, void* udata) {
-  download_t_*       d    = udata;
-  upd_pkg_install_t* inst = d->inst;
-
-  long res;
-  const bool getinfo =
-    !curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res);
-
-  if (HEDLEY_UNLIKELY(!getinfo)) {
-    pkg_logf_(inst, "curl getinfo failure");
-    goto ABORT;
-  }
-  if (HEDLEY_UNLIKELY(res < 200 || 300 <= res)) {
-    pkg_logf_(inst, "http error (%ld)", res);
-    goto ABORT;
-  }
-  download_finalize_(d, true);
-  return;
-
-ABORT:
-  download_finalize_(d, false);
-}
-
-static void download_close_cb_(uv_fs_t* fsreq) {
   upd_iso_t* iso = fsreq->data;
   uv_fs_req_cleanup(fsreq);
   upd_iso_unstack(iso, fsreq);
@@ -732,4 +646,53 @@ static void mkdir_mkdir_cb_(uv_fs_t* fsreq) {
     return;
   }
   mkdir_down_(md);
+}
+
+
+static size_t download_recv_cb_(
+    void* data, size_t size, size_t nmemb, void* udata) {
+  download_t_*       d    = udata;
+  upd_pkg_install_t* inst = d->inst;
+  z_stream*          z    = &d->z;
+
+  const size_t realsize = size * nmemb;
+  if (HEDLEY_UNLIKELY(realsize == 0)) {
+    return 0;
+  }
+  if (HEDLEY_UNLIKELY(inst->abort || d->abort)) {
+    return 0;
+  }
+
+  curl_easy_pause(d->curl, CURLPAUSE_RECV);
+
+  z->avail_in = realsize;
+  z->next_in  = data;
+  if (HEDLEY_UNLIKELY(!download_inflate_(d))) {
+    inst->abort = true;
+    return 0;
+  }
+  return realsize;
+}
+
+static void download_complete_cb_(CURL* curl, void* udata) {
+  download_t_*       d    = udata;
+  upd_pkg_install_t* inst = d->inst;
+
+  long res;
+  const bool getinfo =
+    !curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res);
+
+  if (HEDLEY_UNLIKELY(!getinfo)) {
+    pkg_logf_(inst, "curl getinfo failure");
+    goto ABORT;
+  }
+  if (HEDLEY_UNLIKELY(res < 200 || 300 <= res)) {
+    pkg_logf_(inst, "http error (%ld)", res);
+    goto ABORT;
+  }
+  download_finalize_(d, true);
+  return;
+
+ABORT:
+  download_finalize_(d, false);
 }

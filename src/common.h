@@ -26,6 +26,10 @@
 # include <valgrind.h>
 #endif
 
+#define Z_PREFIX_SET
+#include <zlib.h>
+#undef Z_PREFIX_SET
+
 
 #define UPD_DECL_FUNC static inline
 #include <libupd.h>
