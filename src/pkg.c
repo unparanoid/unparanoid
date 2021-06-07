@@ -168,6 +168,11 @@ pkg_download_cb_(
 
 static
 void
+pkg_config_cb_(
+  upd_config_load_t* load);
+
+static
+void
 pkg_rmdir_cb_(
   rmdir_t_* r);
 
@@ -788,8 +793,16 @@ static void pkg_mkdir_cb_(mkdir_t_* md) {
   upd_iso_unstack(iso, md);
 
   if (HEDLEY_LIKELY(exists)) {
-    /* TODO: configure the pkg */
-    pkg_finalize_install_(inst, true);
+    const bool load = upd_config_load_with_dup(&(upd_config_load_t) {
+        .iso   = iso,
+        .path  = pkg->npath,
+        .udata = inst,
+        .cb    = pkg_config_cb_,
+      });
+    if (HEDLEY_UNLIKELY(!load)) {
+      pkg_logf_(inst, "failed to configure existing pkg");
+      pkg_finalize_install_(inst, false);
+    }
     return;
   }
   pkg_logf_(inst, "installing...");
@@ -888,14 +901,35 @@ static void pkg_download_cb_(download_t_* d) {
     goto ABORT;
   }
 
-  /* TODO */
-  pkg_logf_(inst, "%s -> %s", inst->pkg->url, inst->pkg->npath);
-  pkg_logf_(inst, "successfully installed!");
-  pkg_finalize_install_(inst, false);
+  const bool load = upd_config_load_with_dup(&(upd_config_load_t) {
+      .iso   = iso,
+      .path  = inst->pkg->npath,
+      .udata = inst,
+      .cb    = pkg_config_cb_,
+    });
+  if (HEDLEY_UNLIKELY(!load)) {
+    pkg_logf_(inst, "failed to configure new pkg");
+    pkg_finalize_install_(inst, false);
+  }
   return;
 
 ABORT:
   pkg_finalize_install_(inst, false);
+}
+
+static void pkg_config_cb_(upd_config_load_t* load) {
+  upd_iso_t*         iso  = load->iso;
+  upd_pkg_install_t* inst = load->udata;
+
+  const bool ok = load->ok;
+  upd_iso_unstack(iso, load);
+
+  if (HEDLEY_LIKELY(ok)) {
+    pkg_logf_(inst, "successfully installed!");
+  } else {
+    pkg_logf_(inst, "configuration failure ;(");
+  }
+  pkg_finalize_install_(inst, ok);
 }
 
 static void pkg_rmdir_cb_(rmdir_t_* r) {
