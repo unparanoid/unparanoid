@@ -15,7 +15,6 @@ typedef struct test_t_ {
 static const test_t_ tests_[] = {
   { "array",  upd_test_array, },
   { "buf",    upd_test_buf, },
-  { "config", upd_test_config, },
   { "memory", upd_test_memory, },
   { "driver", upd_test_driver, },
   { "file",   upd_test_file, },

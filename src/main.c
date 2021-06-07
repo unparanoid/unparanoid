@@ -1,6 +1,12 @@
 #include "common.h"
 
 
+static
+void
+config_load_cb_(
+  upd_config_load_t* load);
+
+
 int main(int argc, char** argv) {
   argv = uv_setup_args(argc, argv);
   if (HEDLEY_UNLIKELY(curl_global_init(CURL_GLOBAL_ALL))) {
@@ -23,7 +29,15 @@ int main(int argc, char** argv) {
     }
 
     upd_iso_msgf(iso, "building isolated machine...\n");
-    upd_config_load(iso);
+    const bool config = upd_config_load_with_dup(&(upd_config_load_t) {
+        .iso = iso,
+        .path = iso->path.working,
+        .cb   = config_load_cb_,
+      });
+    if (HEDLEY_UNLIKELY(!config)) {
+      fprintf(stderr, "configuration failure\n");
+      return EXIT_FAILURE;
+    }
 
     const upd_iso_status_t status = upd_iso_run(iso);
 
@@ -44,4 +58,19 @@ int main(int argc, char** argv) {
 EXIT:
   curl_global_cleanup();
   return EXIT_SUCCESS;
+}
+
+
+static void config_load_cb_(upd_config_load_t* load) {
+  upd_iso_t* iso = load->iso;
+
+  const bool ok = load->ok;
+  upd_iso_unstack(iso, load);
+
+  if (HEDLEY_LIKELY(ok)) {
+    upd_iso_msgf(iso, "#### ---- all done :3 ---- ####\n");
+  } else {
+    upd_iso_msgf(iso, "XXXX ---- configuration failure ;3 ---- XXXX\n");
+    upd_iso_exit(iso, UPD_ISO_PANIC);
+  }
 }

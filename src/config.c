@@ -11,7 +11,8 @@ typedef struct task_t_      task_t_;
 typedef struct task_file_t_ task_file_t_;
 
 struct ctx_t_ {
-  upd_iso_t* iso;
+  upd_iso_t*         iso;
+  upd_config_load_t* load;
 
   uint8_t* path;
   size_t   pathlen;
@@ -192,8 +193,10 @@ server_build_cb_(
   upd_srv_build_t* b);
 
 
-bool upd_config_load_from_path(upd_iso_t* iso, const uint8_t* path) {
-  /* Adds a surplus of 8 bytes for path join. */
+bool upd_config_load(upd_config_load_t* load) {
+  upd_iso_t*     iso  = load->iso;
+  const uint8_t* path = load->path;
+
   const size_t fpathlen = cwk_path_join((char*) path, CONFIG_FILE_, NULL, 0);
 
   ctx_t_* ctx = upd_iso_stack(iso, sizeof(*ctx) + (fpathlen+1)*2);
@@ -202,6 +205,7 @@ bool upd_config_load_from_path(upd_iso_t* iso, const uint8_t* path) {
   }
   *ctx = (ctx_t_) {
     .iso      = iso,
+    .load     = load,
     .path     = (uint8_t*) (ctx+1) + fpathlen+1,
     .fpath    = (uint8_t*) (ctx+1),
     .fpathlen = fpathlen,
@@ -225,9 +229,13 @@ bool upd_config_load_from_path(upd_iso_t* iso, const uint8_t* path) {
 
 
 static void config_unref_(ctx_t_* ctx) {
+  upd_iso_t*         iso  = ctx->iso;
+  upd_config_load_t* load = ctx->load;
+
   if (HEDLEY_UNLIKELY(--ctx->refcnt == 0)) {
     yaml_document_delete(&ctx->doc);
-    upd_iso_unstack(ctx->iso, ctx);
+    upd_iso_unstack(iso, ctx);
+    load->cb(load);
   }
 }
 
@@ -557,6 +565,7 @@ static void config_read_cb_(uv_fs_t* req) {
       break;
     }
   }
+  ctx->load->ok = true;
 
   bool close;
 EXIT:
