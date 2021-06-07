@@ -57,6 +57,8 @@ struct download_t_ {
     size_t   recv;
     size_t   parsed;
 
+    size_t pad;
+
     uv_file f;
     size_t  fsize;
     size_t  frecv;
@@ -539,6 +541,13 @@ static bool download_parse_tar_(download_t_* d) {
   const uint8_t* chunk   = d->tar.chunk + d->tar.parsed;
   const size_t   chunksz = d->tar.recv - d->tar.parsed;
 
+  const size_t pad = d->tar.pad > chunksz? chunksz: d->tar.pad;
+  if (HEDLEY_UNLIKELY(pad)) {
+    d->tar.parsed += pad;
+    d->tar.pad    -= pad;
+    return download_parse_tar_(d);
+  }
+
   /* recv file contents */
   if (HEDLEY_UNLIKELY(d->tar.frecv < d->tar.fsize)) {
     const size_t rem = d->tar.fsize - d->tar.frecv;
@@ -915,6 +924,7 @@ static void download_write_cb_(uv_fs_t* fsreq) {
   d->tar.parsed += result;
   d->tar.frecv  += result;
   if (HEDLEY_UNLIKELY(d->tar.frecv >= d->tar.fsize)) {
+    d->tar.pad = (512-d->tar.fsize%512)%512;
     goto CLOSE;
   }
   goto EXIT;
