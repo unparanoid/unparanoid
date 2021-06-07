@@ -206,6 +206,12 @@ rmdir_unstack_cb_(
   uv_fs_t* fsreq);
 
 
+static
+void
+file_unstack_cb_(
+  uv_fs_t* fsreq);
+
+
 bool upd_pkg_install(upd_pkg_install_t* inst) {
   upd_iso_t* iso = inst->iso;
 
@@ -666,7 +672,18 @@ static void download_unref_(download_t_* d) {
 
     if (HEDLEY_UNLIKELY(d->tar.frecv < d->tar.fsize)) {
       pkg_logf_(d->inst, "stream ends unexpectedly");
-      /* TODO: close file */
+
+      uv_fs_t* fsreq = upd_iso_stack(d->iso, sizeof(*fsreq));
+      if (HEDLEY_LIKELY(fsreq != NULL)) {
+        *fsreq = (uv_fs_t) { .data = iso, };
+        const int close =
+          uv_fs_close(&iso->loop, fsreq, d->tar.f, file_unstack_cb_);
+        if (HEDLEY_UNLIKELY(0 > close)) {
+          upd_iso_unstack(iso, fsreq);
+          pkg_logf_(d->inst,
+            "broken file close failure (%s)", uv_err_name(close));
+        }
+      }
     } else {
       d->ok = true;
     }
@@ -896,6 +913,7 @@ static void download_open_cb_(uv_fs_t* fsreq) {
     const int close =
       uv_fs_close(&iso->loop, &d->fsreq, d->tar.f, download_close_cb_);
     if (HEDLEY_UNLIKELY(0 > close)) {
+      pkg_logf_(inst, "empty file close failure (%s)", uv_err_name(close));
       goto EXIT;
     }
     return;
@@ -935,6 +953,7 @@ CLOSE:
   const int close =
     uv_fs_close(&iso->loop, &d->fsreq, d->tar.f, download_close_cb_);
   if (HEDLEY_UNLIKELY(0 > close)) {
+    pkg_logf_(inst, "written file close failure (%s)", uv_err_name(close));
     goto EXIT;
   }
   return;
@@ -947,7 +966,12 @@ EXIT:
 }
 
 static void download_close_cb_(uv_fs_t* fsreq) {
-  download_t_* d = fsreq->data;
+  download_t_*       d    = fsreq->data;
+  upd_pkg_install_t* inst = d->inst;
+
+  if (HEDLEY_UNLIKELY(fsreq->result < 0)) {
+    pkg_logf_(inst, "file close failure (%s)", uv_err_name(fsreq->result));
+  }
   uv_fs_req_cleanup(fsreq);
 
   if (HEDLEY_UNLIKELY(!download_parse_tar_(d))) {
@@ -1052,6 +1076,13 @@ static void rmdir_unstack_cb_(uv_fs_t* fsreq) {
   if (HEDLEY_UNLIKELY(fsreq->result < 0)) {
     upd_iso_msgf(iso, "rmdir error: %s\n", uv_err_name(fsreq->result));
   }
+  uv_fs_req_cleanup(fsreq);
+  upd_iso_unstack(iso, fsreq);
+}
+
+
+static void file_unstack_cb_(uv_fs_t* fsreq) {
+  upd_iso_t* iso = fsreq->data;
   uv_fs_req_cleanup(fsreq);
   upd_iso_unstack(iso, fsreq);
 }
