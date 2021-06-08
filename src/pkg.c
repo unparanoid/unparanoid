@@ -330,13 +330,13 @@ static void pkg_logf_(upd_pkg_install_t* inst, const char* fmt, ...) {
 
 static bool pkg_build_url_(upd_pkg_install_t* inst, uint8_t* str, size_t len) {
   size_t prefix = 0;
-  while (inst->src[prefix] != '$') {
-    if (HEDLEY_UNLIKELY(++prefix >= inst->srclen)) {
-      pkg_logf_(inst, "invalid source url ($ is not found)");
+  while (inst->url[prefix] != '$') {
+    if (HEDLEY_UNLIKELY(++prefix >= inst->urllen)) {
+      pkg_logf_(inst, "invalid url ($ is not found)");
       return false;
     }
   }
-  const size_t postfix = inst->srclen - prefix - 1;
+  const size_t postfix = inst->urllen - prefix - 1;
 
   const size_t whole = prefix + inst->namelen + postfix + 1;
   if (HEDLEY_UNLIKELY(len < whole)) {
@@ -344,13 +344,13 @@ static bool pkg_build_url_(upd_pkg_install_t* inst, uint8_t* str, size_t len) {
     return false;
   }
 
-  utf8ncpy(str, inst->src, prefix);
+  utf8ncpy(str, inst->url, prefix);
   str += prefix;
 
   utf8ncpy(str, inst->name, inst->namelen);
   str += inst->namelen;
 
-  utf8ncpy(str, inst->src+prefix+1, postfix);
+  utf8ncpy(str, inst->url+prefix+1, postfix);
   str += postfix;
 
   *str = 0;
@@ -358,13 +358,13 @@ static bool pkg_build_url_(upd_pkg_install_t* inst, uint8_t* str, size_t len) {
 }
 
 static bool pkg_build_nrpath_(upd_pkg_install_t* inst, uint8_t* str, size_t len) {
-  uint8_t src[UPD_PATH_MAX];
-  if (HEDLEY_UNLIKELY(inst->srclen >= sizeof(src))) {
+  uint8_t url[UPD_PATH_MAX];
+  if (HEDLEY_UNLIKELY(inst->urllen >= sizeof(url))) {
     pkg_logf_(inst, "too long url");
     return false;
   }
-  utf8ncpy(src, inst->src, inst->srclen);
-  src[inst->srclen] = 0;
+  utf8ncpy(url, inst->url, inst->urllen);
+  url[inst->urllen] = 0;
 
   /* parse url and get hostname */
   CURLU* u = curl_url();
@@ -372,7 +372,7 @@ static bool pkg_build_nrpath_(upd_pkg_install_t* inst, uint8_t* str, size_t len)
     pkg_logf_(inst, "failed to allocate url parser");
     return false;
   }
-  if (HEDLEY_UNLIKELY(curl_url_set(u, CURLUPART_URL, (char*) src, 0))) {
+  if (HEDLEY_UNLIKELY(curl_url_set(u, CURLUPART_URL, (char*) url, 0))) {
     curl_url_cleanup(u);
     pkg_logf_(inst, "failed to parse url");
     return false;

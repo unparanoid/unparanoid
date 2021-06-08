@@ -105,6 +105,13 @@ config_toimax_(
   yaml_node_t* node,
   intmax_t*    i);
 
+static
+bool
+config_tobool_(
+  ctx_t_*      ctx,
+  yaml_node_t* node,
+  bool*        b);
+
 
 static
 bool
@@ -350,6 +357,31 @@ static bool config_toimax_(ctx_t_* ctx, yaml_node_t* node, intmax_t* i) {
   }
   *i = x;
   return true;
+}
+
+static bool config_tobool_(ctx_t_* ctx, yaml_node_t* node, bool* b) {
+  if (!node) {
+    return true;
+  }
+  if (HEDLEY_UNLIKELY(node->type != YAML_SCALAR_NODE)) {
+    config_lognf_(ctx, node, "expected scalar node");
+    return false;
+  }
+
+  const uint8_t* v    = node->data.scalar.value;
+  const size_t   vlen = node->data.scalar.length;
+
+  if (utf8ncasecmp("true",v, vlen) == 0) {
+    *b = true;
+    return true;
+  }
+  if (utf8ncasecmp("false",v, vlen) == 0) {
+    *b = false;
+    return true;
+  }
+
+  config_lognf_(ctx, node, "expected 'true' or 'false'");
+  return false;
 }
 
 
@@ -611,21 +643,33 @@ static void task_parse_require_cb_(task_t_* task) {
     }
 
     struct {
-      yaml_node_t* src;
+      yaml_node_t* url;
       yaml_node_t* pkg;
+      yaml_node_t* preserve;
+      yaml_node_t* verify_ssl;
     } fields = { NULL };
     config_find_all_fields_(ctx, val, (config_field_t_[]) {
-        { "src", &fields.src, YAML_SCALAR_NODE,   },
-        { "pkg", &fields.pkg, YAML_SEQUENCE_NODE, },
+        { "url",        &fields.url,        YAML_SCALAR_NODE,   },
+        { "pkg",        &fields.pkg,        YAML_SEQUENCE_NODE, },
+        { "preserve",   &fields.preserve,   YAML_SCALAR_NODE,   },
+        { "verify_ssl", &fields.verify_ssl, YAML_SCALAR_NODE,   },
         { NULL },
       });
-    if (HEDLEY_UNLIKELY(!fields.src || !fields.pkg)) {
-      config_lognf_(ctx, node, "'src' and 'pkg' fields required");
+    if (HEDLEY_UNLIKELY(!fields.url || !fields.pkg)) {
+      config_lognf_(ctx, node, "'url' and 'pkg' fields required");
       continue;
     }
 
-    const uint8_t* src    = fields.src->data.scalar.value;
-    const size_t   srclen = fields.src->data.scalar.length;
+    const uint8_t* url    = fields.url->data.scalar.value;
+    const size_t   urllen = fields.url->data.scalar.length;
+
+    bool preserve = false, verify_ssl = false;
+    const bool options =
+      config_tobool_(ctx, fields.preserve,   &preserve) &&
+      config_tobool_(ctx, fields.verify_ssl, &verify_ssl);
+    if (HEDLEY_UNLIKELY(!options)) {
+      continue;
+    }
 
     yaml_node_item_t* itr = fields.pkg->data.sequence.items.start;
     yaml_node_item_t* end = fields.pkg->data.sequence.items.top;
@@ -639,8 +683,18 @@ static void task_parse_require_cb_(task_t_* task) {
         config_lognf_(ctx, val, "expected scalar node");
         continue;
       }
-      const uint8_t* v    = val->data.scalar.value;
-      const size_t   vlen = val->data.scalar.length;
+      const uint8_t* name    = val->data.scalar.value;
+      size_t         namelen = val->data.scalar.length;
+
+      const uint8_t* hash    = name;
+      size_t         hashlen = namelen;
+      while (hashlen && *hash != '#') {
+        ++hash; --hashlen;
+      }
+      if (hashlen) {
+        namelen -= hashlen;
+        ++hash; --hashlen;
+      }
 
       upd_pkg_install_t* inst = upd_iso_stack(ctx->iso, sizeof(*inst));
       if (HEDLEY_UNLIKELY(inst == NULL)) {
@@ -648,13 +702,17 @@ static void task_parse_require_cb_(task_t_* task) {
         break;
       }
       *inst = (upd_pkg_install_t) {
-        .iso     = ctx->iso,
-        .src     = src,
-        .srclen  = srclen,
-        .name    = v,
-        .namelen = vlen,
-        .udata   = task,
-        .cb      = pkg_install_cb_,
+        .iso        = ctx->iso,
+        .url        = url,
+        .urllen     = urllen,
+        .name       = name,
+        .namelen    = namelen,
+        .hash       = hash,
+        .hashlen    = hashlen,
+        .verify_ssl = verify_ssl,
+        .preserve   = preserve,
+        .udata      = task,
+        .cb         = pkg_install_cb_,
       };
       ++task->refcnt;
       if (HEDLEY_UNLIKELY(!upd_pkg_install(inst))) {

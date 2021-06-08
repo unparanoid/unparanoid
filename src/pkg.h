@@ -39,8 +39,8 @@ typedef enum upd_pkg_install_state_t {
 struct upd_pkg_install_t {
   upd_iso_t* iso;
 
-  const uint8_t* src;
-  size_t         srclen;
+  const uint8_t* url;
+  size_t         urllen;
 
   const uint8_t* name;
   size_t         namelen;
