@@ -40,8 +40,9 @@ struct download_t_ {
   upd_iso_t*         iso;
   upd_pkg_install_t* inst;
 
-  CURL*   curl;
-  uv_file file;
+  CURL*    curl;
+  SHA1_CTX sha1;
+  uv_file  file;
 
   z_stream z;
   uv_fs_t  fsreq;
@@ -253,6 +254,11 @@ file_unstack_cb_(
 bool upd_pkg_install(upd_pkg_install_t* inst) {
   upd_iso_t* iso = inst->iso;
 
+  if (HEDLEY_UNLIKELY(inst->hashlen > SHA1_BLOCK_SIZE)) {
+    pkg_logf_(inst, "the specified hash is too long for SHA1");
+    return false;
+  }
+
   inst->pkg = NULL;
   if (HEDLEY_UNLIKELY(!pkg_new_(inst))) {
     return false;
@@ -260,9 +266,24 @@ bool upd_pkg_install(upd_pkg_install_t* inst) {
   for (size_t i = 0; i < iso->pkgs.n; ++i) {
     upd_pkg_t* pkg = iso->pkgs.p[i];
     if (HEDLEY_UNLIKELY(utf8cmp(pkg->nrpath, inst->pkg->nrpath) == 0)) {
+      const bool hash_check =
+        !inst->hashlen || pkg->trusted ||
+        utf8ncasecmp(pkg->hash, inst->hash, inst->hashlen) == 0;
+      const bool url_check = utf8cmp(pkg->url, inst->pkg->url) == 0;
+
+      if (HEDLEY_UNLIKELY(!hash_check && !url_check)) {
+        pkg_logf_(inst, "pkg name conflict");
+        return false;
+      }
+      if (HEDLEY_UNLIKELY(!hash_check)) {
+        pkg_logf_(inst, "same url but different hash");
+        return false;
+      }
       upd_free(&inst->pkg);
-      pkg_logf_(inst, "pkg name conflict");
-      return false;
+      inst->pkg   = pkg;
+      inst->state = UPD_PKG_INSTALL_DONE;
+      inst->cb(inst);
+      return true;
     }
   }
   if (HEDLEY_UNLIKELY(!upd_array_insert(&iso->pkgs, inst->pkg, SIZE_MAX))) {
@@ -417,25 +438,19 @@ static upd_pkg_t* pkg_new_(upd_pkg_install_t* inst) {
     return NULL;
   }
 
-  uint8_t npatha[UPD_PATH_MAX];
-  const size_t npathalen = cwk_path_change_extension(
-    (char*) npath, ".temp_", (char*) npatha, sizeof(npatha));
-  if (HEDLEY_UNLIKELY(sizeof(npatha) < 1+npathalen)) {
-    return NULL;
-  }
-
   const size_t namelen   = inst->namelen;
   const size_t urllen    = utf8size_lazy(url);
   const size_t nrpathlen = utf8size_lazy(nrpath);
 
   const size_t whole = sizeof(*inst->pkg) +
-    namelen+1 + urllen+1 + nrpathlen+1 + npathlen+1 + npathalen+1;
+    namelen+1 + urllen+1 + nrpathlen+1 + npathlen+1;
   if (HEDLEY_UNLIKELY(!upd_malloc(&inst->pkg, whole))) {
     return NULL;
   }
   upd_pkg_t* pkg = inst->pkg;
 
   *pkg = (upd_pkg_t) {
+    .state   = UPD_PKG_INSTALLING,
     .install = inst,
   };
   pkg->name = (uint8_t*) (pkg+1);
@@ -450,31 +465,34 @@ static upd_pkg_t* pkg_new_(upd_pkg_install_t* inst) {
 
   pkg->npath = pkg->nrpath + nrpathlen+1;
   utf8cpy(pkg->npath, npath);
-
-  pkg->npath_archive = pkg->npath + npathlen+1;
-  utf8cpy(pkg->npath_archive, npatha);
   return pkg;
 }
 
 static void pkg_finalize_install_(upd_pkg_install_t* inst, bool ok) {
   upd_iso_t* iso = inst->iso;
-  inst->pkg->install = NULL;
+  upd_pkg_t* pkg = inst->pkg;
+
+  pkg->install = NULL;
 
   if (HEDLEY_LIKELY(ok)) {
     inst->state = UPD_PKG_INSTALL_DONE;
+    pkg->state  = UPD_PKG_INSTALLED;
 
   } else {
     inst->state = UPD_PKG_INSTALL_ABORTED;
+    pkg->state  = UPD_PKG_BROKEN;
 
-    const bool rmdir = rmdir_with_dup_(&(rmdir_t_) {
-        .iso = iso,
-        .cb  = pkg_rmdir_cb_,
-      }, inst->pkg->npath);
-    if (HEDLEY_UNLIKELY(!rmdir)) {
-      pkg_logf_(inst,
-        "the broken pkg remaining on native filesystem because of low memory, "
-        "please delete '%s' by yourself :(", inst->pkg->npath);
-      goto EXIT;
+    if (!inst->preserve) {
+      const bool rmdir = rmdir_with_dup_(&(rmdir_t_) {
+          .iso = iso,
+          .cb  = pkg_rmdir_cb_,
+        }, inst->pkg->npath);
+      if (HEDLEY_UNLIKELY(!rmdir)) {
+        pkg_logf_(inst,
+          "the broken pkg remaining on native filesystem because of low memory, "
+          "please delete '%s' by yourself :(", inst->pkg->npath);
+        goto EXIT;
+      }
     }
   }
 
@@ -710,6 +728,7 @@ static void download_unref_(download_t_* d) {
   upd_pkg_install_t* inst = d->inst;
 
   if (HEDLEY_UNLIKELY(--d->refcnt == 0)) {
+    sha1_final(&d->sha1, inst->pkg->hash);
     upd_free(&d->recvbuf);
     upd_free(&d->tar.chunk);
     curl_easy_cleanup(d->curl);
@@ -793,6 +812,9 @@ static void pkg_mkdir_cb_(mkdir_t_* md) {
   upd_iso_unstack(iso, md);
 
   if (HEDLEY_LIKELY(exists)) {
+    pkg->trusted = true;
+
+    inst->state = UPD_PKG_INSTALL_CONFIGURE;
     const bool load = upd_config_load_with_dup(&(upd_config_load_t) {
         .iso   = iso,
         .path  = pkg->npath,
@@ -816,6 +838,7 @@ static void pkg_mkdir_cb_(mkdir_t_* md) {
     pkg_logf_(inst, "aborting installation");
     goto ABORT;
   }
+  inst->state = UPD_PKG_INSTALL_DOWNLOAD;
 
   download_t_* d = upd_iso_stack(iso, sizeof(*d));
   if (HEDLEY_UNLIKELY(d == NULL)) {
@@ -861,6 +884,7 @@ static void pkg_mkdir_cb_(mkdir_t_* md) {
     pkg_logf_(inst, "zlib stream init failure");
     goto ABORT;
   }
+  sha1_init(&d->sha1);
 
   const bool setopt =
     !curl_easy_setopt(curl, CURLOPT_NOPROGRESS, true) &&
@@ -887,6 +911,7 @@ ABORT:
 
 static void pkg_download_cb_(download_t_* d) {
   upd_pkg_install_t* inst = d->inst;
+  upd_pkg_t*         pkg  = inst->pkg;
   upd_iso_t*         iso  = inst->iso;
 
   const bool downloaded = d->ok;
@@ -901,6 +926,22 @@ static void pkg_download_cb_(download_t_* d) {
     goto ABORT;
   }
 
+  uint8_t s[SHA1_BLOCK_SIZE*2+1];
+  s[sizeof(s)-1] = 0;
+  for (size_t i = 0; i < SHA1_BLOCK_SIZE; ++i) {
+    static const char* chars = "0123456789ABCDEF";
+    s[i*2+0] = chars[pkg->hash[i] >> 4];
+    s[i*2+1] = chars[pkg->hash[i] & 0x0F];
+  }
+  const bool hash_check =
+    !inst->hashlen || utf8ncasecmp(s, inst->hash, inst->hashlen) == 0;
+  if (HEDLEY_UNLIKELY(!hash_check)) {
+    pkg_logf_(inst, "hash unmatch X/ #%s", s);
+    goto ABORT;
+  }
+  pkg_logf_(inst, "download completed :D #%s", s);
+
+  inst->state = UPD_PKG_INSTALL_CONFIGURE;
   const bool load = upd_config_load_with_dup(&(upd_config_load_t) {
       .iso   = iso,
       .path  = inst->pkg->npath,
@@ -909,7 +950,7 @@ static void pkg_download_cb_(download_t_* d) {
     });
   if (HEDLEY_UNLIKELY(!load)) {
     pkg_logf_(inst, "failed to configure new pkg");
-    pkg_finalize_install_(inst, false);
+    goto ABORT;
   }
   return;
 
@@ -975,11 +1016,13 @@ static size_t download_recv_cb_(
   z_stream*          z    = &d->z;
 
   const size_t realsize = size * nmemb;
-  if (HEDLEY_UNLIKELY(realsize == 0)) {
+  if (HEDLEY_UNLIKELY(realsize == 0 || inst->abort)) {
     return 0;
   }
-  if (HEDLEY_UNLIKELY(inst->abort || d->stream_end)) {
-    return 0;
+  sha1_update(&d->sha1, data, realsize);
+
+  if (HEDLEY_UNLIKELY(d->stream_end)) {
+    return realsize;
   }
 
   if (HEDLEY_UNLIKELY(curl_easy_pause(d->curl, CURLPAUSE_RECV))) {
