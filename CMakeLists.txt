@@ -125,21 +125,3 @@ target_link_libraries(extdrv-hello
   PRIVATE
     libupd
 )
-
-
-# ---- test app ----
-if(BUILD_TESTING)
-  add_executable(updtest)
-  target_link_libraries(updtest
-    PRIVATE
-      updcore
-  )
-  target_sources(updtest
-    PRIVATE
-      src/test.c
-  )
-  add_test(
-    NAME    updtest
-    COMMAND $<TARGET_FILE:updtest>
-  )
-endif()
