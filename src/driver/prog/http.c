@@ -135,7 +135,7 @@ stream_output_http_error_(
 static
 void
 req_pathfind_cb_(
-  upd_req_pathfind_t* pf);
+  upd_pathfind_t* pf);
 
 static
 void
@@ -401,7 +401,7 @@ static bool stream_parse_req_(http_t_* ctx, upd_req_t* req) {
   }
 
   upd_file_ref(ctx->file);
-  const bool pathfind = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
+  const bool pathfind = upd_pathfind_with_dup(&(upd_pathfind_t) {
       .iso   = ctx->file->iso,
       .path  = hreq->path,
       .len   = hreq->path_len,
@@ -451,7 +451,7 @@ static bool stream_output_http_error_(
 }
 
 
-static void req_pathfind_cb_(upd_req_pathfind_t* pf) {
+static void req_pathfind_cb_(upd_pathfind_t* pf) {
   req_t_*  req = pf->udata;
   http_t_* ctx = req->ctx;
 

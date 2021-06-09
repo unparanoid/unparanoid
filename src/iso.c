@@ -49,7 +49,7 @@ curl_check_(
 static
 void
 iso_create_dir_cb_(
-  upd_req_pathfind_t* pf);
+  upd_pathfind_t* pf);
 
 static
 void
@@ -324,7 +324,7 @@ static bool iso_get_paths_(upd_iso_t* iso) {
 
 
 static void iso_create_dir_(upd_iso_t* iso, const char* path) {
-  const bool ok = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
+  const bool ok = upd_pathfind_with_dup(&(upd_pathfind_t) {
       .iso    = iso,
       .path   = (uint8_t*) path,
       .len    = utf8size_lazy(path),
@@ -393,7 +393,7 @@ static void curl_check_(upd_iso_t* iso) {
 }
 
 
-static void iso_create_dir_cb_(upd_req_pathfind_t* pf) {
+static void iso_create_dir_cb_(upd_pathfind_t* pf) {
   upd_iso_t* iso = pf->base->iso;
 
   const upd_file_t* f = pf->len? NULL: pf->base;

@@ -29,7 +29,7 @@ setup_install_(
 static
 void
 setup_pathfind_cb_(
-  upd_req_pathfind_t* pf);
+  upd_pathfind_t* pf);
 
 static
 void
@@ -61,7 +61,7 @@ void upd_driver_setup(upd_iso_t* iso) {
   upd_driver_register(iso, &upd_driver_lua);
   upd_driver_register(iso, &upd_driver_tensor);
 
-  const bool ok = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
+  const bool ok = upd_pathfind_with_dup(&(upd_pathfind_t) {
       .iso  = iso,
       .path = (uint8_t*) "/sys",
       .len  = 4,
@@ -130,7 +130,7 @@ static void setup_install_(upd_file_t* dir, const upd_driver_t* drv) {
 }
 
 
-static void setup_pathfind_cb_(upd_req_pathfind_t* pf) {
+static void setup_pathfind_cb_(upd_pathfind_t* pf) {
   upd_iso_t* iso = pf->iso;
 
   upd_file_t* sys = pf->len? NULL: pf->base;

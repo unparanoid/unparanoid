@@ -50,14 +50,8 @@ set(IGNORE_WARNINGS ON)
 add_subdirectory(cwalk EXCLUDE_FROM_ALL)
 
 
-# ---- hedley (https://github.com/nemequ/hedley) ----
-add_library(hedley INTERFACE)
-target_include_directories(hedley SYSTEM BEFORE
-  INTERFACE hedley
-)
-target_sources(hedley
-  INTERFACE hedley/hedley.h
-)
+# ---- libupd (https://github.com/falsycat/libupd)
+add_subdirectory(libupd EXCLUDE_FROM_ALL)
 
 
 # ---- libuv (https://github.com/libuv/libuv)
@@ -150,16 +144,6 @@ target_include_directories(picohttpparser SYSTEM BEFORE
 target_sources(picohttpparser
   PRIVATE picohttpparser/picohttpparser.c
   PUBLIC  picohttpparser/picohttpparser.h
-)
-
-
-# ---- utf8.h (https://github.com/sheredom/utf8.h) ----
-add_library(utf8.h INTERFACE)
-target_include_directories(utf8.h SYSTEM BEFORE
-  INTERFACE utf8.h
-)
-target_sources(utf8.h
-  INTERFACE utf8.h/utf8.h
 )
 
 

@@ -181,7 +181,7 @@ driver_load_cb_(
 static
 void
 file_pathfind_cb_(
-  upd_req_pathfind_t* pf);
+  upd_pathfind_t* pf);
 
 static
 void
@@ -898,7 +898,7 @@ static void task_parse_file_cb_(task_t_* task) {
     }
 
     ++task->refcnt;
-    const bool pf = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
+    const bool pf = upd_pathfind_with_dup(&(upd_pathfind_t) {
         .iso    = iso,
         .path   = (uint8_t*) ftask->dir,
         .len    = ftask->dirlen,
@@ -1029,7 +1029,7 @@ static void driver_load_cb_(upd_driver_load_external_t* load) {
 }
 
 
-static void file_pathfind_cb_(upd_req_pathfind_t* pf) {
+static void file_pathfind_cb_(upd_pathfind_t* pf) {
   task_file_t_* ftask = pf->udata;
   task_t_*      task  = ftask->parent;
   ctx_t_*       ctx   = task->ctx;

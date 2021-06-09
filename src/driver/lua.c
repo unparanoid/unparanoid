@@ -81,9 +81,9 @@ typedef enum promise_type_t_ {
 
 struct promise_t_ {
   union {
-    upd_req_t          req;
-    upd_req_pathfind_t pf;
-    upd_file_lock_t*   lock;
+    upd_req_t        req;
+    upd_pathfind_t   pf;
+    upd_file_lock_t* lock;
   };
   promise_type_t_ type;
 
@@ -223,7 +223,7 @@ prog_lock_for_pathfind_cb_(
 static
 void
 prog_pathfind_cb_(
-  upd_req_pathfind_t* pf);
+  upd_pathfind_t* pf);
 
 static
 void
@@ -360,12 +360,12 @@ lua_promise_lock_cb_(
 static
 void
 lua_promise_pathfind_cb_(
-  upd_req_pathfind_t* pf);
+  upd_pathfind_t* pf);
 
 static
 void
 lua_promise_require_pathfind_cb_(
-  upd_req_pathfind_t* pf);
+  upd_pathfind_t* pf);
 
 static
 void
@@ -806,7 +806,7 @@ static void prog_lock_for_pathfind_cb_(upd_file_lock_t* lock) {
     goto ABORT;
   }
 
-  const bool pf = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
+  const bool pf = upd_pathfind_with_dup(&(upd_pathfind_t) {
       .iso   = f->iso,
       .path  = (uint8_t*) DEV_PATH_,
       .len   = utf8size_lazy(DEV_PATH_),
@@ -823,7 +823,7 @@ ABORT:
   upd_iso_unstack(iso, lock);
 }
 
-static void prog_pathfind_cb_(upd_req_pathfind_t* pf) {
+static void prog_pathfind_cb_(upd_pathfind_t* pf) {
   upd_file_lock_t* lock = pf->udata;
   upd_file_t*      f    = lock->file;
   prog_t_*         ctx  = f->ctx;
@@ -1090,7 +1090,7 @@ static int lua_lib_require_(lua_State* lua) {
 
   const int index = lua_gettop(lua);
 
-  pro->pf = (upd_req_pathfind_t) {
+  pro->pf = (upd_pathfind_t) {
     .iso   = pro->file->iso,
     .path  = (uint8_t*) (pro+1),
     .len   = len,
@@ -1099,7 +1099,7 @@ static int lua_lib_require_(lua_State* lua) {
   };
   utf8ncpy(pro+1, path, len);
 
-  upd_req_pathfind(&pro->pf);
+  upd_pathfind(&pro->pf);
   lua_pushvalue(lua, index);
   return 1;
 }
@@ -1471,13 +1471,13 @@ static int lua_req_pathfind_(lua_State* lua) {
   promise_t_* pro = lua_promise_new_(lua, len);
   pro->type = PROMISE_PATHFIND_;
 
-  pro->pf = (upd_req_pathfind_t) {
+  pro->pf = (upd_pathfind_t) {
     .iso  = iso,
     .path = utf8ncpy(pro+1, path, len),
     .len  = len,
     .cb   = lua_promise_pathfind_cb_,
   };
-  upd_req_pathfind(&pro->pf);
+  upd_pathfind(&pro->pf);
   return 1;
 }
 static upd_file_t* lua_req_get_first_arg_(lua_State* lua, bool ex) {
@@ -1967,7 +1967,7 @@ static void lua_promise_lock_cb_(upd_file_lock_t* k) {
   lua_promise_finalize_(pro, k->ok);
 }
 
-static void lua_promise_pathfind_cb_(upd_req_pathfind_t* pf) {
+static void lua_promise_pathfind_cb_(upd_pathfind_t* pf) {
   promise_t_* pro = (void*) pf;
   upd_file_t* stf = pro->file;
   stream_t_*  ctx = stf->ctx;
@@ -1991,7 +1991,7 @@ static void lua_promise_pathfind_cb_(upd_req_pathfind_t* pf) {
   lua_promise_finalize_(pro, true);
 }
 
-static void lua_promise_require_pathfind_cb_(upd_req_pathfind_t* pf) {
+static void lua_promise_require_pathfind_cb_(upd_pathfind_t* pf) {
   promise_t_* pro = (void*) pf;
   upd_file_t* stf = pro->file;
 

@@ -31,34 +31,28 @@ endif()
 
 
 # ---- core library ----
-add_library(libupd)
-set_target_properties(libupd
+add_library(updcore)
+set_target_properties(updcore
   PROPERTIES
-    PREFIX     ""
     C_STANDARD 11
 )
-target_compile_options(libupd
+target_compile_options(updcore
   PUBLIC ${UPD_C_FLAGS}
 )
-target_compile_definitions(libupd
+target_compile_definitions(updcore
   PUBLIC
     UPD_USE_VALGRIND=$<BOOL:${VALGRIND_FOUND}>
 )
-target_include_directories(libupd SYSTEM
+target_include_directories(updcore SYSTEM
   PUBLIC
     "${VALGRIND_INCLUDE_DIRS}"
-    .
 )
-target_include_directories(libupd
+target_include_directories(updcore
   PUBLIC
     src
 )
-target_sources(libupd
-  PUBLIC
-    libupd.h
+target_sources(updcore
   PRIVATE
-    src/array.h
-    src/buf.h
     src/cli.c
     src/cli.h
     src/common.h
@@ -69,12 +63,8 @@ target_sources(libupd
     src/file.c
     src/file.h
     src/iso.c
-    src/memory.h
-    src/path.h
     src/pkg.c
     src/pkg.h
-    src/req.c
-    src/req.h
     src/srv.c
     src/srv.h
 
@@ -86,12 +76,13 @@ target_sources(libupd
 
     src/driver/prog/http.c
 )
-target_link_libraries(libupd
+target_link_libraries(updcore
   PUBLIC
     crypto-algorithms
     cwalk
     hedley
     libcurl
+    libupd
     libuv
     libyaml
     luajit
@@ -107,7 +98,7 @@ target_link_libraries(libupd
 add_executable(upd)
 target_link_libraries(upd
   PRIVATE
-    libupd
+    updcore
 )
 target_sources(upd
   PRIVATE
@@ -129,7 +120,10 @@ target_compile_options(extdrv-hello
 target_sources(extdrv-hello
   PRIVATE
     hello.c
-    libupd.h
+)
+target_link_libraries(extdrv-hello
+  PRIVATE
+    libupd
 )
 
 
@@ -138,7 +132,7 @@ if(BUILD_TESTING)
   add_executable(updtest)
   target_link_libraries(updtest
     PRIVATE
-      libupd
+      updcore
   )
   target_sources(updtest
     PRIVATE

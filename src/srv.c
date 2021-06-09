@@ -36,7 +36,7 @@ srv_close_cb_(
 static
 void
 srv_build_pathfind_prog_cb_(
-  upd_req_pathfind_t* pf);
+  upd_pathfind_t* pf);
 
 static
 void
@@ -51,7 +51,7 @@ srv_build_access_cb_(
 static
 void
 srv_build_pathfind_dir_cb_(
-  upd_req_pathfind_t* pf);
+  upd_pathfind_t* pf);
 
 
 void upd_srv_delete(upd_srv_t* srv) {
@@ -66,7 +66,7 @@ void upd_srv_delete(upd_srv_t* srv) {
 
 bool upd_srv_build(upd_srv_build_t* b) {
   b->srv = NULL;
-  const bool pf = upd_req_pathfind_with_dup(&(upd_req_pathfind_t) {
+  const bool pf = upd_pathfind_with_dup(&(upd_pathfind_t) {
       .iso   = b->iso,
       .path  = (uint8_t*) b->path,
       .len   = b->pathlen,
@@ -143,7 +143,7 @@ static void srv_close_cb_(uv_handle_t* handle) {
 }
 
 
-static void srv_build_pathfind_prog_cb_(upd_req_pathfind_t* pf) {
+static void srv_build_pathfind_prog_cb_(upd_pathfind_t* pf) {
   upd_srv_build_t* b   = pf->udata;
   upd_iso_t*       iso = b->iso;
 
@@ -227,12 +227,12 @@ static void srv_build_access_cb_(upd_req_t* req) {
 
   const size_t len = cwk_path_join(SRV_PATH_, (char*) name, NULL, 0);
 
-  upd_req_pathfind_t* pf = upd_iso_stack(iso, sizeof(*pf)+len+1);
+  upd_pathfind_t* pf = upd_iso_stack(iso, sizeof(*pf)+len+1);
   if (HEDLEY_UNLIKELY(pf == NULL)) {
     build_logf_(b, "pathfind req allocation failure");
     goto ABORT;
   }
-  *pf = (upd_req_pathfind_t) {
+  *pf = (upd_pathfind_t) {
     .iso    = b->iso,
     .path   = (uint8_t*) (pf+1),
     .len    = len,
@@ -241,7 +241,7 @@ static void srv_build_access_cb_(upd_req_t* req) {
     .cb     = srv_build_pathfind_dir_cb_,
   };
   cwk_path_join(SRV_PATH_, (char*) name, (char*) pf->path, len+1);
-  upd_req_pathfind(pf);
+  upd_pathfind(pf);
   return;
 
 ABORT:
@@ -249,7 +249,7 @@ ABORT:
   b->cb(b);
 }
 
-static void srv_build_pathfind_dir_cb_(upd_req_pathfind_t* pf) {
+static void srv_build_pathfind_dir_cb_(upd_pathfind_t* pf) {
   upd_srv_build_t* b   = pf->udata;
   upd_iso_t*       iso = pf->iso;
 

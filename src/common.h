@@ -35,12 +35,11 @@
 #include <libupd.h>
 #undef UPD_DECL_FUNC
 
-
-#include "memory.h"
-
-#include "array.h"
-#include "buf.h"
-#include "path.h"
+#include <libupd/array.h>
+#include <libupd/buf.h>
+#include <libupd/memory.h>
+#include <libupd/path.h>
+#include <libupd/pathfind.h>
 
 
 typedef struct upd_cli_t upd_cli_t;
@@ -58,5 +57,4 @@ typedef struct upd_srv_t upd_srv_t;
 #include "driver.h"
 #include "file.h"
 #include "pkg.h"
-#include "req.h"
 #include "srv.h"
