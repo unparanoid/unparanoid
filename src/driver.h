@@ -64,6 +64,21 @@ upd_driver_syncdir_set_rules(
 
 
 HEDLEY_NON_NULL(1, 2)
+HEDLEY_WARN_UNUSED_RESULT
+static inline
+bool
+upd_driver_register(
+  upd_iso_t*          iso,
+  const upd_driver_t* driver);
+
+HEDLEY_NON_NULL(1)
+static inline
+const upd_driver_t*
+upd_driver_select(
+  const upd_array_of(upd_driver_rule_t*)* rules,
+  const uint8_t*                          path);
+
+
 static inline bool upd_driver_register(
     upd_iso_t* iso, const upd_driver_t* driver) {
   const size_t len = utf8size_lazy(driver->name);
@@ -78,7 +93,6 @@ static inline bool upd_driver_register(
   return true;
 }
 
-HEDLEY_NON_NULL(1)
 static inline const upd_driver_t* upd_driver_lookup(
     upd_iso_t* iso, const uint8_t* name, size_t len) {
   for (size_t i = 0; i < iso->drivers.n; ++i) {
@@ -90,7 +104,6 @@ static inline const upd_driver_t* upd_driver_lookup(
   return NULL;
 }
 
-HEDLEY_NON_NULL(1)
 static inline const upd_driver_t* upd_driver_select(
     const upd_array_of(upd_driver_rule_t*)* rules,
     const uint8_t*                          path) {

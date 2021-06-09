@@ -43,21 +43,25 @@ void
 upd_file_delete(
   upd_file_t* f);
 
+HEDLEY_NON_NULL(1)
+HEDLEY_WARN_UNUSED_RESULT
+static inline
+bool
+upd_file_try_lock(
+  upd_file_lock_t* lock);
 
-HEDLEY_NON_NULL(1, 2)
+
 static inline upd_file_t* upd_file_new(
     upd_iso_t* iso, const upd_driver_t* driver) {
   return upd_file_new_from_npath(iso, driver, NULL, 0);
 }
 
-HEDLEY_NON_NULL(1)
 static inline upd_file_t* upd_file_new_from_driver_name(
     upd_iso_t* iso, const uint8_t* name, size_t len) {
   const upd_driver_t* d = upd_driver_lookup(iso, name, len);
   return d? upd_file_new(iso, d): NULL;
 }
 
-HEDLEY_NON_NULL(1)
 static inline upd_file_t* upd_file_get(upd_iso_t* iso, upd_file_id_t id) {
   upd_file_t** f = (upd_file_t**) iso->files.p;
 
@@ -78,12 +82,10 @@ static inline upd_file_t* upd_file_get(upd_iso_t* iso, upd_file_id_t id) {
 }
 
 
-HEDLEY_NON_NULL(1)
 static inline void upd_file_ref(upd_file_t* f) {
   ++f->refcnt;
 }
 
-HEDLEY_NON_NULL(1)
 static inline bool upd_file_unref(upd_file_t* f) {
   assert(f->refcnt);
   if (HEDLEY_UNLIKELY(!--f->refcnt)) {
@@ -94,8 +96,6 @@ static inline bool upd_file_unref(upd_file_t* f) {
 }
 
 
-HEDLEY_NON_NULL(1)
-HEDLEY_WARN_UNUSED_RESULT
 static inline bool upd_file_watch(upd_file_watch_t* w) {
   upd_file_t_* f = (void*) w->file;
   if (HEDLEY_UNLIKELY(!upd_array_insert(&f->watch, w, SIZE_MAX))) {
@@ -104,13 +104,11 @@ static inline bool upd_file_watch(upd_file_watch_t* w) {
   return true;
 }
 
-HEDLEY_NON_NULL(1)
 static inline void upd_file_unwatch(upd_file_watch_t* w) {
   upd_file_t_* f = (void*) w->file;
   upd_array_find_and_remove(&f->watch, w);
 }
 
-HEDLEY_NON_NULL(1)
 static inline void upd_file_trigger(upd_file_t* f, upd_file_event_t e) {
   switch (e) {
   case UPD_FILE_UPDATE:
@@ -126,7 +124,6 @@ static inline void upd_file_trigger(upd_file_t* f, upd_file_event_t e) {
   }
 }
 
-HEDLEY_NON_NULL(1)
 static inline bool upd_file_trigger_async(upd_file_t* f) {
   upd_file_t_* f_ = (void*) f;
   assert(f_->async);
@@ -143,7 +140,6 @@ static inline void upd_file_trigger_timer_cb_(uv_timer_t* timer) {
     upd_file_trigger(f, UPD_FILE_TIMER);
   }
 }
-HEDLEY_NON_NULL(1)
 static inline bool upd_file_trigger_timer(upd_file_t* f, uint64_t dur) {
   upd_file_t_* f_ = (void*) f;
 
@@ -156,8 +152,6 @@ static inline bool upd_file_trigger_timer(upd_file_t* f, uint64_t dur) {
 }
 
 
-HEDLEY_NON_NULL(1)
-HEDLEY_WARN_UNUSED_RESULT
 static inline bool upd_file_try_lock(upd_file_lock_t* l) {
   upd_file_t_* f = (void*) l->file;
 
@@ -179,8 +173,6 @@ static inline bool upd_file_try_lock(upd_file_lock_t* l) {
   return true;
 }
 
-HEDLEY_NON_NULL(1)
-HEDLEY_WARN_UNUSED_RESULT
 static inline bool upd_file_lock(upd_file_lock_t* l) {
   upd_file_t_* f = (void*) l->file;
 
@@ -200,23 +192,6 @@ static inline bool upd_file_lock(upd_file_lock_t* l) {
   return true;
 }
 
-HEDLEY_NON_NULL(1)
-HEDLEY_WARN_UNUSED_RESULT
-static inline upd_file_lock_t* upd_file_lock_with_dup(
-    const upd_file_lock_t* l) {
-  upd_file_lock_t* k = upd_iso_stack(l->file->iso, sizeof(*k));
-  if (HEDLEY_UNLIKELY(k == NULL)) {
-    return NULL;
-  }
-  *k = *l;
-  if (HEDLEY_UNLIKELY(!upd_file_lock(k))) {
-    upd_iso_unstack(l->file->iso, k);
-    return NULL;
-  }
-  return k;
-}
-
-HEDLEY_NON_NULL(1)
 static inline void upd_file_unlock(upd_file_lock_t* l) {
   upd_file_t_* f = (void*) l->file;
 

@@ -55,11 +55,16 @@ load_work_after_cb_(
 
 
 void upd_driver_setup(upd_iso_t* iso) {
-  upd_driver_register(iso, &upd_driver_bin_r);
-  upd_driver_register(iso, &upd_driver_bin_rw);
-  upd_driver_register(iso, &upd_driver_bin_w);
-  upd_driver_register(iso, &upd_driver_lua);
-  upd_driver_register(iso, &upd_driver_tensor);
+  const bool reg =
+    upd_driver_register(iso, &upd_driver_bin_r) &&
+    upd_driver_register(iso, &upd_driver_bin_rw) &&
+    upd_driver_register(iso, &upd_driver_bin_w) &&
+    upd_driver_register(iso, &upd_driver_lua) &&
+    upd_driver_register(iso, &upd_driver_tensor);
+  if (HEDLEY_UNLIKELY(!reg)) {
+    upd_iso_msgf(iso, "system driver registration failure\n");
+    return;
+  }
 
   const bool ok = upd_pathfind_with_dup(&(upd_pathfind_t) {
       .iso  = iso,
@@ -238,7 +243,9 @@ static void load_work_after_cb_(uv_work_t* w, int status) {
 
   extdrv->host = &host_;
   for (const upd_driver_t** d = extdrv->drivers; *d; ++d) {
-    upd_driver_register(iso, *d);
+    if (HEDLEY_UNLIKELY(!upd_driver_register(iso, *d))) {
+      upd_iso_msgf(iso, "registration failure: %s\n", (*d)->name);
+    }
   }
   load->ok = true;
   goto EXIT;

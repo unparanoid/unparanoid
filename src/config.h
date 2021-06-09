@@ -22,8 +22,13 @@ bool
 upd_config_load(
   upd_config_load_t* load);
 
-
 HEDLEY_NON_NULL(1)
+static inline
+bool
+upd_config_load_with_dup(
+  const upd_config_load_t* src);
+
+
 static inline bool upd_config_load_with_dup(const upd_config_load_t* src) {
   upd_iso_t* iso = src->iso;
 
