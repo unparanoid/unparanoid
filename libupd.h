@@ -4,11 +4,11 @@
 #include <stdint.h>
 
 
-#if !defined(UPD_EXTERNAL_DRIVER) && defined(UPD_EXTERNAL_DRIVER_IMPL)
-# define UPD_EXTERNAL_DRIVER
-#endif
-
-#if !defined(UPD_DECL_FUNC)
+#if defined(UPD_DECL_FUNC)
+#  if defined(UPD_EXTERNAL_DRIVER)
+#    error "both UPD_EXTERNAL_DRIVER and UPD_DECL_FUNC is defined"
+#  endif
+#else
 #  if defined(UPD_EXTERNAL_DRIVER)
 #    define UPD_DECL_FUNC static inline
 #  else
@@ -391,10 +391,25 @@ struct upd_req_t {
   };
 };
 
-UPD_DECL_FUNC
-bool
-upd_req(
-  upd_req_t* req);
+static inline bool upd_req(upd_req_t* req) {
+  upd_file_t* f = req->file;
+  f->last_req = upd_iso_now(f->iso);
+  return req->file->driver->handle(req);
+}
+
+static inline upd_req_t* upd_req_with_dup(const upd_req_t* src) {
+  upd_req_t* dst = upd_iso_stack(src->file->iso, sizeof(*dst));
+  if (dst == NULL) {
+    return NULL;
+  }
+  *dst = *src;
+
+  if (!upd_req(dst)) {
+    upd_iso_unstack(src->file->iso, dst);
+    return NULL;
+  }
+  return dst;
+}
 
 
 /* ---- TENSOR TYPE ---- */
@@ -447,8 +462,6 @@ typedef struct upd_host_t {
     void (*unlock)(upd_file_lock_t* k);
   } file;
 
-  bool (*req)(upd_req_t* req);
-
 # define UPD_HOST_INSTANCE {  \
     .iso = {  \
       .stack        = upd_iso_stack,  \
@@ -474,7 +487,6 @@ typedef struct upd_host_t {
       .lock          = upd_file_lock,  \
       .unlock        = upd_file_unlock,  \
     },  \
-    .req = upd_req,  \
   }
 } upd_host_t;
 
@@ -545,8 +557,5 @@ static inline bool upd_file_lock(upd_file_lock_t* k) {
 static inline void upd_file_unlock(upd_file_lock_t* k) {
   upd.host->file.unlock(k);
 }
-static inline bool upd_req(upd_req_t* req) {
-  return upd.host->req(req);
-}
 
-#endif  /* UPD_EXTERNAL_DRIVER_IMPL */
+#endif  /* UPD_EXTERNAL_DRIVER */
