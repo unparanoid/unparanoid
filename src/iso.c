@@ -296,13 +296,29 @@ bool upd_iso_curl_perform(
 
 
 static bool iso_get_paths_(upd_iso_t* iso) {
-  size_t len = UPD_PATH_MAX;
-  const bool exepath = 0 <= uv_exepath((char*) iso->path.runtime, &len);
-  if (HEDLEY_UNLIKELY(!exepath || len >= UPD_PATH_MAX)) {
+  uint8_t cwd[UPD_PATH_MAX];
+  size_t  cwdlen = UPD_PATH_MAX;
+  if (HEDLEY_UNLIKELY(0 > uv_cwd((char*) cwd, &cwdlen))) {
     return false;
   }
-  cwk_path_get_dirname((char*) iso->path.runtime, &len);
-  iso->path.runtime[len] = 0;
+
+  const char* env = getenv("UPD_RUNTIME_PATH");
+  if (HEDLEY_UNLIKELY(env && env[0])) {
+    const size_t len = cwk_path_get_absolute(
+      (char*) cwd, env, (char*) iso->path.runtime, UPD_PATH_MAX);
+    if (HEDLEY_UNLIKELY(len >= UPD_PATH_MAX)) {
+      return false;
+    }
+
+  } else {
+    size_t len = UPD_PATH_MAX;
+    const bool exepath = 0 <= uv_exepath((char*) iso->path.runtime, &len);
+    if (HEDLEY_UNLIKELY(!exepath || len >= UPD_PATH_MAX)) {
+      return false;
+    }
+    cwk_path_get_dirname((char*) iso->path.runtime, &len);
+    iso->path.runtime[len] = 0;
+  }
   cwk_path_normalize(
     (char*) iso->path.runtime, (char*) iso->path.runtime, UPD_PATH_MAX);
 
@@ -312,10 +328,15 @@ static bool iso_get_paths_(upd_iso_t* iso) {
     return false;
   }
 
-  len = UPD_PATH_MAX;
-  const bool cwd = 0 <= uv_cwd((char*) iso->path.working, &len);
-  if (HEDLEY_UNLIKELY(!cwd || len >= UPD_PATH_MAX)) {
-    return false;
+  env = getenv("UPD_WORKING_PATH");
+  if (HEDLEY_UNLIKELY(env && env[0])) {
+    const size_t len = cwk_path_get_absolute(
+      (char*) cwd, env, (char*) iso->path.working, UPD_PATH_MAX);
+    if (HEDLEY_UNLIKELY(len >= UPD_PATH_MAX)) {
+      return false;
+    }
+  } else {
+    utf8cpy(iso->path.working, cwd);
   }
   cwk_path_normalize(
     (char*) iso->path.working, (char*) iso->path.working, UPD_PATH_MAX);
