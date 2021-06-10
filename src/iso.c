@@ -386,7 +386,7 @@ static void curl_check_(upd_iso_t* iso) {
         continue;
       }
       curl_multi_remove_handle(multi, curl);
-      ctx->cb(curl, ctx->udata);
+      ctx->cb(curl, msg->data.result, ctx->udata);
       upd_iso_unstack(ctx->iso, ctx);
     }
   }

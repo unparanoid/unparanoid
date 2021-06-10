@@ -96,8 +96,9 @@ upd_iso_start_destroyer(
 typedef
 void
 (*upd_iso_curl_cb_t)(
-  CURL* curl,
-  void* udata);
+  CURL*    curl,
+  CURLcode status,
+  void*    udata);
 
 HEDLEY_NON_NULL(1, 2)
 bool
