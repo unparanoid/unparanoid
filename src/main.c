@@ -30,9 +30,10 @@ int main(int argc, char** argv) {
 
     upd_iso_msgf(iso, "building isolated machine...\n");
     const bool config = upd_config_load_with_dup(&(upd_config_load_t) {
-        .iso = iso,
-        .path = iso->path.working,
-        .cb   = config_load_cb_,
+        .iso   = iso,
+        .path  = iso->path.working,
+        .feats = UPD_CONFIG_FULL,
+        .cb    = config_load_cb_,
       });
     if (HEDLEY_UNLIKELY(!config)) {
       fprintf(stderr, "configuration failure\n");

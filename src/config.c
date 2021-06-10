@@ -638,11 +638,15 @@ static void config_close_cb_(uv_fs_t* req) {
 
 
 static void task_parse_require_cb_(task_t_* task) {
-  ctx_t_*          ctx = task->ctx;
-  yaml_document_t* doc = &ctx->doc;
+  ctx_t_*          ctx  = task->ctx;
+  yaml_document_t* doc  = &ctx->doc;
+  yaml_node_t*     node = task->node;
 
-  yaml_node_t* node = task->node;
   if (HEDLEY_UNLIKELY(node == NULL)) {
+    goto EXIT;
+  }
+  if (HEDLEY_UNLIKELY(!(ctx->load->feats & UPD_CONFIG_REQUIRE))) {
+    config_lognf_(ctx, node, "'require' block is not allowed in this context");
     goto EXIT;
   }
   if (HEDLEY_UNLIKELY(node->type != YAML_SEQUENCE_NODE)) {
@@ -746,12 +750,16 @@ EXIT:
 }
 
 static void task_parse_import_cb_(task_t_* task) {
-  ctx_t_*          ctx = task->ctx;
-  upd_iso_t*       iso = ctx->iso;
-  yaml_document_t* doc = &ctx->doc;
+  ctx_t_*          ctx  = task->ctx;
+  upd_iso_t*       iso  = ctx->iso;
+  yaml_document_t* doc  = &ctx->doc;
+  yaml_node_t*     node = task->node;
 
-  yaml_node_t* node = task->node;
   if (HEDLEY_UNLIKELY(node == NULL)) {
+    goto EXIT;
+  }
+  if (HEDLEY_UNLIKELY(!(ctx->load->feats & UPD_CONFIG_IMPORT))) {
+    config_lognf_(ctx, node, "'import' block is not allowed in this context");
     goto EXIT;
   }
   if (HEDLEY_UNLIKELY(node->type != YAML_SEQUENCE_NODE)) {
@@ -794,6 +802,7 @@ static void task_parse_import_cb_(task_t_* task) {
     const bool load = upd_config_load_with_dup(&(upd_config_load_t) {
         .iso   = iso,
         .path  = path,
+        .feats = UPD_CONFIG_IMPORTED,
         .udata = task,
         .cb    = import_load_cb_,
       });
@@ -809,12 +818,16 @@ EXIT:
 }
 
 static void task_parse_driver_cb_(task_t_* task) {
-  ctx_t_*          ctx = task->ctx;
-  upd_iso_t*       iso = ctx->iso;
-  yaml_document_t* doc = &ctx->doc;
+  ctx_t_*          ctx  = task->ctx;
+  upd_iso_t*       iso  = ctx->iso;
+  yaml_document_t* doc  = &ctx->doc;
+  yaml_node_t*     node = task->node;
 
-  yaml_node_t* node = task->node;
   if (HEDLEY_UNLIKELY(node == NULL)) {
+    goto EXIT;
+  }
+  if (HEDLEY_UNLIKELY(!(ctx->load->feats & UPD_CONFIG_DRIVER))) {
+    config_lognf_(ctx, node, "'driver' block is not allowed in this context");
     goto EXIT;
   }
   if (HEDLEY_UNLIKELY(node->type != YAML_SEQUENCE_NODE)) {
@@ -883,12 +896,16 @@ EXIT:
 }
 
 static void task_parse_file_cb_(task_t_* task) {
-  ctx_t_*          ctx = task->ctx;
-  upd_iso_t*       iso = ctx->iso;
-  yaml_document_t* doc = &ctx->doc;
+  ctx_t_*          ctx  = task->ctx;
+  upd_iso_t*       iso  = ctx->iso;
+  yaml_document_t* doc  = &ctx->doc;
+  yaml_node_t*     node = task->node;
 
-  yaml_node_t* node = task->node;
   if (HEDLEY_UNLIKELY(node == NULL)) {
+    goto EXIT;
+  }
+  if (HEDLEY_UNLIKELY(!(ctx->load->feats & UPD_CONFIG_FILE))) {
+    config_lognf_(ctx, node, "'file' block is not allowed in this context");
     goto EXIT;
   }
   if (HEDLEY_UNLIKELY(node->type != YAML_MAPPING_NODE)) {
@@ -999,12 +1016,16 @@ EXIT:
 }
 
 static void task_parse_server_cb_(task_t_* task) {
-  ctx_t_*          ctx = task->ctx;
-  upd_iso_t* iso = ctx->iso;
-  yaml_document_t* doc = &ctx->doc;
+  ctx_t_*          ctx  = task->ctx;
+  upd_iso_t*       iso  = ctx->iso;
+  yaml_document_t* doc  = &ctx->doc;
+  yaml_node_t*     node = task->node;
 
-  yaml_node_t* node = task->node;
   if (HEDLEY_UNLIKELY(node == NULL)) {
+    goto EXIT;
+  }
+  if (HEDLEY_UNLIKELY(!(ctx->load->feats & UPD_CONFIG_SERVER))) {
+    config_lognf_(ctx, node, "'server' block is not allowed in this context");
     goto EXIT;
   }
   if (HEDLEY_UNLIKELY(node->type != YAML_MAPPING_NODE)) {
