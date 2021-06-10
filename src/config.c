@@ -152,6 +152,11 @@ task_parse_require_cb_(
 
 static
 void
+task_parse_import_cb_(
+  task_t_* task);
+
+static
+void
 task_parse_driver_cb_(
   task_t_* task);
 
@@ -170,6 +175,12 @@ static
 void
 pkg_install_cb_(
   upd_pkg_install_t* inst);
+
+
+static
+void
+import_load_cb_(
+  upd_config_load_t* load);
 
 
 static
@@ -568,6 +579,12 @@ static void config_read_cb_(uv_fs_t* req) {
           .node = val,
           .cb   = task_parse_require_cb_,
         });
+    } else if (match_("import")) {
+      q = task_queue_with_dup_(&(task_t_) {
+          .ctx  = ctx,
+          .node = val,
+          .cb   = task_parse_import_cb_,
+        });
     } else if (match_("driver")) {
       q = task_queue_with_dup_(&(task_t_) {
           .ctx  = ctx,
@@ -721,6 +738,69 @@ static void task_parse_require_cb_(task_t_* task) {
         config_lognf_(ctx, val, "pkg install failure");
         continue;
       }
+    }
+  }
+
+EXIT:
+  task_unref_(task);
+}
+
+static void task_parse_import_cb_(task_t_* task) {
+  ctx_t_*          ctx = task->ctx;
+  upd_iso_t*       iso = ctx->iso;
+  yaml_document_t* doc = &ctx->doc;
+
+  yaml_node_t* node = task->node;
+  if (HEDLEY_UNLIKELY(node == NULL)) {
+    goto EXIT;
+  }
+  if (HEDLEY_UNLIKELY(node->type != YAML_SEQUENCE_NODE)) {
+    config_lognf_(ctx, node, "'import' block must be sequence node");
+    goto EXIT;
+  }
+
+  yaml_node_item_t* itr = node->data.sequence.items.start;
+  yaml_node_item_t* end = node->data.sequence.items.top;
+  for (; itr < end; ++itr) {
+    yaml_node_t* val = yaml_document_get_node(doc, *itr);
+    if (HEDLEY_UNLIKELY(val == NULL)) {
+      config_lognf_(ctx, node, "null item found");
+      continue;
+    }
+    if (HEDLEY_UNLIKELY(val->type != YAML_SCALAR_NODE)) {
+      config_lognf_(ctx, val, "expected scalar");
+      continue;
+    }
+    const uint8_t* v    = val->data.scalar.value;
+    const size_t   vlen = val->data.scalar.length;
+    if (HEDLEY_UNLIKELY(vlen >= UPD_PATH_MAX)) {
+      config_lognf_(ctx, val, "too long path");
+      continue;
+    }
+
+    uint8_t vtemp[UPD_PATH_MAX];
+    utf8ncpy(vtemp, v, vlen);
+    vtemp[vlen] = 0;
+
+    uint8_t path[UPD_PATH_MAX];
+    const size_t pathlen = cwk_path_get_absolute(
+      (char*) ctx->path, (char*) vtemp, (char*) path, UPD_PATH_MAX);
+    if (HEDLEY_UNLIKELY(pathlen >= UPD_PATH_MAX)) {
+      config_lognf_(ctx, val, "too long path");
+      continue;
+    }
+
+    ++task->refcnt;
+    const bool load = upd_config_load_with_dup(&(upd_config_load_t) {
+        .iso   = iso,
+        .path  = path,
+        .udata = task,
+        .cb    = import_load_cb_,
+      });
+    if (HEDLEY_UNLIKELY(!load)) {
+      config_lognf_(ctx, val, "config loader context allocation failure");
+      task_unref_(task);
+      continue;
     }
   }
 
@@ -1012,6 +1092,16 @@ static void pkg_install_cb_(upd_pkg_install_t* inst) {
       "failed to install %.*s", (int) inst->namelen, inst->name);
   }
   upd_iso_unstack(iso, inst);
+  task_unref_(task);
+}
+
+
+static void import_load_cb_(upd_config_load_t* load) {
+  task_t_*   task = load->udata;
+  ctx_t_*    ctx  = task->ctx;
+  upd_iso_t* iso  = ctx->iso;
+  upd_iso_unstack(iso, load);
+
   task_unref_(task);
 }
 
