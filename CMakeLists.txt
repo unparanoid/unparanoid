@@ -70,11 +70,8 @@ target_sources(updcore
 
     src/driver/bin.c
     src/driver/dir.c
-    src/driver/lua.c
     src/driver/syncdir.c
     src/driver/tensor.c
-
-    src/driver/prog/http.c
 )
 target_link_libraries(updcore
   PUBLIC
@@ -85,9 +82,7 @@ target_link_libraries(updcore
     libupd
     libuv
     libyaml
-    luajit
     mimetype.h
-    picohttpparser
     utf8.h
     wsock.h
     zlib_

@@ -14,20 +14,6 @@ static const upd_host_t host_ = UPD_HOST_INSTANCE;
 
 static
 void
-setup_install_(
-  upd_file_t*         dir,
-  const upd_driver_t* drv);
-
-
-static
-void
-setup_install_(
-  upd_file_t*         dir,
-  const upd_driver_t* drv);
-
-
-static
-void
 setup_pathfind_cb_(
   upd_pathfind_t* pf);
 
@@ -35,11 +21,6 @@ static
 void
 setup_lock_for_add_cb_(
   upd_file_lock_t* lock);
-
-static
-void
-setup_install_add_cb_(
-  upd_req_t* req);
 
 
 static
@@ -59,7 +40,6 @@ void upd_driver_setup(upd_iso_t* iso) {
     upd_driver_register(iso, &upd_driver_bin_r) &&
     upd_driver_register(iso, &upd_driver_bin_rw) &&
     upd_driver_register(iso, &upd_driver_bin_w) &&
-    upd_driver_register(iso, &upd_driver_lua) &&
     upd_driver_register(iso, &upd_driver_tensor);
   if (HEDLEY_UNLIKELY(!reg)) {
     upd_iso_msgf(iso, "system driver registration failure\n");
@@ -104,37 +84,6 @@ bool upd_driver_load_external(upd_driver_load_external_t* load) {
 }
 
 
-static void setup_install_(upd_file_t* dir, const upd_driver_t* drv) {
-  upd_iso_t* iso = dir->iso;
-
-  upd_file_t* f = upd_file_new(iso, drv);
-  if (HEDLEY_UNLIKELY(f == NULL)) {
-    upd_iso_msgf(iso,
-      "failed to create new file to install driver, '%s'\n", drv->name);
-    return;
-  }
-
-  const bool add = upd_req_with_dup(&(upd_req_t) {
-      .file = dir,
-      .type = UPD_REQ_DIR_ADD,
-      .dir  = { .entry = {
-        .file = f,
-        .name = (uint8_t*) drv->name,
-        .len  = utf8size_lazy(drv->name),
-      }, },
-      .udata = (void*) drv,
-      .cb    = setup_install_add_cb_,
-    });
-  upd_file_unref(f);
-
-  if (HEDLEY_UNLIKELY(!add)) {
-    upd_iso_msgf(iso,
-      "add request refused, while installing driver, '%s'\n", drv->name);
-    return;
-  }
-}
-
-
 static void setup_pathfind_cb_(upd_pathfind_t* pf) {
   upd_iso_t* iso = pf->iso;
 
@@ -166,25 +115,9 @@ static void setup_lock_for_add_cb_(upd_file_lock_t* lock) {
     goto EXIT;
   }
 
-  setup_install_(sys, &upd_driver_lua_dev);
-  setup_install_(sys, &upd_driver_prog_http);
-
 EXIT:
   upd_file_unlock(lock);
   upd_iso_unstack(iso, lock);
-}
-
-static void setup_install_add_cb_(upd_req_t* req) {
-  upd_iso_t*          iso = req->file->iso;
-  const upd_driver_t* drv = req->udata;
-
-  const bool ok = req->result == UPD_REQ_OK;
-  upd_iso_unstack(iso, req);
-
-  if (HEDLEY_UNLIKELY(!ok)) {
-    upd_iso_msgf(iso, "driver '%s' installation failure\n", drv->name);
-    return;
-  }
 }
 
 

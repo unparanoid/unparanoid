@@ -1,9 +1,6 @@
 [submodule "thirdparty/cwalk"]
 	path = thirdparty/cwalk
 	url = https://github.com/falsycat/cwalk
-[submodule "thirdparty/picohttpparser"]
-	path = thirdparty/picohttpparser
-	url = https://github.com/h2o/picohttpparser
 [submodule "thirdparty/wsock.h"]
 	path = thirdparty/wsock.h
 	url = https://github.com/falsycat/wsock.h
@@ -19,9 +16,6 @@
 [submodule "thirdparty/libyaml"]
 	path = thirdparty/libyaml
 	url = https://github.com/yaml/libyaml
-[submodule "thirdparty/LuaJIT"]
-	path = thirdparty/luajit
-	url = https://github.com/LuaJIT/LuaJIT
 [submodule "thirdparty/curl"]
 	path = thirdparty/curl
 	url = https://github.com/curl/curl
