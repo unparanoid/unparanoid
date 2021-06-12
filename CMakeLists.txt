@@ -99,24 +99,3 @@ target_sources(upd
   PRIVATE
     src/main.c
 )
-
-
-# ---- external driver example ----
-add_library(extdrv-hello SHARED)
-set_target_properties(extdrv-hello
-  PROPERTIES
-    PREFIX      ""
-    OUTPUT_NAME hello.x86_64
-    C_STANDARD  11
-)
-target_compile_options(extdrv-hello
-  PUBLIC ${UPD_C_FLAGS}
-)
-target_sources(extdrv-hello
-  PRIVATE
-    hello.c
-)
-target_link_libraries(extdrv-hello
-  PRIVATE
-    libupd
-)
