@@ -44,7 +44,7 @@ struct download_t_ {
   SHA1_CTX sha1;
   uv_file  file;
 
-  z_stream z;
+  zng_stream z;
   uv_fs_t  fsreq;
 
   size_t refcnt;
@@ -574,7 +574,7 @@ static void mkdir_down_(mkdir_t_* md) {
 
 static bool download_inflate_(download_t_* d) {
   upd_pkg_install_t* inst = d->inst;
-  z_stream*          z    = &d->z;
+  zng_stream*        z    = &d->z;
 
   if (HEDLEY_UNLIKELY(z->avail_in == 0 || inst->abort || d->abort)) {
     curl_easy_pause(d->curl, 0);
@@ -584,7 +584,7 @@ static bool download_inflate_(download_t_* d) {
   z->avail_out = TAR_CHUNK_ - d->tar.recv;
   z->next_out  = d->tar.chunk + d->tar.recv;
 
-  const int ret = inflate(z, Z_NO_FLUSH);
+  const int ret = zng_inflate(z, Z_NO_FLUSH);
   switch (ret) {
   case Z_NEED_DICT:
   case Z_DATA_ERROR:
@@ -742,7 +742,7 @@ static void download_unref_(download_t_* d) {
     upd_free(&d->recvbuf);
     upd_free(&d->tar.chunk);
     curl_easy_cleanup(d->curl);
-    inflateEnd(&d->z);
+    zng_inflateEnd(&d->z);
 
     if (HEDLEY_UNLIKELY(!d->stream_end)) {
       if (HEDLEY_UNLIKELY(d->tar.frecv < d->tar.fsize)) {
@@ -888,7 +888,7 @@ static void pkg_mkdir_cb_(mkdir_t_* md) {
   }
   d->curl = curl;
 
-  if (HEDLEY_UNLIKELY(z_inflateInit2(&d->z, 15+32) != Z_OK)) {
+  if (HEDLEY_UNLIKELY(zng_inflateInit2(&d->z, 15+32) != Z_OK)) {
     curl_easy_cleanup(curl);
     upd_free(&d->tar.chunk);
     upd_iso_unstack(iso, d);
@@ -1048,7 +1048,7 @@ static size_t download_recv_cb_(
     void* data, size_t size, size_t nmemb, void* udata) {
   download_t_*       d    = udata;
   upd_pkg_install_t* inst = d->inst;
-  z_stream*          z    = &d->z;
+  zng_stream*        z    = &d->z;
 
   const size_t realsize = size * nmemb;
   if (HEDLEY_UNLIKELY(realsize == 0 || inst->abort || d->abort)) {

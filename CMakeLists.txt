@@ -12,7 +12,7 @@ if (PKG_CONFIG_FOUND)
   pkg_check_modules(VALGRIND valgrind)
 endif()
 
-add_subdirectory(thirdparty)
+add_subdirectory(thirdparty EXCLUDE_FROM_ALL)
 
 
 # ---- env check ----
@@ -85,7 +85,7 @@ target_link_libraries(updcore
     mimetype.h
     utf8.h
     wsock.h
-    zlib_
+    zlib
 )
 
 

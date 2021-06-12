@@ -8,7 +8,7 @@ endif()
 
 
 # ---- crypto-algorithms (https://github.com/B-Con/crypto-algorithms) ----
-add_library(crypto-algorithms EXCLUDE_FROM_ALL)
+add_library(crypto-algorithms)
 target_include_directories(crypto-algorithms SYSTEM BEFORE
   PUBLIC crypto-algorithms
 )
@@ -28,22 +28,22 @@ function(include_curl)
   if (WIN32)
     set(CMAKE_USE_SCHANNEL  ON)
   endif()
-  add_subdirectory(curl EXCLUDE_FROM_ALL)
+  add_subdirectory(curl)
 endfunction()
 include_curl()
 
 
 # ---- cwalk (https://github.com/likle/cwalk) ----
 set(IGNORE_WARNINGS ON)
-add_subdirectory(cwalk EXCLUDE_FROM_ALL)
+add_subdirectory(cwalk)
 
 
 # ---- libupd (https://github.com/falsycat/libupd)
-add_subdirectory(libupd EXCLUDE_FROM_ALL)
+add_subdirectory(libupd)
 
 
 # ---- libuv (https://github.com/libuv/libuv)
-add_subdirectory(libuv EXCLUDE_FROM_ALL)
+add_subdirectory(libuv)
 if (BUILD_SHARED_LIBS)
   add_library(libuv ALIAS uv)
 else()
@@ -52,28 +52,17 @@ endif()
 
 
 # ---- libyaml (https://github.com/yaml/libyaml)
-add_subdirectory(libyaml EXCLUDE_FROM_ALL)
+add_subdirectory(libyaml)
 add_library(libyaml ALIAS yaml)
 
 
 # ---- mimetype.h (https://github.com/falsycat/mimetype.h) ----
-add_subdirectory(mimetype.h EXCLUDE_FROM_ALL)
+add_subdirectory(mimetype.h)
 
 
 # ---- wsock.h (https://github.com/falsycat/wsock.h) ----
-add_subdirectory(wsock.h EXCLUDE_FROM_ALL)
+add_subdirectory(wsock.h)
 
 
 # ---- zlib (https://github.com/madler/zlib) ----
-add_subdirectory(zlib EXCLUDE_FROM_ALL)
-target_include_directories(zlib SYSTEM BEFORE
-  PUBLIC zlib
-)
-target_include_directories(zlibstatic SYSTEM BEFORE
-  PUBLIC zlib
-)
-if (BUILD_SHARED_LIBS)
-  add_library(zlib_ ALIAS zlib)
-else()
-  add_library(zlib_ ALIAS zlibstatic)
-endif()
+add_subdirectory(zlib-ng)

@@ -18,14 +18,11 @@
 #include <uv.h>
 #include <yaml.h>
 #include <wsock.h>
+#include <zlib-ng.h>
 
 #if UPD_USE_VALGRIND
 # include <valgrind.h>
 #endif
-
-#define Z_PREFIX_SET
-#include <zlib.h>
-#undef Z_PREFIX_SET
 
 
 #define UPD_DECL_FUNC static inline

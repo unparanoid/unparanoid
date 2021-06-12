@@ -19,9 +19,9 @@
 [submodule "thirdparty/curl"]
 	path = thirdparty/curl
 	url = https://github.com/curl/curl
-[submodule "thirdparty/zlib"]
-	path = thirdparty/zlib
-	url = https://github.com/falsycat/zlib
 [submodule "thirdparty/libupd"]
 	path = thirdparty/libupd
 	url = https://github.com/unparanoid/libupd
+[submodule "thirdparty/zlib-ng"]
+	path = thirdparty/zlib-ng
+	url = https://github.com/zlib-ng/zlib-ng
