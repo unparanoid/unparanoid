@@ -112,6 +112,12 @@ config_tobool_(
   yaml_node_t* node,
   bool*        b);
 
+static
+bool
+config_check_npath_(
+  ctx_t_*        ctx,
+  const uint8_t* npath);
+
 
 static
 bool
@@ -393,6 +399,19 @@ static bool config_tobool_(ctx_t_* ctx, yaml_node_t* node, bool* b) {
 
   config_lognf_(ctx, node, "expected 'true' or 'false'");
   return false;
+}
+
+static bool config_check_npath_(ctx_t_* ctx, const uint8_t* npath) {
+  const size_t interlen =
+    cwk_path_get_intersection((char*) ctx->path, (char*) npath); 
+  switch (ctx->path[interlen]) {
+  case 0:
+    return true;
+  case '/':
+    return ctx->path[interlen+1] == 0;
+  default:
+    return false;
+  }
 }
 
 
@@ -850,31 +869,30 @@ static void task_parse_driver_cb_(task_t_* task) {
     const size_t   vlen = val->data.scalar.length;
     const uint8_t* v    = val->data.scalar.value;
 
-    uint8_t* rpath = upd_iso_stack(iso, vlen+1);
-    if (HEDLEY_UNLIKELY(rpath == NULL)) {
-      config_lognf_(ctx, val, "temp memory allocation failure");
-      goto EXIT;
-    }
-    utf8ncpy(rpath, v, vlen);
-    rpath[vlen] = 0;
-
-    if (HEDLEY_UNLIKELY(cwk_path_is_absolute((char*) rpath))) {
-      upd_iso_unstack(iso, rpath);
-      config_lognf_(ctx, val, "absolute path is forbidden");
+    if (HEDLEY_UNLIKELY(vlen >= UPD_PATH_MAX)) {
+      config_lognf_(ctx, val, "too long path");
       continue;
     }
+
+    uint8_t rpath[UPD_PATH_MAX];
+    utf8ncpy(rpath, v, vlen);
+    rpath[vlen] = 0;
 
     const size_t plen =
       cwk_path_join((char*) ctx->path, (char*) rpath, NULL, 0);
 
     upd_driver_load_external_t* load = upd_iso_stack(iso, sizeof(*load)+plen+1);
     if (HEDLEY_UNLIKELY(load == NULL)) {
-      upd_iso_unstack(iso, rpath);
       config_lognf_(ctx, val, "external driver loader allocation failure");
       goto EXIT;
     }
     cwk_path_join((char*) ctx->path, (char*) rpath, (char*) (load+1), plen+1);
-    upd_iso_unstack(iso, rpath);
+
+    if (HEDLEY_UNLIKELY(!config_check_npath_(ctx, (uint8_t*) (load+1)))) {
+      upd_iso_unstack(iso, load);
+      config_lognf_(ctx, val, "directory traversal detected X<");
+      continue;
+    }
 
     *load = (upd_driver_load_external_t) {
       .iso      = iso,
@@ -992,6 +1010,12 @@ static void task_parse_file_cb_(task_t_* task) {
     if (HEDLEY_UNLIKELY(fields.npath)) {
       ftask->npath    = fields.npath->data.scalar.value;
       ftask->npathlen = fields.npath->data.scalar.length;
+      if (HEDLEY_UNLIKELY(ftask->npathlen >= UPD_PATH_MAX)) {
+        upd_iso_unstack(iso, ftask);
+        config_lognf_(ctx, key,
+          "too long npath: %.*s", (int) ftask->npathlen, ftask->npath);
+        goto EXIT;
+      }
     }
 
     ++task->refcnt;
@@ -1181,8 +1205,23 @@ static void file_lock_cb_(upd_file_lock_t* lock) {
     goto ABORT;
   }
 
-  upd_file_t* f = upd_file_new_from_npath(
-    iso, ftask->driver, ftask->npath, ftask->npathlen);
+  uint8_t rpath[UPD_PATH_MAX];
+  utf8ncpy(rpath, ftask->npath, ftask->npathlen);
+  rpath[ftask->npathlen] = 0;
+
+  uint8_t npath[UPD_PATH_MAX];
+  const size_t npathlen = cwk_path_join(
+    (char*) ctx->path, (char*) rpath, (char*) npath, UPD_PATH_MAX);
+  if (HEDLEY_UNLIKELY(npathlen >= UPD_PATH_MAX)) {
+    config_lognf_(ctx, ftask->node, "too long npath");
+    goto ABORT;
+  }
+  if (HEDLEY_UNLIKELY(!config_check_npath_(ctx, npath))) {
+    config_lognf_(ctx, ftask->node, "directory traversal detected X<");
+    goto ABORT;
+  }
+
+  upd_file_t* f = upd_file_new_from_npath(iso, ftask->driver, npath, npathlen);
   if (HEDLEY_UNLIKELY(f == NULL)) {
     config_lognf_(ctx, ftask->node, "file creation failure");
     goto ABORT;
