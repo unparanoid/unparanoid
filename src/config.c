@@ -1206,7 +1206,9 @@ static void file_lock_cb_(upd_file_lock_t* lock) {
   }
 
   uint8_t rpath[UPD_PATH_MAX];
-  utf8ncpy(rpath, ftask->npath, ftask->npathlen);
+  if (ftask->npath != NULL) {
+    utf8ncpy(rpath, ftask->npath, ftask->npathlen);
+  }
   rpath[ftask->npathlen] = 0;
 
   uint8_t npath[UPD_PATH_MAX];
