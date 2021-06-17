@@ -75,11 +75,12 @@ upd_file_t* upd_file_new_from_npath(
   }
   *f = (upd_file_t_) {
     .super = {
-      .iso    = iso,
-      .driver = driver,
-      .npath  = len? (uint8_t*) (f+1): NULL,
-      .id     = iso->files_created++,
-      .refcnt = 1,
+      .iso      = iso,
+      .driver   = driver,
+      .npath    = len? (uint8_t*) (f+1): NULL,
+      .npathlen = len,
+      .id       = iso->files_created++,
+      .refcnt   = 1,
 
       .last_update = 0,
       .last_req    = 0,
