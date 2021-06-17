@@ -171,7 +171,10 @@ static bool dir_handle_(upd_req_t* req) {
       return false;
     }
 
-    re.file = upd_file_new(iso, &upd_driver_dir);
+    re.file = upd_file_new(&(upd_file_t) {
+        .iso = iso,
+        .driver = &upd_driver_dir,
+      });
     if (HEDLEY_UNLIKELY(re.file == NULL)) {
       req->result = UPD_REQ_NOMEM;
       return false;

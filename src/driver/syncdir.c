@@ -523,7 +523,12 @@ static void syncdir_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
         }
       }
 
-      upd_file_t* fc = upd_file_new_from_npath(iso, d, path, pathlen);
+      upd_file_t* fc = upd_file_new(&(upd_file_t) {
+          .iso      = iso,
+          .driver   = d,
+          .npath    = path,
+          .npathlen = pathlen,
+        });
       upd_iso_unstack(iso, path);
       if (HEDLEY_UNLIKELY(fc == NULL)) {
         continue;

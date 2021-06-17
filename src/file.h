@@ -43,15 +43,9 @@ upd_file_try_lock(
   upd_file_lock_t* lock);
 
 
-static inline upd_file_t* upd_file_new(
-    upd_iso_t* iso, const upd_driver_t* driver) {
-  return upd_file_new_from_npath(iso, driver, NULL, 0);
-}
-
-static inline upd_file_t* upd_file_new_from_driver_name(
-    upd_iso_t* iso, const uint8_t* name, size_t len) {
-  const upd_driver_t* d = upd_driver_lookup(iso, name, len);
-  return d? upd_file_new(iso, d): NULL;
+static inline upd_file_t* upd_file_new(const upd_file_t* src) {
+  return upd_file_new_from_npath(
+    src->iso, src->driver, src->npath, src->npathlen);
 }
 
 static inline upd_file_t* upd_file_get(upd_iso_t* iso, upd_file_id_t id) {

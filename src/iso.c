@@ -176,7 +176,10 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
   }
 
   /* init filesystem */
-  upd_file_t* root = upd_file_new(iso, &upd_driver_dir);
+  upd_file_t* root = upd_file_new(&(upd_file_t) {
+      .iso    = iso,
+      .driver = &upd_driver_dir,
+    });
   if (HEDLEY_UNLIKELY(root == NULL)) {
     return NULL;
   }

@@ -1223,7 +1223,12 @@ static void file_lock_cb_(upd_file_lock_t* lock) {
     goto ABORT;
   }
 
-  upd_file_t* f = upd_file_new_from_npath(iso, ftask->driver, npath, npathlen);
+  upd_file_t* f = upd_file_new(&(upd_file_t) {
+      .iso      = iso,
+      .driver   = ftask->driver,
+      .npath    = npath,
+      .npathlen = npathlen
+    });
   if (HEDLEY_UNLIKELY(f == NULL)) {
     config_lognf_(ctx, ftask->node, "file creation failure");
     goto ABORT;
