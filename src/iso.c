@@ -479,6 +479,17 @@ static void destroyer_cb_(uv_idle_t* idle) {
       upd_pkg_abort_install(pkg->install);
     }
   }
+
+  for (size_t i = iso->files.n; ;) {
+    if (HEDLEY_UNLIKELY(i > iso->files.n)) {
+      i = iso->files.n;
+    }
+    if (HEDLEY_UNLIKELY(i == 0)) {
+      break;
+    }
+    upd_file_t* f = iso->files.p[--i];
+    upd_file_trigger(f, UPD_FILE_SHUTDOWN);
+  }
 }
 
 
