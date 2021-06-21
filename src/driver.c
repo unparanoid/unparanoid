@@ -159,13 +159,31 @@ static void load_work_after_cb_(uv_work_t* w, int status) {
 
   uv_lib_t* lib = load->lib;
 
-  upd_external_t* extdrv;
-  int err = uv_dlsym(lib, EXTERNAL_DRIVER_SYMBOL_, (void*) &extdrv);
+  upd_external_t* ext;
+  int err = uv_dlsym(lib, EXTERNAL_DRIVER_SYMBOL_, (void*) &ext);
   if (HEDLEY_UNLIKELY(0 > err)) {
     uv_dlclose(lib);
     upd_iso_msgf(iso,
       "symbol '"EXTERNAL_DRIVER_SYMBOL_"' is not found: %s\n", load->npath);
     goto ABORT;
+  }
+
+  const uint8_t  maj = ext->ver >> 56;
+  const uint8_t  min = ext->ver >> 48 & 0xFF;
+  const uint64_t pat = ext->ver & 0xFFFFFFFFFFFF;
+  if (HEDLEY_UNLIKELY(maj != UPD_VER_MAJOR)) {
+    uv_dlclose(lib);
+    upd_iso_msgf(iso,
+      "major version incompatible: %s\n", load->npath);
+    goto ABORT;
+  }
+  if (HEDLEY_UNLIKELY(min != UPD_VER_MAJOR)) {
+    upd_iso_msgf(iso,
+      "minor version incompatible: %s\n", load->npath);
+  }
+  if (HEDLEY_UNLIKELY(pat != UPD_VER_PATCH)) {
+    upd_iso_msgf(iso,
+      "patch version incompatible: %s\n", load->npath);
   }
 
   if (HEDLEY_UNLIKELY(!upd_array_insert(&iso->libs, load->lib, SIZE_MAX))) {
@@ -174,8 +192,8 @@ static void load_work_after_cb_(uv_work_t* w, int status) {
     goto ABORT;
   }
 
-  extdrv->host = &host_;
-  for (const upd_driver_t** d = extdrv->drivers; *d; ++d) {
+  ext->host = &host_;
+  for (const upd_driver_t** d = ext->drivers; *d; ++d) {
     if (HEDLEY_UNLIKELY(!upd_driver_register(iso, *d))) {
       upd_iso_msgf(iso, "registration failure: %s\n", (*d)->name);
     }
