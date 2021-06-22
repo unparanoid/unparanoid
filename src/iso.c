@@ -382,8 +382,10 @@ static void walker_handle_(upd_file_t* f) {
 
   /* trigger uncache event */
   const bool uncache =
-    f->driver->uncache_period && f->last_req &&
-    f->last_req >= f->last_uncache;
+    f->driver->uncache_period > 0 &&
+    f->last_req > 0 &&
+    f->last_req >= f->last_uncache &&
+    f_->lock.refcnt == 0;
   if (HEDLEY_UNLIKELY(uncache)) {
     const uint64_t t = now > f->last_req? now - f->last_req: 0;
     if (HEDLEY_UNLIKELY(t > f->driver->uncache_period)) {
