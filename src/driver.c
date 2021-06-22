@@ -168,22 +168,19 @@ static void load_work_after_cb_(uv_work_t* w, int status) {
     goto ABORT;
   }
 
-  const uint8_t  maj = ext->ver >> 56;
-  const uint8_t  min = ext->ver >> 48 & 0xFF;
-  const uint64_t pat = ext->ver & 0xFFFFFFFFFFFF;
+  const uint16_t maj = ext->ver >> 16;
+  const uint16_t min = ext->ver & 0xFFFF;
   if (HEDLEY_UNLIKELY(maj != UPD_VER_MAJOR)) {
     uv_dlclose(lib);
     upd_iso_msgf(iso,
-      "major version incompatible: %s\n", load->npath);
+      "major version unmatch upd:%"PRIu16" != %"PRIu16":%s\n",
+      UPD_VER_MAJOR, maj, load->npath);
     goto ABORT;
   }
-  if (HEDLEY_UNLIKELY(min != UPD_VER_MAJOR)) {
+  if (HEDLEY_UNLIKELY(min != UPD_VER_MINOR)) {
     upd_iso_msgf(iso,
-      "minor version incompatible: %s\n", load->npath);
-  }
-  if (HEDLEY_UNLIKELY(pat != UPD_VER_PATCH)) {
-    upd_iso_msgf(iso,
-      "patch version incompatible: %s\n", load->npath);
+      "minor version unmatch upd:%"PRIu16" != %"PRIu16":%s\n",
+      UPD_VER_MINOR, min, load->npath);
   }
 
   if (HEDLEY_UNLIKELY(!upd_array_insert(&iso->libs, load->lib, SIZE_MAX))) {
