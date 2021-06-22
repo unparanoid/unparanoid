@@ -444,7 +444,7 @@ static void cli_lock_for_input_cb_(upd_file_lock_t* lock) {
 
   const bool input = upd_req_with_dup(&(upd_req_t) {
       .file = cli->io,
-      .type = UPD_REQ_STREAM_WRITE,
+      .type = UPD_REQ_DSTREAM_WRITE,
       .stream = { .io = {
         .size = cli->buf.size,
         .buf  = cli->buf.ptr,
@@ -534,7 +534,7 @@ static void cli_lock_for_output_cb_(upd_file_lock_t* lock) {
 
   const bool output = upd_req_with_dup(&(upd_req_t) {
       .file  = cli->io,
-      .type  = UPD_REQ_STREAM_READ,
+      .type  = UPD_REQ_DSTREAM_READ,
       .udata = lock,
       .cb    = cli_output_cb_,
     });
