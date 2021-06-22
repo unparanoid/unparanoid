@@ -124,6 +124,11 @@ task_queue_with_dup_(
   const task_t_* task);
 
 static
+bool
+task_queue_open_(
+  upd_file_t* f);
+
+static
 void
 task_finalize_(
   task_t_* task);
@@ -178,6 +183,16 @@ task_write_exec_cb_(
 static
 void
 task_write_cb_(
+  uv_fs_t* fsreq);
+
+static
+void
+task_truncate_exec_cb_(
+  task_t_* task);
+
+static
+void
+task_truncate_cb_(
   uv_fs_t* fsreq);
 
 static
@@ -282,8 +297,9 @@ static bool bin_handle_(upd_req_t* req) {
   switch (req->type) {
   case UPD_REQ_STREAM_ACCESS:
     req->stream.access = (upd_req_stream_access_t) {
-      .read  = ctx->read,
-      .write = ctx->write,
+      .read     = ctx->read,
+      .write    = ctx->write,
+      .truncate = ctx->write,
     };
     break;
 
@@ -292,15 +308,9 @@ static bool bin_handle_(upd_req_t* req) {
       req->result = UPD_REQ_ABORTED;
       return false;
     }
-    if (HEDLEY_UNLIKELY(!ctx->open)) {
-      const bool ok = task_queue_with_dup_(&(task_t_) {
-          .file = f,
-          .exec = task_open_exec_cb_,
-        });
-      if (HEDLEY_UNLIKELY(!ok)) {
-        req->result = UPD_REQ_NOMEM;
-        return false;
-      }
+    if (HEDLEY_UNLIKELY(!ctx->open && !task_queue_open_(f))) {
+      req->result = UPD_REQ_NOMEM;
+      return false;
     }
     const bool ok = task_queue_with_dup_(&(task_t_) {
         .file = f,
@@ -318,20 +328,34 @@ static bool bin_handle_(upd_req_t* req) {
       req->result = UPD_REQ_ABORTED;
       return false;
     }
-    if (HEDLEY_UNLIKELY(!ctx->open)) {
-      const bool ok = task_queue_with_dup_(&(task_t_) {
-          .file = f,
-          .exec = task_open_exec_cb_,
-        });
-      if (HEDLEY_UNLIKELY(!ok)) {
-        req->result = UPD_REQ_NOMEM;
-        return false;
-      }
+    if (HEDLEY_UNLIKELY(!ctx->open && !task_queue_open_(f))) {
+      req->result = UPD_REQ_NOMEM;
+      return false;
     }
     const bool ok = task_queue_with_dup_(&(task_t_) {
         .file = f,
         .req  = req,
         .exec = task_write_exec_cb_,
+      });
+    if (HEDLEY_UNLIKELY(!ok)) {
+      req->result = UPD_REQ_NOMEM;
+      return false;
+    }
+  } return true;
+
+  case UPD_REQ_STREAM_TRUNCATE: {
+    if (HEDLEY_UNLIKELY(!ctx->write)) {
+      req->result = UPD_REQ_ABORTED;
+      return false;
+    }
+    if (HEDLEY_UNLIKELY(!ctx->open && !task_queue_open_(f))) {
+      req->result = UPD_REQ_NOMEM;
+      return false;
+    }
+    const bool ok = task_queue_with_dup_(&(task_t_) {
+        .file = f,
+        .req  = req,
+        .exec = task_truncate_exec_cb_,
       });
     if (HEDLEY_UNLIKELY(!ok)) {
       req->result = UPD_REQ_NOMEM;
@@ -369,6 +393,13 @@ static bool task_queue_with_dup_(const task_t_* src) {
     task->exec(task);
   }
   return task;
+}
+
+static bool task_queue_open_(upd_file_t* f) {
+  return task_queue_with_dup_(&(task_t_) {
+      .file = f,
+      .exec = task_open_exec_cb_,
+    });
 }
 
 static void task_finalize_(task_t_* task) {
@@ -584,7 +615,6 @@ static void task_write_exec_cb_(task_t_* task) {
   upd_iso_t*  iso  = f->iso;
 
   if (HEDLEY_UNLIKELY(!ctx->open)) {
-    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
 
@@ -596,7 +626,6 @@ static void task_write_exec_cb_(task_t_* task) {
   const int err = uv_fs_write(
     &iso->loop, &task->fsreq, ctx->fd, &buf, 1, off, task_write_cb_);
   if (HEDLEY_UNLIKELY(0 > err)) {
-    req->result = UPD_REQ_ABORTED;
     goto ABORT;
   }
   return;
@@ -622,6 +651,49 @@ static void task_write_cb_(uv_fs_t* fsreq) {
   }
   req->result = UPD_REQ_OK;
   req->stream.io.size = result;
+
+EXIT:
+  req->cb(req);
+  task_finalize_(task);
+}
+
+static void task_truncate_exec_cb_(task_t_* task) {
+  upd_file_t* f   = task->file;
+  upd_req_t*  req = task->req;
+  bin_t_*     ctx = f->ctx;
+  upd_iso_t*  iso = f->iso;
+
+  if (HEDLEY_UNLIKELY(!ctx->open)) {
+    goto ABORT;
+  }
+
+  const size_t size = req->stream.io.size;
+
+  const int err = uv_fs_ftruncate(
+    &iso->loop, &task->fsreq, ctx->fd, size, task_truncate_cb_);
+  if (HEDLEY_UNLIKELY(0 > err)) {
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  req->result = UPD_REQ_ABORTED;
+  req->cb(req);
+  task_finalize_(task);
+}
+
+static void task_truncate_cb_(uv_fs_t* fsreq) {
+  task_t_*   task = (void*) fsreq;
+  upd_req_t* req  = task->req;
+
+  const ssize_t result = fsreq->result;
+  uv_fs_req_cleanup(fsreq);
+
+  if (HEDLEY_UNLIKELY(result < 0)) {
+    req->result = UPD_REQ_ABORTED;
+    goto EXIT;
+  }
+  req->result = UPD_REQ_OK;
 
 EXIT:
   req->cb(req);
