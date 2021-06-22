@@ -53,8 +53,6 @@ target_include_directories(updcore
 )
 target_sources(updcore
   PRIVATE
-    src/cli.c
-    src/cli.h
     src/common.h
     src/config.c
     src/config.h
@@ -65,12 +63,11 @@ target_sources(updcore
     src/iso.c
     src/pkg.c
     src/pkg.h
-    src/srv.c
-    src/srv.h
 
     src/driver/bin.c
     src/driver/dir.c
     src/driver/syncdir.c
+    src/driver/srv_tcp.c
     src/driver/tensor.c
 )
 target_link_libraries(updcore

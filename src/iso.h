@@ -27,8 +27,6 @@ struct upd_iso_t {
   upd_array_of(const upd_driver_t*) drivers;
   upd_array_of(upd_file_t*)         files;
   upd_array_of(upd_pkg_t*)          pkgs;
-  upd_array_of(upd_srv_t*)          srv;
-  upd_array_of(upd_cli_t*)          cli;
 
   size_t files_created;
 

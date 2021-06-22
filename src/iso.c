@@ -186,8 +186,6 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
   assert(root->id == UPD_FILE_ID_ROOT);
 
   iso_create_dir_(iso, "/sys");
-  iso_create_dir_(iso, "/var/srv");
-  iso_create_dir_(iso, "/var/cli");
 
   upd_driver_setup(iso);
   return iso;
@@ -197,8 +195,6 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
-  assert(iso->srv.n == 0);
-  assert(iso->cli.n == 0);
 
   /* cleanup root directory */
   upd_file_unref(iso->files.p[0]);
@@ -466,12 +462,6 @@ static void iso_shutdown_timer_cb_(uv_timer_t* timer) {
 static void destroyer_cb_(uv_idle_t* idle) {
   upd_iso_t* iso = idle->data;
 
-  while (iso->srv.n) {
-    upd_srv_delete(iso->srv.p[0]);
-  }
-  while (iso->cli.n) {
-    upd_cli_delete(iso->cli.p[0]);
-  }
   uv_signal_stop(&iso->sigint);
   uv_signal_stop(&iso->sighup);
 

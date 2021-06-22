@@ -6,9 +6,10 @@
 #define CONFIG_FILE_MAX_ (1024*1024*4)  /* = 4 MiB */
 
 
-typedef struct ctx_t_       ctx_t_;
-typedef struct task_t_      task_t_;
-typedef struct task_file_t_ task_file_t_;
+typedef struct ctx_t_         ctx_t_;
+typedef struct task_t_        task_t_;
+typedef struct task_file_t_   task_file_t_;
+typedef struct task_server_t_ task_server_t_;
 
 struct ctx_t_ {
   upd_iso_t*         iso;
@@ -66,6 +67,19 @@ struct task_file_t_ {
 
   const upd_driver_t* driver;
   yaml_node_t*        rules;
+};
+
+struct task_server_t_ {
+  task_t_*     parent;
+  yaml_node_t* node;
+
+  const uint8_t* path;
+  size_t         pathlen;
+
+  const uint8_t* host;
+  size_t         hostlen;
+
+  uint16_t port;
 };
 
 
@@ -213,8 +227,8 @@ file_add_cb_(
 
 static
 void
-server_build_cb_(
-  upd_srv_build_t* b);
+server_pathfind_cb_(
+  upd_pathfind_t* pf);
 
 
 bool upd_config_load(upd_config_load_t* load) {
@@ -1094,30 +1108,41 @@ static void task_parse_server_cb_(task_t_* task) {
       continue;
     }
 
-    upd_srv_build_t* b = upd_iso_stack(iso, sizeof(*b));
-    if (HEDLEY_UNLIKELY(b == NULL)) {
+    const uint8_t* host    = (uint8_t*) "0.0.0.0";
+    size_t         hostlen = utf8size_lazy(host);
+    if (HEDLEY_LIKELY(fields.host)) {
+      host    = fields.host->data.scalar.value;
+      hostlen = fields.host->data.scalar.length;
+    }
+
+    task_server_t_* srv = upd_iso_stack(iso, sizeof(*srv));
+    if (HEDLEY_UNLIKELY(srv == NULL)) {
       config_lognf_(ctx, key,
         "server builder allocation failure, skipping followings");
       break;
     }
-    *b = (upd_srv_build_t) {
-      .iso     = iso,
+    *srv = (task_server_t_) {
+      .parent  = task,
+      .node    = val,
       .path    = key->data.scalar.value,
       .pathlen = key->data.scalar.length,
+      .host    = host,
+      .hostlen = hostlen,
       .port    = port,
-      .udata   = task,
-      .cb      = server_build_cb_,
     };
-    if (HEDLEY_LIKELY(fields.host)) {
-      b->host    = fields.host->data.scalar.value;
-      b->hostlen = fields.host->data.scalar.length;
-    }
 
     ++task->refcnt;
-    if (HEDLEY_UNLIKELY(!upd_srv_build(b))) {
+    const bool pf = upd_pathfind_with_dup(&(upd_pathfind_t) {
+        .iso   = iso,
+        .path  = (uint8_t*) srv->path,
+        .len   = srv->pathlen,
+        .udata = srv,
+        .cb    = server_pathfind_cb_,
+      });
+    if (HEDLEY_UNLIKELY(!pf)) {
       task_unref_(task);
-      upd_iso_unstack(iso, b);
-      config_lognf_(ctx, key, "building server failure");
+      upd_iso_unstack(iso, srv);
+      config_lognf_(ctx, key, "pathfind context allocation failure");
       continue;
     }
   }
@@ -1335,14 +1360,38 @@ static void file_add_cb_(upd_req_t* req) {
 }
 
 
-static void server_build_cb_(upd_srv_build_t* b) {
-  task_t_*   task = b->udata;
-  ctx_t_*    ctx  = task->ctx;
-  upd_iso_t* iso  = ctx->iso;
+static void server_pathfind_cb_(upd_pathfind_t* pf) {
+  task_server_t_* srv  = pf->udata;
+  task_t_*        task = srv->parent;
+  ctx_t_*         ctx  = task->ctx;
+  upd_iso_t*      iso  = ctx->iso;
 
-  if (HEDLEY_UNLIKELY(b->srv == NULL)) {
-    config_lognf_(ctx, task->node, "failed to build server for port %"PRIu16, b->port);
+  upd_file_t* fpro = pf->len? NULL: pf->base;
+  upd_iso_unstack(iso, pf);
+
+  if (HEDLEY_UNLIKELY(fpro == NULL)) {
+    config_lognf_(ctx, srv->node,
+      "no such program found: %.*s", (int) srv->pathlen, srv->path);
+    goto EXIT;
   }
-  upd_iso_unstack(iso, b);
+
+  uint8_t host[256];
+  if (HEDLEY_UNLIKELY(srv->hostlen >= 256)) {
+    config_lognf_(ctx, srv->node,
+      "too long hostname: %.*s", (int) srv->hostlen, srv->host);
+    goto EXIT;
+  }
+  utf8ncpy(host, srv->host, srv->hostlen);
+  host[srv->hostlen] = 0;
+
+  upd_file_t* fsrv = upd_driver_srv_tcp_new(fpro, host, srv->port);
+  if (HEDLEY_UNLIKELY(fsrv == NULL)) {
+    config_lognf_(ctx, srv->node, "server start failure");
+    goto EXIT;
+  }
+  upd_file_unref(fsrv);
+
+EXIT:
+  upd_iso_unstack(iso, srv);
   task_unref_(task);
 }

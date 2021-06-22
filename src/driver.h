@@ -18,7 +18,7 @@ struct upd_driver_load_external_t {
   upd_iso_t* iso;
 
   const uint8_t* npath;
-  size_t npathlen;
+  size_t         npathlen;
 
   const char* err;
   bool        ok;
@@ -37,6 +37,8 @@ extern const upd_driver_t upd_driver_bin_rw;
 extern const upd_driver_t upd_driver_bin_w;
 extern const upd_driver_t upd_driver_dir;
 extern const upd_driver_t upd_driver_syncdir;
+extern const upd_driver_t upd_driver_srv;
+extern const upd_driver_t upd_driver_srv_tcp;
 extern const upd_driver_t upd_driver_tensor;
 
 
@@ -49,6 +51,14 @@ HEDLEY_NON_NULL(1)
 bool
 upd_driver_load_external(
   upd_driver_load_external_t* load);
+
+
+HEDLEY_NON_NULL(1)
+upd_file_t*
+upd_driver_srv_tcp_new(
+  upd_file_t*    prog,
+  const uint8_t* host,
+  uint16_t       port);
 
 
 /* Callee takes the ownership of the rules. */

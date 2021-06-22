@@ -36,15 +36,11 @@
 #include <libupd/pathfind.h>
 
 
-typedef struct upd_cli_t upd_cli_t;
 typedef struct upd_pkg_t upd_pkg_t;
-typedef struct upd_srv_t upd_srv_t;
 
 #include "iso.h"
 
-#include "cli.h"
 #include "config.h"
 #include "driver.h"
 #include "file.h"
 #include "pkg.h"
-#include "srv.h"
