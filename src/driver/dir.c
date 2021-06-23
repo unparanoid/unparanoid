@@ -1,13 +1,8 @@
 #include "common.h"
 
 
-typedef struct entry_t_ {
-  upd_req_dir_entry_t super;
-  upd_file_watch_t    watch;
-} entry_t_;
-
 typedef struct dir_t_ {
-  upd_array_of(entry_t_*) children;
+  upd_array_of(upd_req_dir_entry_t*) children;
 } dir_t_;
 
 
@@ -39,15 +34,14 @@ const upd_driver_t upd_driver_dir = {
 
 
 static
-entry_t_*
+upd_req_dir_entry_t*
 entry_dup_(
-  const upd_req_dir_entry_t* src,
-  dir_t_*                    ctx);
+  const upd_req_dir_entry_t* src);
 
 static
 void
 entry_delete_(
-  entry_t_* e);
+  upd_req_dir_entry_t* e);
 
 static
 bool
@@ -139,7 +133,7 @@ static bool dir_handle_(upd_req_t* req) {
       return false;
     }
 
-    entry_t_* e = entry_dup_(&req->dir.entry, ctx);
+    upd_req_dir_entry_t* e = entry_dup_(&req->dir.entry);
 
     req->dir.entry = (upd_req_dir_entry_t) {0};
     if (HEDLEY_UNLIKELY(e == NULL)) {
@@ -151,15 +145,14 @@ static bool dir_handle_(upd_req_t* req) {
       req->result = UPD_REQ_NOMEM;
       return false;
     }
-    req->dir.entry = e->super;
+    req->dir.entry = *e;
   } break;
 
   case UPD_REQ_DIR_NEWDIR: {
     upd_req_dir_entry_t re = req->dir.entry;
     req->dir.entry = (upd_req_dir_entry_t) {0};
 
-    const bool valid =
-      re.len && upd_path_validate_name(re.name, re.len) && !re.weakref;
+    const bool valid = re.len && upd_path_validate_name(re.name, re.len);
     if (HEDLEY_UNLIKELY(!valid)) {
       req->result = UPD_REQ_INVALID;
       return false;
@@ -179,7 +172,7 @@ static bool dir_handle_(upd_req_t* req) {
       req->result = UPD_REQ_NOMEM;
       return false;
     }
-    entry_t_* e = entry_dup_(&re, ctx);
+    upd_req_dir_entry_t* e = entry_dup_(&re);
     upd_file_unref(re.file);
     if (HEDLEY_UNLIKELY(e == NULL)) {
       req->result = UPD_REQ_NOMEM;
@@ -191,7 +184,7 @@ static bool dir_handle_(upd_req_t* req) {
       req->result = UPD_REQ_NOMEM;
       return false;
     }
-    req->dir.entry = e->super;
+    req->dir.entry = *e;
   } break;
 
   case UPD_REQ_DIR_RM: {
@@ -201,8 +194,8 @@ static bool dir_handle_(upd_req_t* req) {
       req->dir.entry = (upd_req_dir_entry_t) {0};
       return false;
     }
-    entry_t_* e = upd_array_remove(&ctx->children, i);
-    req->dir.entry = e->super;
+    upd_req_dir_entry_t* e = upd_array_remove(&ctx->children, i);
+    req->dir.entry = *e;
     req->cb(req);
     entry_delete_(e);
   } return true;
@@ -217,50 +210,23 @@ static bool dir_handle_(upd_req_t* req) {
 }
 
 
-static void entry_watch_cb_(upd_file_watch_t* w) {
-  dir_t_*   ctx = w->udata;
-  entry_t_* e   = (void*) ((uint8_t*) w - offsetof(entry_t_, watch));
-
-  switch (w->event) {
-  case UPD_FILE_DELETE:
-    upd_array_find_and_remove(&ctx->children, e);
-    entry_delete_(e);
-    break;
-  }
-}
-static entry_t_* entry_dup_(const upd_req_dir_entry_t* src, dir_t_* ctx) {
-  entry_t_* e = NULL;
+static upd_req_dir_entry_t* entry_dup_(const upd_req_dir_entry_t* src) {
+  upd_req_dir_entry_t* e = NULL;
   if (HEDLEY_UNLIKELY(!upd_malloc(&e, sizeof(*e)+src->len+1))) {
     return NULL;
   }
-  e->super      = *src;
-  e->super.name = (uint8_t*) (e+1);
+  *e = *src;
+  e->name = (uint8_t*) (e+1);
 
-  utf8ncpy(e->super.name, src->name, src->len);
-  e->super.name[src->len] = 0;
+  utf8ncpy(e->name, src->name, src->len);
+  e->name[src->len] = 0;
 
-  if (e->super.weakref) {
-    e->watch = (upd_file_watch_t) {
-      .file  = e->super.file,
-      .cb    = entry_watch_cb_,
-      .udata = ctx,
-    };
-    if (HEDLEY_UNLIKELY(!upd_file_watch(&e->watch))) {
-      upd_free(&e);
-      return NULL;
-    }
-  } else {
-    upd_file_ref(e->super.file);
-  }
+  upd_file_ref(e->file);
   return e;
 }
 
-static void entry_delete_(entry_t_* e) {
-  if (e->super.weakref) {
-    upd_file_unwatch(&e->watch);
-  } else {
-    upd_file_unref(e->super.file);
-  }
+static void entry_delete_(upd_req_dir_entry_t* e) {
+  upd_file_unref(e->file);
   upd_free(&e);
 }
 
