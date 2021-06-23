@@ -116,6 +116,7 @@ void upd_file_delete(upd_file_t* f) {
 
   upd_file_t_* f_ = (void*) f;
   assert(!f_->lock.pending.n);
+  assert(!f_->lock.refcnt);
 
   file_close_all_handlers_(f_);
 

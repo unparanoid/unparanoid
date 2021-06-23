@@ -102,11 +102,17 @@ static inline void upd_file_trigger(upd_file_t* f, upd_file_event_t e) {
     break;
   }
 
+  if (HEDLEY_UNLIKELY(e != UPD_FILE_DELETE)) {
+    upd_file_ref(f);
+  }
   upd_file_t_* f_ = (void*) f;
   for (size_t i = 0; i < f_->watch.n; ++i) {
     upd_file_watch_t* w = f_->watch.p[i];
     w->event = e;
     w->cb(w);
+  }
+  if (HEDLEY_UNLIKELY(e != UPD_FILE_DELETE)) {
+    upd_file_unref(f);
   }
 }
 
@@ -196,8 +202,6 @@ static inline void upd_file_unlock(upd_file_lock_t* l) {
     return;
   }
 
-  upd_file_unref(&f->super);  /* for unlocking */
-
   upd_array_t* pen = &f->lock.pending;
 
   upd_file_lock_t* k;
@@ -208,4 +212,5 @@ static inline void upd_file_unlock(upd_file_lock_t* l) {
     k->ok = false;
     k->cb(k);
   }
+  upd_file_unref(&f->super);  /* for unlocking */
 }
