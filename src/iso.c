@@ -201,20 +201,6 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
-  assert(iso->files.n == 0);
-
-  /* close all system handlers */
-  uv_close((uv_handle_t*) &iso->out,            NULL);
-  uv_close((uv_handle_t*) &iso->sigint,         NULL);
-  uv_close((uv_handle_t*) &iso->sighup,         NULL);
-  uv_close((uv_handle_t*) &iso->shutdown_timer, NULL);
-  uv_close((uv_handle_t*) &iso->destroyer,      NULL);
-  uv_close((uv_handle_t*) &iso->walker.timer,   NULL);
-  uv_close((uv_handle_t*) &iso->curl.timer,     NULL);
-  if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
-    return UPD_ISO_PANIC;
-  }
-  assert(iso->stack.refcnt == 0);
 
   /* join all threads */
   for (size_t i = 0; ; ++i) {
@@ -234,6 +220,20 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   }
   upd_array_clear(&iso->threads);
   uv_mutex_destroy(&iso->mtx);
+
+  /* close all system handlers */
+  uv_close((uv_handle_t*) &iso->out,            NULL);
+  uv_close((uv_handle_t*) &iso->sigint,         NULL);
+  uv_close((uv_handle_t*) &iso->sighup,         NULL);
+  uv_close((uv_handle_t*) &iso->shutdown_timer, NULL);
+  uv_close((uv_handle_t*) &iso->destroyer,      NULL);
+  uv_close((uv_handle_t*) &iso->walker.timer,   NULL);
+  uv_close((uv_handle_t*) &iso->curl.timer,     NULL);
+  if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
+    return UPD_ISO_PANIC;
+  }
+  assert(iso->stack.refcnt == 0);
+  assert(iso->files.n      == 0);
 
   /* forget all packages */
   for (size_t i = 0; i < iso->pkgs.n; ++i) {
