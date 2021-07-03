@@ -15,9 +15,10 @@ struct upd_iso_t {
   uv_signal_t sighup;
 
   uv_timer_t shutdown_timer;
-  uv_idle_t  destroyer;
+  uv_timer_t destroyer;
 
   upd_iso_status_t status;
+  bool             teardown;
 
   uv_mutex_t mtx;
 
@@ -87,8 +88,9 @@ upd_iso_run(
 
 HEDLEY_NON_NULL(1)
 void
-upd_iso_start_destroyer(
-  upd_iso_t* iso);
+upd_iso_exit(
+  upd_iso_t*       iso,
+  upd_iso_status_t status);
 
 
 typedef
@@ -177,11 +179,6 @@ static inline void upd_iso_msg(upd_iso_t* iso, const uint8_t* msg, uint64_t len)
     fprintf(stderr, "failed to write msg to stdout\n");
     return;
   }
-}
-
-static inline void upd_iso_exit(upd_iso_t* iso, upd_iso_status_t status) {
-  iso->status = status;
-  upd_iso_start_destroyer(iso);
 }
 
 static inline void upd_iso_thread_entrypoint_(void* udata) {

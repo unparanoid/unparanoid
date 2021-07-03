@@ -3,6 +3,8 @@
 
 #define SHUTDOWN_TIMER_ 1000
 
+#define DESTROYER_PERIOD_ 100
+
 #define WALKER_PERIOD_           1000
 #define WALKER_FILES_PER_PERIOD_ 1000
 
@@ -32,6 +34,11 @@ void
 iso_create_dir_(
   upd_iso_t*  iso,
   const char* path);
+
+static
+void
+iso_abort_all_pkg_installations_(
+  upd_iso_t* iso);
 
 
 static
@@ -66,7 +73,7 @@ iso_shutdown_timer_cb_(
 static
 void
 destroyer_cb_(
-  uv_idle_t* idle);
+  uv_timer_t* timer);
 
 
 static
@@ -144,7 +151,7 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     0 <= uv_signal_init(&iso->loop, &iso->sighup) &&
     0 <= uv_timer_init(&iso->loop, &iso->walker.timer) &&
     0 <= uv_timer_init(&iso->loop, &iso->shutdown_timer) &&
-    0 <= uv_idle_init(&iso->loop, &iso->destroyer) &&
+    0 <= uv_timer_init(&iso->loop, &iso->destroyer) &&
     0 <= uv_signal_start(&iso->sigint, iso_signal_cb_, SIGINT) &&
     0 <= uv_signal_start(&iso->sighup, iso_signal_cb_, SIGHUP) &&
     0 <= uv_timer_start(
@@ -155,7 +162,6 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
   }
   uv_unref((uv_handle_t*) &iso->sigint);
   uv_unref((uv_handle_t*) &iso->sighup);
-  uv_unref((uv_handle_t*) &iso->destroyer);
   uv_unref((uv_handle_t*) &iso->walker.timer);
 
   /* init curl */
@@ -196,30 +202,34 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
     return UPD_ISO_PANIC;
   }
 
-  /* cleanup root directory */
+  iso_abort_all_pkg_installations_(iso);
+
+  /* disalbe signal handler */
+  uv_signal_stop(&iso->sigint);
+  uv_signal_stop(&iso->sighup);
+
+  /* trigger shutdown event */
   upd_file_unref(iso->files.p[0]);
+  for (size_t i = iso->files.n; ;) {
+    if (HEDLEY_UNLIKELY(i > iso->files.n)) {
+      i = iso->files.n;
+    }
+    if (HEDLEY_UNLIKELY(i == 0)) {
+      break;
+    }
+    upd_file_t* f = iso->files.p[--i];
+    upd_file_trigger(f, UPD_FILE_SHUTDOWN);
+  }
+
+  /* start destroyer */
+  const int destroy = uv_timer_start(
+    &iso->destroyer, destroyer_cb_, 0, DESTROYER_PERIOD_);
+  if (HEDLEY_UNLIKELY(0 > destroy)) {
+    return UPD_ISO_PANIC;
+  }
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
-
-  /* join all threads */
-  for (size_t i = 0; ; ++i) {
-    uv_thread_t* th = NULL;
-
-    uv_mutex_lock(&iso->mtx);
-    const size_t n  = iso->threads.n;
-    if (HEDLEY_UNLIKELY(i < n)) {
-      th = iso->threads.p[i];
-    }
-    uv_mutex_unlock(&iso->mtx);
-
-    if (HEDLEY_UNLIKELY(th == NULL)) {
-      break;
-    }
-    uv_thread_join(th);  /* ignore errors */
-  }
-  upd_array_clear(&iso->threads);
-  uv_mutex_destroy(&iso->mtx);
 
   /* close all system handlers */
   uv_close((uv_handle_t*) &iso->out,            NULL);
@@ -234,6 +244,9 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   }
   assert(iso->stack.refcnt == 0);
   assert(iso->files.n      == 0);
+  assert(iso->threads.n    == 0);
+
+  uv_mutex_destroy(&iso->mtx);
 
   /* forget all packages */
   for (size_t i = 0; i < iso->pkgs.n; ++i) {
@@ -267,8 +280,13 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   return ret;
 }
 
-void upd_iso_start_destroyer(upd_iso_t* iso) {
-  uv_idle_start(&iso->destroyer, destroyer_cb_);
+void upd_iso_exit(upd_iso_t* iso, upd_iso_status_t status) {
+  if (HEDLEY_UNLIKELY(iso->teardown)) {
+    return;
+  }
+  iso->status   = status;
+  iso->teardown = true;
+  uv_stop(&iso->loop);
 }
 
 
@@ -355,6 +373,15 @@ static void iso_create_dir_(upd_iso_t* iso, const char* path) {
     upd_iso_msgf(iso,
       "allocation failure on pathfind request of '%s', while iso setup\n", path);
     return;
+  }
+}
+
+static void iso_abort_all_pkg_installations_(upd_iso_t* iso) {
+  for (size_t i = 0; i < iso->pkgs.n; ++i) {
+    upd_pkg_t* pkg = iso->pkgs.p[i];
+    if (HEDLEY_UNLIKELY(pkg->install)) {
+      upd_pkg_abort_install(pkg->install);
+    }
   }
 }
 
@@ -459,28 +486,13 @@ static void iso_shutdown_timer_cb_(uv_timer_t* timer) {
 }
 
 
-static void destroyer_cb_(uv_idle_t* idle) {
-  upd_iso_t* iso = idle->data;
+static void destroyer_cb_(uv_timer_t* timer) {
+  upd_iso_t* iso = timer->data;
 
-  uv_signal_stop(&iso->sigint);
-  uv_signal_stop(&iso->sighup);
+  iso_abort_all_pkg_installations_(iso);
 
-  for (size_t i = 0; i < iso->pkgs.n; ++i) {
-    upd_pkg_t* pkg = iso->pkgs.p[i];
-    if (HEDLEY_UNLIKELY(pkg->install)) {
-      upd_pkg_abort_install(pkg->install);
-    }
-  }
-
-  for (size_t i = iso->files.n; ;) {
-    if (HEDLEY_UNLIKELY(i > iso->files.n)) {
-      i = iso->files.n;
-    }
-    if (HEDLEY_UNLIKELY(i == 0)) {
-      break;
-    }
-    upd_file_t* f = iso->files.p[--i];
-    upd_file_trigger(f, UPD_FILE_SHUTDOWN);
+  if (HEDLEY_UNLIKELY(iso->files.n == 0)) {
+    uv_timer_stop(&iso->destroyer);
   }
 }
 
