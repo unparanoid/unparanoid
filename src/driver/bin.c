@@ -542,15 +542,17 @@ static void task_read_exec_cb_(task_t_* task) {
     goto ABORT;
   }
 
+  const size_t off = req->stream.io.offset;
+
   size_t sz = req->stream.io.size;
-  if (HEDLEY_LIKELY(sz > ctx->bytes)) {
-    sz = ctx->bytes;
+  if (HEDLEY_LIKELY(sz+off > ctx->bytes)) {
+    sz = ctx->bytes > off? ctx->bytes-off: 0;
   }
   if (HEDLEY_LIKELY(sz > BUF_MAX_)) {
     sz = BUF_MAX_;
   }
   if (HEDLEY_UNLIKELY(sz == 0)) {
-    req->result = UPD_REQ_ABORTED;
+    req->result = UPD_REQ_OK;
     goto ABORT;
   }
 
@@ -562,8 +564,7 @@ static void task_read_exec_cb_(task_t_* task) {
 
   const uv_buf_t buf = uv_buf_init((char*) task->buf, sz);
 
-  const size_t off = req->stream.io.offset;
-  const int    err = uv_fs_read(
+  const int err = uv_fs_read(
     &iso->loop, &task->fsreq, ctx->fd, &buf, 1, off, task_read_cb_);
   if (HEDLEY_UNLIKELY(0 > err)) {
     upd_iso_unstack(iso, task->buf);
@@ -574,7 +575,6 @@ static void task_read_exec_cb_(task_t_* task) {
 
 ABORT:
   req->stream.io.size = 0;
-  req->result = UPD_REQ_ABORTED;
   req->cb(req);
   task_finalize_(task);
 }
