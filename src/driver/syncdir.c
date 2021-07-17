@@ -67,7 +67,15 @@ syncdir_inherit_drvmap_(
 
 static
 size_t
-syncdir_create_child_path_(
+syncdir_stack_child_path_(
+  ctx_t_*        ctx,
+  uint8_t**      dst,
+  const uint8_t* name,
+  size_t         len);
+
+static
+size_t
+syncdir_stack_child_npath_(
   ctx_t_*        ctx,
   uint8_t**      dst,
   const uint8_t* name,
@@ -205,25 +213,25 @@ static bool syncdir_handle_(upd_req_t* req) {
     }
     *fsreq = (uv_fs_t) { .data = req, };
 
-    uint8_t* path;
-    syncdir_create_child_path_(ctx, &path, e->name, e->len);
+    uint8_t* npath;
+    syncdir_stack_child_npath_(ctx, &npath, e->name, e->len);
 
     upd_file_ref(f);
 
     bool open;
     if (req->type == UPD_REQ_DIR_NEWDIR) {
       open = 0 <= uv_fs_mkdir(
-        &iso->loop, fsreq, (char*) path, S_IFDIR, syncdir_mkdir_cb_);
+        &iso->loop, fsreq, (char*) npath, S_IFDIR, syncdir_mkdir_cb_);
     } else {
       open = 0 <= uv_fs_open(
         &iso->loop,
         fsreq,
-        (char*) path,
+        (char*) npath,
         O_CREAT | O_EXCL | O_WRONLY,
         DEFAULT_PERMISSION_,
         syncdir_open_cb_);
     }
-    upd_iso_unstack(iso, path);
+    upd_iso_unstack(iso, npath);
     if (HEDLEY_UNLIKELY(!open)) {
       upd_file_unref(f);
       req->result = UPD_REQ_ABORTED;
@@ -271,7 +279,27 @@ static void syncdir_inherit_drvmap_(ctx_t_* ctx, drvmap_t_* drvmap) {
   }
 }
 
-static size_t syncdir_create_child_path_(
+static size_t syncdir_stack_child_path_(
+    ctx_t_* ctx, uint8_t** dst, const uint8_t* name, size_t len) {
+  upd_iso_t* iso = ctx->file->iso;
+
+  const uint8_t* par    = ctx->file->path;
+  const size_t   parlen = ctx->file->pathlen;
+
+  const size_t ret = parlen+1 + len+1;
+
+  *dst = upd_iso_stack(iso, ret);
+  if (HEDLEY_UNLIKELY(*dst == NULL)) {
+    return 0;
+  }
+  utf8ncpy(*dst, par, parlen);
+  (*dst)[parlen] = '/';
+  utf8ncpy(*dst+parlen+1, name, len);
+  (*dst)[ret-1] = 0;
+  return ret;
+}
+
+static size_t syncdir_stack_child_npath_(
     ctx_t_* ctx, uint8_t** dst, const uint8_t* name, size_t len) {
   upd_file_t* f   = ctx->file;
   upd_iso_t*  iso = f->iso;
@@ -510,14 +538,18 @@ static void syncdir_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
 
     if (HEDLEY_UNLIKELY(!found)) {
       uint8_t* path;
-      const size_t pathlen = syncdir_create_child_path_(
+      const size_t pathlen = syncdir_stack_child_path_(
         ctx, &path, (uint8_t*) ne.name, utf8size_lazy(ne.name));
+
+      uint8_t* npath;
+      const size_t npathlen = syncdir_stack_child_npath_(
+        ctx, &npath, (uint8_t*) ne.name, utf8size_lazy(ne.name));
 
       const upd_driver_t* d;
       if (dir) {
         d = &upd_driver_syncdir;
       } else {
-        d = upd_driver_select(&ctx->drvmap->rules, (uint8_t*) path);
+        d = upd_driver_select(&ctx->drvmap->rules, (uint8_t*) npath);
         if (HEDLEY_UNLIKELY(d == NULL)) {
           d = &upd_driver_bin_r;
         }
@@ -526,10 +558,13 @@ static void syncdir_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
       upd_file_t* fc = upd_file_new(&(upd_file_t) {
           .iso      = iso,
           .driver   = d,
-          .npath    = path,
-          .npathlen = pathlen,
+          .path     = path,
+          .pathlen  = pathlen,
+          .npath    = npath,
+          .npathlen = npathlen,
         });
       upd_iso_unstack(iso, path);
+      upd_iso_unstack(iso, npath);
       if (HEDLEY_UNLIKELY(fc == NULL)) {
         continue;
       }
