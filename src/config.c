@@ -56,6 +56,9 @@ struct task_file_t_ {
   task_t_*     parent;
   yaml_node_t* node;
 
+  const uint8_t* path;
+  size_t pathlen;
+
   const uint8_t* dir;
   size_t dirlen;
 
@@ -998,6 +1001,10 @@ static void task_parse_file_cb_(task_t_* task) {
     if (HEDLEY_UNLIKELY(klen == 0)) {
       continue;
     }
+    if (HEDLEY_UNLIKELY(klen >= UPD_PATH_MAX)) {
+      config_lognf_(ctx, key, "too long path");
+      continue;
+    }
 
     size_t         blen = klen;
     const uint8_t* b    = upd_path_basename(k, &blen);
@@ -1014,6 +1021,8 @@ static void task_parse_file_cb_(task_t_* task) {
     *ftask = (task_file_t_) {
       .parent  = task,
       .node    = val,
+      .path    = k,
+      .pathlen = klen,
       .dir     = k,
       .dirlen  = upd_path_dirname(k, klen),
       .name    = b,
@@ -1230,27 +1239,36 @@ static void file_lock_cb_(upd_file_lock_t* lock) {
     goto ABORT;
   }
 
-  uint8_t rpath[UPD_PATH_MAX];
-  if (ftask->npath != NULL) {
-    utf8ncpy(rpath, ftask->npath, ftask->npathlen);
-  }
-  rpath[ftask->npathlen] = 0;
+  uint8_t path[UPD_PATH_MAX+1];
+  path[0] = '/';
+  utf8ncpy(path+1, ftask->path, ftask->pathlen);
+  const size_t pathlen = upd_path_normalize(path, ftask->pathlen+1);
 
   uint8_t npath[UPD_PATH_MAX];
-  const size_t npathlen = cwk_path_join(
-    (char*) ctx->path, (char*) rpath, (char*) npath, UPD_PATH_MAX);
-  if (HEDLEY_UNLIKELY(npathlen >= UPD_PATH_MAX)) {
-    config_lognf_(ctx, ftask->node, "too long npath");
-    goto ABORT;
-  }
-  if (HEDLEY_UNLIKELY(!config_check_npath_(ctx, npath))) {
-    config_lognf_(ctx, ftask->node, "directory traversal detected X<");
-    goto ABORT;
+  size_t  npathlen = 0;
+  if (ftask->npath) {
+    uint8_t rpath[UPD_PATH_MAX];
+    utf8ncpy(rpath, ftask->npath, ftask->npathlen);
+    rpath[ftask->npathlen] = 0;
+
+    npathlen = cwk_path_join(
+      (char*) ctx->path, (char*) rpath, (char*) npath, UPD_PATH_MAX);
+    if (HEDLEY_UNLIKELY(npathlen >= UPD_PATH_MAX)) {
+      config_lognf_(ctx, ftask->node, "too long npath");
+      goto ABORT;
+    }
+    npath[npathlen] = 0;
+    if (HEDLEY_UNLIKELY(!config_check_npath_(ctx, npath))) {
+      config_lognf_(ctx, ftask->node, "directory traversal detected X<");
+      goto ABORT;
+    }
   }
 
   upd_file_t* f = upd_file_new(&(upd_file_t) {
       .iso      = iso,
       .driver   = ftask->driver,
+      .path     = path,
+      .pathlen  = pathlen,
       .npath    = npath,
       .npathlen = npathlen
     });
@@ -1258,6 +1276,7 @@ static void file_lock_cb_(upd_file_lock_t* lock) {
     config_lognf_(ctx, ftask->node, "file creation failure");
     goto ABORT;
   }
+
   if (f->driver == &upd_driver_syncdir) {
     upd_array_of(const upd_driver_rule_t*) rules = {0};
 
