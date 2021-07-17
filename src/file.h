@@ -24,11 +24,8 @@ typedef struct upd_file_t_ {
 
 HEDLEY_NON_NULL(1)
 upd_file_t*
-upd_file_new_from_npath(
-  upd_iso_t*          iso,
-  const upd_driver_t* driver,
-  const uint8_t*      npath,
-  size_t              len);
+upd_file_new_(
+  const upd_file_t* src);
 
 HEDLEY_NON_NULL(1)
 void
@@ -44,8 +41,7 @@ upd_file_try_lock(
 
 
 static inline upd_file_t* upd_file_new(const upd_file_t* src) {
-  return upd_file_new_from_npath(
-    src->iso, src->driver, src->npath, src->npathlen);
+  return upd_file_new_(src);
 }
 
 static inline upd_file_t* upd_file_get(upd_iso_t* iso, upd_file_id_t id) {

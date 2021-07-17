@@ -64,21 +64,24 @@ file_handle_close_cb_(
   uv_handle_t* handle);
 
 
-upd_file_t* upd_file_new_from_npath(
-    upd_iso_t*          iso,
-    const upd_driver_t* driver,
-    const uint8_t*      npath,
-    size_t              len) {
+upd_file_t* upd_file_new_(const upd_file_t* src) {
+  upd_iso_t*          iso = src->iso;
+  const upd_driver_t* d   = src->driver;
+
+  const size_t pathlen  = src->pathlen  + !!src->pathlen;
+  const size_t npathlen = src->npathlen + !!src->npathlen;
+  const size_t paramlen = src->paramlen + !!src->paramlen;
+
+  const size_t size = pathlen + npathlen + paramlen;
+
   upd_file_t_* f = NULL;
-  if (HEDLEY_UNLIKELY(!upd_malloc(&f, sizeof(*f)+len+!!len))) {
+  if (HEDLEY_UNLIKELY(!upd_malloc(&f, sizeof(*f)+size))) {
     return NULL;
   }
   *f = (upd_file_t_) {
     .super = {
       .iso      = iso,
-      .driver   = driver,
-      .npath    = len? (uint8_t*) (f+1): NULL,
-      .npathlen = len,
+      .driver   = d,
       .id       = iso->files_created++,
       .refcnt   = 1,
 
@@ -86,18 +89,31 @@ upd_file_t* upd_file_new_from_npath(
       .last_req    = 0,
     },
   };
-  if (len) {
-    utf8ncpy(f->super.npath, npath, len);
-    f->super.npath[len] = 0;
-  }
 
-  const bool ok   =
-    (!driver->flags.npoll || !len  || file_init_poll_(f))    &&
-    (!driver->flags.preproc        || file_init_prepare_(f)) &&
-    (!driver->flags.postproc       || file_init_check_(f))   &&
-    (!driver->flags.async          || file_init_async_(f))   &&
-    (!driver->flags.timer          || file_init_timer_(f))   &&
-    driver->init(&f->super);
+  size_t offset = 0;
+# define assign_(N) do {  \
+    if (N##len) {  \
+      f->super.N       = (uint8_t*) (f+1) + offset;  \
+      f->super.N##len  = N##len-1;  \
+      offset          += N##len;  \
+      utf8ncpy(f->super.N, src->N, N##len-1);  \
+      f->super.N[N##len-1] = 0;  \
+    }  \
+  } while (0)
+
+  assign_(path);
+  assign_(npath);
+  assign_(param);
+
+# undef assign_
+
+  const bool ok =
+    (!d->flags.npoll || !npathlen || file_init_poll_(f))    &&
+    (!d->flags.preproc            || file_init_prepare_(f)) &&
+    (!d->flags.postproc           || file_init_check_(f))   &&
+    (!d->flags.async              || file_init_async_(f))   &&
+    (!d->flags.timer              || file_init_timer_(f))   &&
+    d->init(&f->super);
 
   if (HEDLEY_UNLIKELY(!ok)) {
     file_close_all_handlers_(f);
