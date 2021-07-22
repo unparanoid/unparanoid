@@ -40,6 +40,7 @@ void upd_driver_setup(upd_iso_t* iso) {
     upd_driver_register(iso, &upd_driver_bin_r) &&
     upd_driver_register(iso, &upd_driver_bin_rw) &&
     upd_driver_register(iso, &upd_driver_bin_w) &&
+    upd_driver_register(iso, &upd_driver_syncdir) &&
     upd_driver_register(iso, &upd_driver_tensor);
   if (HEDLEY_UNLIKELY(!reg)) {
     upd_iso_msgf(iso, "system driver registration failure\n");

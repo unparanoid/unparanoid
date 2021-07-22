@@ -5,6 +5,8 @@
 
 #define CONFIG_FILE_MAX_ (1024*1024*4)  /* = 4 MiB */
 
+#define FILE_PARAM_MAX_ 1024
+
 
 typedef struct ctx_t_         ctx_t_;
 typedef struct task_t_        task_t_;
@@ -68,8 +70,10 @@ struct task_file_t_ {
   const uint8_t* npath;
   size_t npathlen;
 
+  const uint8_t* param;
+  size_t         paramlen;
+
   const upd_driver_t* driver;
-  yaml_node_t*        rules;
 };
 
 struct task_server_t_ {
@@ -347,9 +351,11 @@ static void config_find_all_fields_(
       config_lognf_(ctx, key, "unknown field");
       continue;
     }
-    if (HEDLEY_UNLIKELY(val->type != field->type)) {
-      config_lognf_(ctx, key, "incompatible type");
-      continue;
+    if (HEDLEY_LIKELY(field->type != YAML_NO_NODE)) {
+      if (HEDLEY_UNLIKELY(val->type != field->type)) {
+        config_lognf_(ctx, key, "incompatible type");
+        continue;
+      }
     }
     if (HEDLEY_UNLIKELY(*field->node)) {
       config_lognf_(ctx, key, "duplicated field");
@@ -965,34 +971,32 @@ static void task_parse_file_cb_(task_t_* task) {
     struct {
       yaml_node_t* npath;
       yaml_node_t* driver;
-      yaml_node_t* rules;
+      yaml_node_t* param;
     } fields = { NULL };
     config_find_all_fields_(ctx, val, (config_field_t_[]) {
         { "npath",  &fields.npath,  YAML_SCALAR_NODE,  },
         { "driver", &fields.driver, YAML_SCALAR_NODE,  },
-        { "rules",  &fields.rules,  YAML_MAPPING_NODE, },
+        { "param",  &fields.param,  YAML_SCALAR_NODE, },
         { NULL },
       });
-
-    const upd_driver_t* driver = &upd_driver_syncdir;
-    if (fields.driver) {
-      const size_t   vlen = fields.driver->data.scalar.length;
-      const uint8_t* v    = fields.driver->data.scalar.value;
-      driver = upd_driver_lookup(iso, v, vlen);
-      if (HEDLEY_UNLIKELY(driver == NULL)) {
-        config_lognf_(ctx, fields.driver, "unknown driver");
-        continue;
-      }
+    if (HEDLEY_UNLIKELY(fields.driver == NULL)) {
+      config_lognf_(ctx, val, "no driver specified");
+      continue;
     }
-    if (driver == &upd_driver_syncdir) {
-      if (HEDLEY_UNLIKELY(!fields.rules)) {
-        config_lognf_(ctx, key, "upd.syncdir requires rules");
-        continue;
-      }
-    } else {
-      if (HEDLEY_UNLIKELY(fields.rules)) {
-        config_lognf_(ctx, key, "rules are ignored");
-      }
+
+    const size_t   dlen = fields.driver->data.scalar.length;
+    const uint8_t* d    = fields.driver->data.scalar.value;
+    const upd_driver_t* driver = upd_driver_lookup(iso, d, dlen);;
+    if (HEDLEY_UNLIKELY(driver == NULL)) {
+      config_lognf_(ctx, fields.driver, "unknown driver '%.*s'", (int) dlen, d);
+      continue;
+    }
+
+    size_t         plen = 0;
+    const uint8_t* p    = NULL;
+    if (HEDLEY_UNLIKELY(fields.param)) {
+      plen = fields.param->data.scalar.length;
+      p    = fields.param->data.scalar.value;
     }
 
     const uint8_t* k    = key->data.scalar.value;
@@ -1019,16 +1023,17 @@ static void task_parse_file_cb_(task_t_* task) {
       goto EXIT;
     }
     *ftask = (task_file_t_) {
-      .parent  = task,
-      .node    = val,
-      .path    = k,
-      .pathlen = klen,
-      .dir     = k,
-      .dirlen  = upd_path_dirname(k, klen),
-      .name    = b,
-      .namelen = blen,
-      .driver  = driver,
-      .rules   = fields.rules,
+      .parent   = task,
+      .node     = val,
+      .path     = k,
+      .pathlen  = klen,
+      .dir      = k,
+      .dirlen   = upd_path_dirname(k, klen),
+      .name     = b,
+      .namelen  = blen,
+      .param    = p,
+      .paramlen = plen,
+      .driver   = driver,
     };
     if (HEDLEY_UNLIKELY(fields.npath)) {
       ftask->npath    = fields.npath->data.scalar.value;
@@ -1270,64 +1275,13 @@ static void file_lock_cb_(upd_file_lock_t* lock) {
       .path     = path,
       .pathlen  = pathlen,
       .npath    = npath,
-      .npathlen = npathlen
+      .npathlen = npathlen,
+      .param    = (uint8_t*) ftask->param,
+      .paramlen = ftask->paramlen,
     });
   if (HEDLEY_UNLIKELY(f == NULL)) {
     config_lognf_(ctx, ftask->node, "file creation failure");
     goto ABORT;
-  }
-
-  if (f->driver == &upd_driver_syncdir) {
-    upd_array_of(const upd_driver_rule_t*) rules = {0};
-
-    yaml_node_pair_t* itr = ftask->rules->data.mapping.pairs.start;
-    yaml_node_pair_t* end = ftask->rules->data.mapping.pairs.top;
-    for (; itr < end; ++itr) {
-      yaml_node_t* key = yaml_document_get_node(&ctx->doc, itr->key);
-      yaml_node_t* val = yaml_document_get_node(&ctx->doc, itr->value);
-      if (HEDLEY_UNLIKELY(key == NULL || key == NULL)) {
-        config_lognf_(ctx, ftask->node, "yaml fatal error");
-        continue;
-      }
-      if (HEDLEY_UNLIKELY(key->type != YAML_SCALAR_NODE)) {
-        config_lognf_(ctx, key, "key must be scalar");
-        continue;
-      }
-      if (HEDLEY_UNLIKELY(val->type != YAML_SCALAR_NODE)) {
-        config_lognf_(ctx, val, "value must be scalar");
-        continue;
-      }
-
-      const upd_driver_t* d = upd_driver_lookup(
-        iso, val->data.scalar.value, val->data.scalar.length);
-      if (HEDLEY_UNLIKELY(d == NULL)) {
-        config_lognf_(ctx, val, "unknown driver");
-        continue;
-      }
-
-      const size_t klen = key->data.scalar.length;
-
-      upd_driver_rule_t* rule = NULL;
-      if (HEDLEY_UNLIKELY(!upd_malloc(&rule, sizeof(*rule)+klen+1))) {
-        config_lognf_(ctx, key, "rule allocation failure");
-        break;
-      }
-      *rule = (upd_driver_rule_t) {
-        .ext    = utf8ncpy(rule+1, key->data.scalar.value, klen),
-        .len    = klen,
-        .driver = d,
-      };
-      rule->ext[klen] = 0;
-
-      if (HEDLEY_UNLIKELY(!upd_array_insert(&rules, rule, SIZE_MAX))) {
-        upd_free(&rule);
-        config_lognf_(ctx, key,
-          "rule insertion failure, skipping following rules");
-        break;
-      }
-    }
-    /* ownership of the rules moves to the driver */
-    upd_driver_syncdir_set_rules(f, &rules);
   }
 
   const bool add = upd_req_with_dup(&(upd_req_t) {
