@@ -80,6 +80,7 @@ target_link_libraries(updcore
     libuv
     libyaml
     mimetype.h
+    tiny-regex-c
     utf8.h
     wsock.h
     zlib

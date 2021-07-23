@@ -13,6 +13,7 @@
 #include <cwalk.h>
 #include <hedley.h>
 #include <mimetype.h>
+#include <re.h>
 #include <sha1.h>
 #include <utf8.h>
 #include <uv.h>

@@ -25,3 +25,6 @@
 [submodule "thirdparty/zlib-ng"]
 	path = thirdparty/zlib-ng
 	url = https://github.com/zlib-ng/zlib-ng
+[submodule "thirdparty/tiny-regex-c"]
+	path = thirdparty/tiny-regex-c
+	url = https://github.com/kokke/tiny-regex-c
