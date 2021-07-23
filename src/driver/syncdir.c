@@ -240,7 +240,7 @@ static bool syncdir_handle_(upd_req_t* req) {
     }
     *fsreq = (uv_fs_t) { .data = req, };
 
-    uint8_t* npath;
+    uint8_t* npath = NULL;
     syncdir_stack_child_npath_(f, &npath, e->name, e->len);
 
     bool open;
@@ -345,7 +345,7 @@ static void syncdir_parse_param_(upd_file_t* f) {
   }
   yaml_parser_set_input_string(&parser, f->param, f->paramlen);
 
-  rule_t_ rule;
+  rule_t_ rule = {0};
   enum {
     STATE_INITIAL_,
     STATE_DONE_,
