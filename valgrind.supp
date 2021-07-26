@@ -1,0 +1,12 @@
+{
+   uv-scandir
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   fun:__scandir64_tail
+   fun:uv__fs_scandir
+   fun:uv__fs_work
+   fun:worker
+   fun:start_thread
+   fun:clone
+}
