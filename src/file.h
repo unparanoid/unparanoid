@@ -192,6 +192,7 @@ static inline void upd_file_unlock(upd_file_lock_t* l) {
   if (HEDLEY_UNLIKELY(!l->ok)) {
     return;
   }
+  l->ok = false;
 
   assert(f->lock.refcnt);
   if (HEDLEY_UNLIKELY(--f->lock.refcnt)) {

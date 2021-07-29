@@ -113,15 +113,17 @@ upd_file_t* upd_file_new_(const upd_file_t* src) {
     (!d->flags.postproc           || file_init_check_(f))   &&
     (!d->flags.async              || file_init_async_(f))   &&
     (!d->flags.timer              || file_init_timer_(f))   &&
-    d->init(&f->super);
+    upd_array_insert(&iso->files, f, SIZE_MAX);
 
   if (HEDLEY_UNLIKELY(!ok)) {
     file_close_all_handlers_(f);
     upd_free(&f);
     return NULL;
   }
-  if (HEDLEY_UNLIKELY(!upd_array_insert(&iso->files, f, SIZE_MAX))) {
-    upd_file_unref(&f->super);
+  if (HEDLEY_UNLIKELY(!d->init(&f->super))) {
+    upd_array_find_and_remove(&iso->files, f);
+    file_close_all_handlers_(f);
+    upd_free(&f);
     return NULL;
   }
   return &f->super;
