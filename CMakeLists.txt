@@ -66,6 +66,7 @@ target_sources(updcore
 
     src/driver/bin.c
     src/driver/dir.c
+    src/driver/factory.c
     src/driver/syncdir.c
     src/driver/srv_tcp.c
     src/driver/tensor.c

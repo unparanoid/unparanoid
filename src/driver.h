@@ -29,6 +29,7 @@ extern const upd_driver_t upd_driver_bin_r;
 extern const upd_driver_t upd_driver_bin_rw;
 extern const upd_driver_t upd_driver_bin_w;
 extern const upd_driver_t upd_driver_dir;
+extern const upd_driver_t upd_driver_factory;
 extern const upd_driver_t upd_driver_syncdir;
 extern const upd_driver_t upd_driver_srv;
 extern const upd_driver_t upd_driver_srv_tcp;
