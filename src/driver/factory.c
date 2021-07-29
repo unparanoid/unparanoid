@@ -20,14 +20,14 @@ factory_deinit_(
   upd_file_t* f);
 
 static
-void
+bool
 factory_handle_(
   upd_req_t* req);
 
 const upd_driver_t upd_driver_factory = {
   .name = (uint8_t*) "upd.factory",
   .cats = (upd_req_cat_t[]) {
-    .UPD_REQ_PROG,
+    UPD_REQ_PROG,
     0,
   },
   .init   = factory_init_,
@@ -64,6 +64,7 @@ static void factory_deinit_(upd_file_t* f) {
 
 static bool factory_handle_(upd_req_t* req) {
   upd_file_t* f   = req->file;
+  upd_iso_t*  iso = f->iso;
   ctx_t_*     ctx = f->ctx;
 
   if (HEDLEY_UNLIKELY(req->type != UPD_REQ_PROG_EXEC)) {
@@ -71,11 +72,11 @@ static bool factory_handle_(upd_req_t* req) {
     return false;
   }
 
-  req->exec = upd_file_new(&(upd_file_t) {
+  req->prog.exec = upd_file_new(&(upd_file_t) {
       .iso    = iso,
       .driver = ctx->driver,
     });
-  if (HEDLEY_UNLIKELY(req->exec == NULL)) {
+  if (HEDLEY_UNLIKELY(req->prog.exec == NULL)) {
     req->result = UPD_REQ_ABORTED;
     upd_iso_msgf(iso, LOG_PREFIX_"product creation failure\n");
     return false;

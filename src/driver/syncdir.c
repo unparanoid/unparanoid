@@ -199,17 +199,6 @@ static bool syncdir_handle_(upd_req_t* req) {
   upd_iso_t*  iso = f->iso;
 
   switch (req->type) {
-  case UPD_REQ_DIR_ACCESS:
-    req->dir.access = (upd_req_dir_access_t) {
-      .list   = true,
-      .find   = true,
-      .new    = true,
-      .newdir = true,
-    };
-    req->result = UPD_REQ_OK;
-    req->cb(req);
-    return true;
-
   case UPD_REQ_DIR_LIST:
     req->dir.entries = (upd_req_dir_entries_t) {
       .p = (upd_req_dir_entry_t**) ctx->children.p,

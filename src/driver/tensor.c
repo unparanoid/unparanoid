@@ -69,14 +69,6 @@ static bool tensor_handle_(upd_req_t* req) {
   tensor_t_*  ctx = f->ctx;
 
   switch (req->type) {
-  case UPD_REQ_TENSOR_ACCESS:
-    req->tensor.access = (upd_req_tensor_access_t) {
-      .alloc = true,
-      .meta  = true,
-      .data  = true,
-    };
-    break;
-
   case UPD_REQ_TENSOR_ALLOC: {
     const upd_req_tensor_meta_t* m = &req->tensor.meta;
     if (HEDLEY_UNLIKELY(m->rank > MAX_RANK_)) {

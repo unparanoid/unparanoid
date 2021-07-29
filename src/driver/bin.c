@@ -295,14 +295,6 @@ static bool bin_handle_(upd_req_t* req) {
   bin_t_*     ctx = f->ctx;
 
   switch (req->type) {
-  case UPD_REQ_STREAM_ACCESS:
-    req->stream.access = (upd_req_stream_access_t) {
-      .read     = ctx->read,
-      .write    = ctx->write,
-      .truncate = ctx->write,
-    };
-    break;
-
   case UPD_REQ_STREAM_READ: {
     if (HEDLEY_UNLIKELY(!ctx->read)) {
       req->result = UPD_REQ_ABORTED;
@@ -367,9 +359,6 @@ static bool bin_handle_(upd_req_t* req) {
     req->result = UPD_REQ_INVALID;
     return false;
   }
-  req->result = UPD_REQ_OK;
-  req->cb(req);
-  return true;
 }
 
 

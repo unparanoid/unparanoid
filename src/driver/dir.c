@@ -91,22 +91,14 @@ static bool dir_handle_(upd_req_t* req) {
   upd_iso_t*  iso = f->iso;
 
   switch (req->type) {
-  case UPD_REQ_DIR_ACCESS:
-    req->dir.access = (upd_req_dir_access_t) {
-      .list   = true,
-      .find   = true,
-      .add    = true,
-      .newdir = true,
-      .rm     = true,
-    };
-    break;
-
   case UPD_REQ_DIR_LIST:
     req->dir.entries = (upd_req_dir_entries_t) {
       .n = ctx->children.n,
       .p = (upd_req_dir_entry_t**) ctx->children.p,
     };
-    break;
+    req->result = UPD_REQ_OK;
+    req->cb(req);
+    return true;
 
   case UPD_REQ_DIR_FIND: {
     size_t i;
@@ -115,7 +107,9 @@ static bool dir_handle_(upd_req_t* req) {
     } else {
       req->dir.entry = (upd_req_dir_entry_t) {0};
     }
-  } break;
+    req->result = UPD_REQ_OK;
+    req->cb(req);
+  } return true;
 
   case UPD_REQ_DIR_ADD: {
     upd_req_dir_entry_t* re = &req->dir.entry;
@@ -146,7 +140,9 @@ static bool dir_handle_(upd_req_t* req) {
       return false;
     }
     req->dir.entry = *e;
-  } break;
+    req->result    = UPD_REQ_OK;
+    req->cb(req);
+  } return true;
 
   case UPD_REQ_DIR_NEWDIR: {
     upd_req_dir_entry_t re = req->dir.entry;
@@ -185,7 +181,9 @@ static bool dir_handle_(upd_req_t* req) {
       return false;
     }
     req->dir.entry = *e;
-  } break;
+    req->result    = UPD_REQ_OK;
+    req->cb(req);
+  } return true;
 
   case UPD_REQ_DIR_RM: {
     size_t i;
@@ -196,6 +194,7 @@ static bool dir_handle_(upd_req_t* req) {
     }
     upd_req_dir_entry_t* e = upd_array_remove(&ctx->children, i);
     req->dir.entry = *e;
+    req->result    = UPD_REQ_OK;
     req->cb(req);
     entry_delete_(e);
   } return true;
@@ -204,9 +203,6 @@ static bool dir_handle_(upd_req_t* req) {
     req->result = UPD_REQ_INVALID;
     return false;
   }
-  req->result = UPD_REQ_OK;
-  req->cb(req);
-  return true;
 }
 
 
