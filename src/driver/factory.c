@@ -72,17 +72,19 @@ static bool factory_handle_(upd_req_t* req) {
     return false;
   }
 
-  req->prog.exec = upd_file_new(&(upd_file_t) {
+  upd_file_t* prod = upd_file_new(&(upd_file_t) {
       .iso    = iso,
       .driver = ctx->driver,
     });
-  if (HEDLEY_UNLIKELY(req->prog.exec == NULL)) {
+  if (HEDLEY_UNLIKELY(prod == NULL)) {
     req->result = UPD_REQ_ABORTED;
     upd_iso_msgf(iso, LOG_PREFIX_"product creation failure\n");
     return false;
   }
 
-  req->result = UPD_REQ_OK;
+  req->prog.exec = prod;
+  req->result    = UPD_REQ_OK;
   req->cb(req);
+  upd_file_unref(prod);
   return true;
 }
