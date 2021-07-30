@@ -342,8 +342,7 @@ static void config_find_all_fields_(
     /* check if the key is known */
     const config_field_t_* field = NULL;
     for (const config_field_t_* f = fields; f->name && !field; ++f) {
-      const bool match = utf8ncmp(f->name, k, klen) == 0 && f->name[klen] == 0;
-      if (HEDLEY_UNLIKELY(match)) {
+      if (HEDLEY_UNLIKELY(upd_streq_c(f->name, k, klen))) {
         field = f;
       }
     }
@@ -614,32 +613,31 @@ static void config_read_cb_(uv_fs_t* req) {
     const size_t   klen = key->data.scalar.length;
 
     bool q = false;
-#   define match_(v) (sizeof(v) == klen+1 && utf8ncmp(v, k, klen) == 0)
-    if (match_("require")) {
+    if (upd_strcaseq_c("require", k, klen)) {
       q = task_queue_with_dup_(&(task_t_) {
           .ctx  = ctx,
           .node = val,
           .cb   = task_parse_require_cb_,
         });
-    } else if (match_("import")) {
+    } else if (upd_strcaseq_c("import", k, klen)) {
       q = task_queue_with_dup_(&(task_t_) {
           .ctx  = ctx,
           .node = val,
           .cb   = task_parse_import_cb_,
         });
-    } else if (match_("driver")) {
+    } else if (upd_strcaseq_c("driver", k, klen)) {
       q = task_queue_with_dup_(&(task_t_) {
           .ctx  = ctx,
           .node = val,
           .cb   = task_parse_driver_cb_,
         });
-    } else if (match_("file")) {
+    } else if (upd_strcaseq_c("file", k, klen)) {
       q = task_queue_with_dup_(&(task_t_) {
           .ctx  = ctx,
           .node = val,
           .cb   = task_parse_file_cb_,
         });
-    } else if (match_("server")) {
+    } else if (upd_strcaseq_c("server", k, klen)) {
       q = task_queue_with_dup_(&(task_t_) {
           .ctx  = ctx,
           .node = val,
@@ -649,7 +647,6 @@ static void config_read_cb_(uv_fs_t* req) {
       config_lognf_(ctx, key, "unknown block");
       continue;
     }
-#   undef match_
 
     if (HEDLEY_UNLIKELY(!q)) {
       config_lognf_(ctx, key, "queuing task failure, aborting");

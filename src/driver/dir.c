@@ -246,7 +246,7 @@ static bool entry_find_by_name_(
     dir_t_* ctx, size_t* i, const uint8_t* name, size_t len) {
   for (*i = 0; *i < ctx->children.n; ++*i) {
     const upd_req_dir_entry_t* e = ctx->children.p[*i];
-    if (HEDLEY_UNLIKELY(e->len == len && utf8ncmp(e->name, name, len) == 0)) {
+    if (HEDLEY_UNLIKELY(upd_streq(e->name, e->len, name, len))) {
       return true;
     }
   }

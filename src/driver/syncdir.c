@@ -303,10 +303,7 @@ static bool syncdir_find_(upd_file_t* f, upd_req_dir_entry_t* e) {
 
   for (size_t i = 0; i < ctx->children.n; ++i) {
     const upd_req_dir_entry_t* g = ctx->children.p[i];
-
-    const bool match =
-      g->len == e->len && utf8ncmp(e->name, g->name, g->len) == 0;
-    if (HEDLEY_UNLIKELY(match)) {
+    if (HEDLEY_UNLIKELY(upd_streq(e->name, e->len, g->name, g->len))) {
       *e = *g;
       return true;
     }

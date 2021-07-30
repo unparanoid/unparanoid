@@ -82,7 +82,7 @@ static inline const upd_driver_t* upd_driver_lookup(
     upd_iso_t* iso, const uint8_t* name, size_t len) {
   for (size_t i = 0; i < iso->drivers.n; ++i) {
     const upd_driver_t* d = iso->drivers.p[i];
-    if (HEDLEY_UNLIKELY(utf8ncmp(d->name, name, len) == 0 && d->name[len] == 0)) {
+    if (HEDLEY_UNLIKELY(upd_streq_c(d->name, name, len))) {
       return d;
     }
   }

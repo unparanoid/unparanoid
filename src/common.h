@@ -35,6 +35,7 @@
 #include <libupd/memory.h>
 #include <libupd/path.h>
 #include <libupd/pathfind.h>
+#include <libupd/str.h>
 
 
 typedef struct upd_pkg_t upd_pkg_t;
