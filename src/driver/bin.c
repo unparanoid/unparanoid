@@ -1,11 +1,11 @@
 #include "common.h"
 
 
+#define LOG_PREFIX_ "upd.bin: "
+
 #define BUF_MAX_ (1024*1024*8)  /* = 8 MiB */
 
 #define DEFAULT_MIMETYPE_ "application/octet-stream"
-
-#define FILE_CLOSE_PERIOD_ 10000
 
 
 typedef struct bin_t_  bin_t_;
@@ -41,25 +41,13 @@ struct task_t_ {
 
 
 static
+void
+bin_parse_param_(
+  upd_file_t* f);
+
+static
 bool
 bin_init_(
-  upd_file_t* f,
-  bool        r,
-  bool        w);
-
-static
-bool
-bin_init_r_(
-  upd_file_t* f);
-
-static
-bool
-bin_init_w_(
-  upd_file_t* f);
-
-static
-bool
-bin_init_rw_(
   upd_file_t* f);
 
 static
@@ -72,47 +60,17 @@ bool
 bin_handle_(
   upd_req_t* req);
 
-const upd_driver_t upd_driver_bin_r = {
-  .name = (uint8_t*) "upd.bin.r",
+const upd_driver_t upd_driver_bin = {
+  .name = (uint8_t*) "upd.bin",
   .cats = (upd_req_cat_t[]) {
     UPD_REQ_STREAM,
     0,
   },
-  .uncache_period = FILE_CLOSE_PERIOD_,
+  .uncache_period = 10000,
   .flags = {
     .npoll = true,
   },
-  .init   = bin_init_r_,
-  .deinit = bin_deinit_,
-  .handle = bin_handle_,
-};
-
-const upd_driver_t upd_driver_bin_rw = {
-  .name = (uint8_t*) "upd.bin.rw",
-  .cats = (upd_req_cat_t[]) {
-    UPD_REQ_STREAM,
-    0,
-  },
-  .uncache_period = FILE_CLOSE_PERIOD_,
-  .flags = {
-    .npoll = true,
-  },
-  .init   = bin_init_rw_,
-  .deinit = bin_deinit_,
-  .handle = bin_handle_,
-};
-
-const upd_driver_t upd_driver_bin_w = {
-  .name = (uint8_t*) "upd.bin.w",
-  .cats = (upd_req_cat_t[]) {
-    UPD_REQ_STREAM,
-    0,
-  },
-  .uncache_period = FILE_CLOSE_PERIOD_,
-  .flags = {
-    .npoll = true,
-  },
-  .init   = bin_init_w_,
+  .init   = bin_init_,
   .deinit = bin_deinit_,
   .handle = bin_handle_,
 };
@@ -206,8 +164,63 @@ task_close_cb_(
   uv_fs_t* fsreq);
 
 
-static bool bin_init_(upd_file_t* f, bool r, bool w) {
+static void bin_parse_param_(upd_file_t* f) {
+  upd_iso_t* iso = f->iso;
+  bin_t_*    ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(f->paramlen == 0)) {
+    return;
+  }
+
+  yaml_document_t doc = {0};
+  if (HEDLEY_UNLIKELY(!upd_yaml_parse(&doc, f->param, f->paramlen))) {
+    upd_iso_msgf(iso, LOG_PREFIX_"invalid param is ignored\n");
+    return;
+  }
+
+  const yaml_node_t* mode = NULL;
+
+  const char* invalid =
+    upd_yaml_find_fields_from_root(&doc, (upd_yaml_field_t[]) {
+        { .name = "mode", .str = &mode, },
+        { NULL, },
+      });
+  if (HEDLEY_UNLIKELY(invalid)) {
+    upd_iso_msgf(iso, LOG_PREFIX_"invalid param field '%s'\n", invalid);
+    goto EXIT;
+  }
+
+  if (mode) {
+    const uint8_t* mode_s = mode->data.scalar.value;
+    const size_t   mode_n = mode->data.scalar.length;
+    if (upd_strcaseq_c("rw", mode_s, mode_n)) {
+      ctx->read  = true;
+      ctx->write = true;
+
+    } else if (upd_strcaseq_c("r", mode_s, mode_n)) {
+      ctx->read  = true;
+      ctx->write = false;
+
+    } else if (upd_strcaseq_c("w", mode_s, mode_n)) {
+      ctx->read  = false;
+      ctx->write = true;
+
+    } else {
+      upd_iso_msgf(iso,
+        LOG_PREFIX_"invalid mode: '%.*s'\n", (int) mode_n, mode_s);
+      goto EXIT;
+    }
+  }
+
+EXIT:
+  yaml_document_delete(&doc);
+}
+
+static bool bin_init_(upd_file_t* f) {
+  upd_iso_t* iso = f->iso;
+
   if (HEDLEY_UNLIKELY(!f->npath)) {
+    upd_iso_msgf(iso, LOG_PREFIX_"empty npath\n");
     return false;
   }
 
@@ -225,19 +238,22 @@ static bool bin_init_(upd_file_t* f, bool r, bool w) {
 
   bin_t_* ctx = NULL;
   if (HEDLEY_UNLIKELY(!upd_malloc(&ctx, sizeof(*ctx)))) {
+    upd_iso_msgf(iso, LOG_PREFIX_"context allocation failure\n");
     return false;
   }
   *ctx = (bin_t_) {
-    .read  = r,
-    .write = w,
+    .watch = {
+      .file = f,
+      .cb   = bin_watch_cb_,
+    },
+    .read  = true,
+    .write = true,
   };
   f->ctx = ctx;
+  bin_parse_param_(f);
 
-  ctx->watch = (upd_file_watch_t) {
-    .file = f,
-    .cb   = bin_watch_cb_,
-  };
   if (HEDLEY_UNLIKELY(!upd_file_watch(&ctx->watch))) {
+    upd_iso_msgf(iso, LOG_PREFIX_"self watch failure\n");
     upd_free(&ctx);
     return false;
   }
@@ -247,23 +263,12 @@ static bool bin_init_(upd_file_t* f, bool r, bool w) {
       .exec = task_stat_exec_cb_,
     });
   if (HEDLEY_UNLIKELY(!q)) {
+    upd_iso_msgf(iso, LOG_PREFIX_"failed to queue first task\n");
     upd_file_unwatch(&ctx->watch);
     upd_free(&ctx);
     return false;
   }
   return true;
-}
-
-static bool bin_init_r_(upd_file_t* f) {
-  return bin_init_(f, true, false);
-}
-
-static bool bin_init_rw_(upd_file_t* f) {
-  return bin_init_(f, true, true);
-}
-
-static bool bin_init_w_(upd_file_t* f) {
-  return bin_init_(f, false, true);
 }
 
 static void bin_deinit_(upd_file_t* f) {

@@ -5,11 +5,12 @@
 
 #define DEFAULT_PERMISSION_ 0600
 
-#define RULE_REGEX_MAX_ 64
+#define RULE_BACKEND_STACK_MAX_ 8
 
 
-typedef struct ctx_t_  ctx_t_;
-typedef struct rule_t_ rule_t_;
+typedef struct ctx_t_       ctx_t_;
+typedef struct rule_t_      rule_t_;
+typedef struct rule_item_t_ rule_item_t_;
 
 struct ctx_t_ {
   upd_file_t*      parent;
@@ -25,12 +26,24 @@ struct ctx_t_ {
   unsigned busy     : 1;
 };
 
-typedef struct rule_t_ {
+struct rule_t_ {
+  uint8_t* pattern;
+
+  upd_array_of(rule_item_t_*) items;
+};
+
+struct rule_item_t_ {
+  uint8_t* param;
+  size_t   paramlen;
+
   const upd_driver_t* driver;
+};
 
-  uint8_t pattern[RULE_REGEX_MAX_];
-} rule_t_;
 
+static
+bool
+syncdir_parse_param_(
+  upd_file_t* f);
 
 static
 bool
@@ -70,15 +83,17 @@ syncdir_find_(
   upd_req_dir_entry_t* e);
 
 static
-void
-syncdir_parse_param_(
-  upd_file_t* f);
-
-static
-const upd_driver_t*
-syncdir_select_driver_(
+const rule_t_*
+syncdir_select_rule_(
   upd_file_t*        f,
   const uv_dirent_t* e);
+
+static
+upd_file_t*
+syncdir_create_file_from_rule_(
+  upd_file_t*    f,
+  const rule_t_* rule,
+  upd_file_t*    proto);
 
 HEDLEY_PRINTF_FORMAT(2, 3)
 static
@@ -145,6 +160,150 @@ syncdir_sync_n2u_scandir_cb_(
   uv_fs_t* fsreq);
 
 
+static bool syncdir_parse_param_(upd_file_t* f) {
+  upd_iso_t* iso = f->iso;
+  ctx_t_*    ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(f->paramlen == 0)) {
+    return false;
+  }
+
+  yaml_document_t doc = {0};
+  if (HEDLEY_UNLIKELY(!upd_yaml_parse(&doc, f->param, f->paramlen))) {
+    syncdir_logf_(f, "param parse failure");
+    return false;
+  }
+
+  const yaml_node_t* node = yaml_document_get_root_node(&doc);
+  if (HEDLEY_UNLIKELY(!node || node->type != YAML_MAPPING_NODE)) {
+    yaml_document_delete(&doc);
+    syncdir_logf_(f, "expected syncdir rule list (mapping)");
+    return false;
+  }
+
+  const yaml_node_pair_t* itr = node->data.mapping.pairs.start;
+  const yaml_node_pair_t* end = node->data.mapping.pairs.top;
+  for (; itr < end; ++itr) {
+    const yaml_node_t* k = yaml_document_get_node(&doc, itr->key);
+    const yaml_node_t* v = yaml_document_get_node(&doc, itr->value);
+
+    if (HEDLEY_UNLIKELY(!k || k->type != YAML_SCALAR_NODE)) {
+      syncdir_logf_(f, "found non-string key, skipping");
+      continue;
+    }
+
+    const uint8_t* pattern    = k->data.scalar.value;
+    const size_t   patternlen = k->data.scalar.length;
+
+    if (HEDLEY_UNLIKELY(!v || v->type != YAML_SEQUENCE_NODE)) {
+      syncdir_logf_(f,
+        "found non-sequence value, skipping '%.*s'", (int) patternlen, pattern);
+      continue;
+    }
+
+    rule_t_* rule = NULL;
+    if (HEDLEY_UNLIKELY(!upd_malloc(&rule, sizeof(*rule)+patternlen+1))) {
+      syncdir_logf_(f, "rule allocation failure, skipping");
+      continue;
+    }
+    *rule = (rule_t_) {
+      .pattern = utf8ncpy(rule+1, pattern, patternlen),
+    };
+    rule->pattern[patternlen] = 0;
+
+    const yaml_node_item_t* itr = v->data.sequence.items.start;
+    const yaml_node_item_t* end = v->data.sequence.items.top;
+    for (; itr < end; ++itr) {
+      const yaml_node_t* v = yaml_document_get_node(&doc, *itr);
+      if (HEDLEY_UNLIKELY(!v)) continue;
+
+      const yaml_node_t* driver = NULL;
+      const yaml_node_t* param  = NULL;
+
+      switch (v->type) {
+      case YAML_SCALAR_NODE:
+        driver = v;
+        break;
+
+      case YAML_MAPPING_NODE: {
+        const char* invalid =
+          upd_yaml_find_fields(&doc, v, (upd_yaml_field_t[]) {
+              { .name = "driver", .required = true,  .str = &driver, },
+              { .name = "param",  .required = false, .str = &param,  },
+              { NULL, },
+            });
+        if (HEDLEY_UNLIKELY(invalid)) {
+          syncdir_logf_(f,
+            "invalid field '%s' in pattern '%.*s'",
+            invalid, (int) patternlen, pattern);
+          goto ABORT_PATTERN;
+        }
+      } break;
+
+      default:
+        syncdir_logf_(f,
+          "expected scalar or mapping in pattern '%.*s'",
+          (int) patternlen, pattern);
+        goto ABORT_PATTERN;
+      }
+
+      const uint8_t* dname    = driver->data.scalar.value;
+      const size_t   dnamelen = driver->data.scalar.length;
+      const upd_driver_t* d = upd_driver_lookup(iso, dname, dnamelen);
+      if (HEDLEY_UNLIKELY(d == NULL)) {
+        syncdir_logf_(f, "unknown driver '%.*s' in pattern '%.*s'",
+          (int) dnamelen, dname, (int) patternlen, pattern);
+        break;
+      }
+
+      const uint8_t* p    = NULL;
+      size_t         plen = 0;
+      if (param) {
+        p    = param->data.scalar.value;
+        plen = param->data.scalar.length;
+      }
+
+      rule_item_t_* item = NULL;
+      if (HEDLEY_UNLIKELY(!upd_malloc(&item, sizeof(*item)+plen+1))) {
+        syncdir_logf_(f, "rule item allocation failure");
+        break;
+      }
+      *item = (rule_item_t_) {
+        .driver = d,
+        .param  = utf8ncpy(item+1, p, plen),
+      };
+      item->param[plen] = 0;
+
+      if (HEDLEY_UNLIKELY(!upd_array_insert(&rule->items, item, SIZE_MAX))) {
+        upd_free(&item);
+        syncdir_logf_(f, "rule item insertion failure");
+        break;
+      }
+    }
+
+ABORT_PATTERN:
+    if (HEDLEY_UNLIKELY(rule->items.n == 0)) {
+      upd_free(&rule);
+      syncdir_logf_(f,
+        "pattern '%.*s' has no configuration", (int) patternlen, pattern);
+      continue;
+    }
+    if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->rules, rule, SIZE_MAX))) {
+      upd_free(&rule);
+      syncdir_logf_(f, "rule insertion failure, skipping");
+      continue;
+    }
+  }
+
+  yaml_document_delete(&doc);
+
+  if (HEDLEY_UNLIKELY(ctx->rules.n == 0)) {
+    syncdir_logf_(f, "syncdir has no rules");
+    return false;
+  }
+  return true;
+}
+
 static bool syncdir_init_(upd_file_t* f) {
   if (HEDLEY_UNLIKELY(f->npath == NULL || f->path == NULL)) {
     return false;
@@ -161,13 +320,18 @@ static bool syncdir_init_(upd_file_t* f) {
       .cb    = syncdir_watch_cb_,
     },
   };
+  f->ctx = ctx;
+
   if (HEDLEY_UNLIKELY(!upd_file_watch(&ctx->watch))) {
     upd_free(&ctx);
     return false;
   }
-  f->ctx = ctx;
+  if (HEDLEY_UNLIKELY(!syncdir_parse_param_(f))) {
+    upd_file_unwatch(&ctx->watch);
+    upd_free(&ctx);
+    return false;
+  }
 
-  syncdir_parse_param_(f);
   if (HEDLEY_UNLIKELY(!syncdir_sync_n2u_(f, NULL))) {
     syncdir_logf_(f, "first sync failed");
   }
@@ -179,6 +343,10 @@ static void syncdir_deinit_(upd_file_t* f) {
 
   for (size_t i = 0; i < ctx->children.n; ++i) {
     upd_req_dir_entry_t* e = ctx->children.p[i];
+    if (HEDLEY_UNLIKELY(e->file->driver == &upd_driver_syncdir)) {
+      ctx_t_* subctx = e->file->ctx;
+      subctx->parent = NULL;
+    }
     upd_file_unref(e->file);
     upd_free(&e);
   }
@@ -186,6 +354,11 @@ static void syncdir_deinit_(upd_file_t* f) {
 
   for (size_t i = 0; i < ctx->rules.n; ++i) {
     rule_t_* r = ctx->rules.p[i];
+    for (size_t j = 0; j < r->items.n; ++j) {
+      rule_item_t_* item = r->items.p[j];
+      upd_free(&item);
+    }
+    upd_array_clear(&r->items);
     upd_free(&r);
   }
   upd_array_clear(&ctx->rules);
@@ -312,154 +485,7 @@ static bool syncdir_find_(upd_file_t* f, upd_req_dir_entry_t* e) {
   return false;
 }
 
-static void syncdir_parse_param_(upd_file_t* f) {
-  upd_iso_t* iso = f->iso;
-  ctx_t_*    ctx = f->ctx;
-
-  if (HEDLEY_UNLIKELY(f->param == NULL)) {
-    return;
-  }
-
-  yaml_parser_t parser;
-  if (HEDLEY_UNLIKELY(!yaml_parser_initialize(&parser))) {
-    syncdir_logf_(f, "param parser allocation failure");
-    return;
-  }
-  yaml_parser_set_input_string(&parser, f->param, f->paramlen);
-
-  rule_t_ rule = {0};
-  enum {
-    STATE_INITIAL_,
-    STATE_DONE_,
-
-    STATE_RULE_LIST_,
-    STATE_RULE_,
-    STATE_RULE_DRIVER_,
-    STATE_RULE_PATTERN_,
-    STATE_RULE_TYPE_,
-  } state = STATE_INITIAL_;
-
-  while (state != STATE_DONE_) {
-    yaml_event_t e;
-    if (HEDLEY_UNLIKELY(!yaml_parser_parse(&parser, &e))) {
-      syncdir_logf_(f, "param parser: parse failure");
-      break;
-    }
-
-    const uint8_t* tok    = e.data.scalar.value;
-    const size_t   toklen = e.data.scalar.length;
-
-    switch (state) {
-    case STATE_INITIAL_:
-      switch (e.type) {
-      case YAML_STREAM_START_EVENT:
-      case YAML_DOCUMENT_START_EVENT:
-        break;
-
-      case YAML_SEQUENCE_START_EVENT:
-        state = STATE_RULE_LIST_;
-        break;
-
-      case YAML_STREAM_END_EVENT:
-      case YAML_DOCUMENT_END_EVENT:
-        state = STATE_DONE_;
-        break;
-
-      default:
-        syncdir_logf_(f, "param parser: root must be sequence");
-        state = STATE_DONE_;
-      }
-      break;
-
-    case STATE_RULE_LIST_:
-      switch (e.type) {
-      case YAML_MAPPING_START_EVENT:
-        rule = (rule_t_) {0};
-        state = STATE_RULE_;
-        break;
-      case YAML_SEQUENCE_END_EVENT:
-        state = STATE_INITIAL_;
-        break;
-      default:
-        syncdir_logf_(f, "param parser: rule must be mapping");
-        state = STATE_DONE_;
-      }
-      break;
-
-    case STATE_RULE_:
-      switch (e.type) {
-      case YAML_SCALAR_EVENT:
-        state =
-          utf8cmp(tok, "driver")  == 0? STATE_RULE_DRIVER_:
-          utf8cmp(tok, "pattern") == 0? STATE_RULE_PATTERN_:
-          utf8cmp(tok, "type")    == 0? STATE_RULE_TYPE_:
-          STATE_DONE_;
-        if (HEDLEY_UNLIKELY(state == STATE_DONE_)) {
-          syncdir_logf_(f, "param parser: unknown key '%s'", tok);
-        }
-        break;
-      case YAML_MAPPING_END_EVENT: {
-        state = STATE_DONE_;
-        if (HEDLEY_UNLIKELY(rule.driver == NULL)) {
-          syncdir_logf_(f, "no driver is specified for rule");
-          break;
-        }
-        rule_t_* r = NULL;
-        if (HEDLEY_UNLIKELY(!upd_malloc(&r, sizeof(*r)))) {
-          syncdir_logf_(f, "rule allocation failure");
-          break;
-        }
-        *r = rule;
-        if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->rules, r, SIZE_MAX))) {
-          upd_free(&r);
-          syncdir_logf_(f, "rule insertion failure");
-          state = STATE_DONE_;
-          break;
-        }
-        state = STATE_RULE_LIST_;
-      } break;
-
-      default:
-        syncdir_logf_(f, "param parser: invalid rule '%s'", tok);
-        state = STATE_DONE_;
-      }
-      break;
-
-    case STATE_RULE_DRIVER_:
-      rule.driver = upd_driver_lookup(iso, tok, utf8size_lazy(tok));
-      if (HEDLEY_UNLIKELY(rule.driver == NULL)) {
-        syncdir_logf_(f, "param parser: unknown driver '%s'", tok);
-      }
-      state = STATE_RULE_;
-      break;
-
-    case STATE_RULE_PATTERN_:
-      if (HEDLEY_LIKELY(toklen < RULE_REGEX_MAX_)) {
-        utf8cpy(rule.pattern, tok);
-      } else {
-        syncdir_logf_(f, "param parser: too long pattern ignored");
-      }
-      state = STATE_RULE_;
-      break;
-
-    case STATE_RULE_TYPE_:
-      /* TODO */
-      state = STATE_RULE_;
-      break;
-
-    default:
-      assert(false);
-    }
-
-    if (HEDLEY_UNLIKELY(e.type == YAML_STREAM_END_EVENT)) {
-      state = STATE_DONE_;
-    }
-    yaml_event_delete(&e);
-  }
-  yaml_parser_delete(&parser);
-}
-
-static const upd_driver_t* syncdir_select_driver_(
+static const rule_t_* syncdir_select_rule_(
     upd_file_t* f, const uv_dirent_t* e) {
   ctx_t_* ctx = f->ctx;
 
@@ -470,13 +496,40 @@ static const upd_driver_t* syncdir_select_driver_(
       int matchlen = 0;
       re_match((char*) r->pattern, e->name, &matchlen);
       if (HEDLEY_UNLIKELY(e->name[matchlen] == 0)) {
-        return r->driver;
+        return r;
       }
     } else {
-      return r->driver;
+      return r;
     }
   }
+  if (HEDLEY_UNLIKELY(ctx->parent)) {
+    return syncdir_select_rule_(ctx->parent, e);
+  }
   return NULL;
+}
+
+static upd_file_t* syncdir_create_file_from_rule_(
+    upd_file_t* f, const rule_t_* rule, upd_file_t* proto) {
+  upd_file_t* fc = NULL;
+  for (ssize_t i = rule->items.n-1; i >= 0; --i) {
+    rule_item_t_* item = rule->items.p[i];
+
+    proto->driver   = item->driver;
+    proto->param    = item->param;
+    proto->paramlen = item->paramlen;
+
+    upd_file_t* temp = upd_file_new(proto);
+    if (HEDLEY_UNLIKELY(temp == NULL)) {
+      if (fc) upd_file_unref(fc);
+      return NULL;
+    }
+    if (HEDLEY_UNLIKELY(temp->driver == &upd_driver_syncdir)) {
+      ctx_t_* subctx = fc->ctx;
+      subctx->parent = f;
+    }
+    fc = temp;
+  }
+  return fc;
 }
 
 static void syncdir_logf_(upd_file_t* f, const char* fmt, ...) {
@@ -694,9 +747,10 @@ static void syncdir_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
     }
 
     if (HEDLEY_UNLIKELY(!found)) {
-      const upd_driver_t* d = syncdir_select_driver_(f, &ne);
-      if (HEDLEY_UNLIKELY(d == NULL)) {
-        syncdir_logf_(f, "no suitable driver found, '%s' is ignored", ne.name);
+      const rule_t_* rule = NULL;
+      rule = syncdir_select_rule_(f, &ne);
+      if (HEDLEY_UNLIKELY(rule == NULL)) {
+        syncdir_logf_(f, "no pattern matched, '%s' is ignored", ne.name);
         continue;
       }
 
@@ -717,9 +771,8 @@ static void syncdir_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
         continue;
       }
 
-      upd_file_t* fc = upd_file_new(&(upd_file_t) {
+      upd_file_t* fc = syncdir_create_file_from_rule_(f, rule, &(upd_file_t) {
           .iso      = iso,
-          .driver   = d,
           .path     = path,
           .pathlen  = pathlen,
           .npath    = npath,
@@ -731,10 +784,6 @@ static void syncdir_sync_n2u_scandir_cb_(uv_fs_t* fsreq) {
       if (HEDLEY_UNLIKELY(fc == NULL)) {
         syncdir_logf_(f, "file creation failed, '%s' is ignored", ne.name);
         continue;
-      }
-      if (HEDLEY_UNLIKELY(d == &upd_driver_syncdir)) {
-        ctx_t_* subctx = fc->ctx;
-        subctx->parent = f;
       }
 
       const size_t         len = utf8size_lazy(ne.name);

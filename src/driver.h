@@ -25,9 +25,7 @@ struct upd_driver_load_external_t {
 };
 
 
-extern const upd_driver_t upd_driver_bin_r;
-extern const upd_driver_t upd_driver_bin_rw;
-extern const upd_driver_t upd_driver_bin_w;
+extern const upd_driver_t upd_driver_bin;
 extern const upd_driver_t upd_driver_dir;
 extern const upd_driver_t upd_driver_factory;
 extern const upd_driver_t upd_driver_syncdir;
