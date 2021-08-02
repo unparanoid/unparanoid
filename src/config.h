@@ -8,26 +8,17 @@ typedef enum upd_config_feature_t {
   UPD_CONFIG_IMPORT  = 1 << 1,
   UPD_CONFIG_DRIVER  = 1 << 2,
   UPD_CONFIG_FILE    = 1 << 3,
-  UPD_CONFIG_SERVER  = 1 << 4,
 
   UPD_CONFIG_FULL =
     UPD_CONFIG_REQUIRE |
     UPD_CONFIG_IMPORT  |
     UPD_CONFIG_DRIVER  |
-    UPD_CONFIG_FILE    |
-    UPD_CONFIG_SERVER,
-
-  UPD_CONFIG_REQUIRED =  /* required pkg cannot build server */
-    UPD_CONFIG_REQUIRE |
-    UPD_CONFIG_IMPORT  |
-    UPD_CONFIG_DRIVER  |
     UPD_CONFIG_FILE,
 
-  UPD_CONFIG_IMPORTED =  /* imported config cannot import another */
+  UPD_CONFIG_SECURE =
     UPD_CONFIG_REQUIRE |
     UPD_CONFIG_DRIVER  |
-    UPD_CONFIG_FILE    |
-    UPD_CONFIG_SERVER,
+    UPD_CONFIG_FILE,
 } upd_config_feature_t;
 
 typedef uint8_t upd_config_features_t;

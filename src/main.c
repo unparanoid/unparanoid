@@ -47,6 +47,10 @@ int main(int argc, char** argv) {
       fprintf(stderr, "isolated machine panicked X(\n");
       return EXIT_FAILURE;
 
+    case UPD_ISO_RUNNING:
+      printf("isolated machine has finished all jobs X3\n");
+      goto EXIT;
+
     case UPD_ISO_SHUTDOWN:
       printf("isolated machine exited gracefully X)\n");
       goto EXIT;

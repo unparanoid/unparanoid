@@ -828,7 +828,7 @@ static void pkg_mkdir_cb_(mkdir_t_* md) {
     const bool load = upd_config_load_with_dup(&(upd_config_load_t) {
         .iso   = iso,
         .path  = pkg->npath,
-        .feats = UPD_CONFIG_REQUIRED,
+        .feats = UPD_CONFIG_SECURE,
         .udata = inst,
         .cb    = pkg_config_cb_,
       });
