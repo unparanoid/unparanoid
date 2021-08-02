@@ -53,6 +53,10 @@ int main(int argc, char** argv) {
 
     case UPD_ISO_REBOOT:
       continue;
+
+    default:
+      assert(false);
+      HEDLEY_UNREACHABLE();
     }
   }
 

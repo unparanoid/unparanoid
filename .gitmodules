@@ -13,9 +13,6 @@
 [submodule "thirdparty/libuv"]
 	path = thirdparty/libuv
 	url = https://github.com/libuv/libuv
-[submodule "thirdparty/libyaml"]
-	path = thirdparty/libyaml
-	url = https://github.com/yaml/libyaml
 [submodule "thirdparty/curl"]
 	path = thirdparty/curl
 	url = https://github.com/curl/curl

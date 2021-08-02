@@ -130,6 +130,8 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     .shutdown_timer = { .data = iso, },
     .destroyer      = { .data = iso, },
 
+    .status = UPD_ISO_RUNNING,
+
     .stack = {
       .size = stacksz,
       .ptr  = (uint8_t*) (iso+1),

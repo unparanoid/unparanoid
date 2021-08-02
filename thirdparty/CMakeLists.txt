@@ -51,11 +51,6 @@ else()
 endif()
 
 
-# ---- libyaml (https://github.com/yaml/libyaml)
-add_subdirectory(libyaml)
-add_library(libyaml ALIAS yaml)
-
-
 # ---- mimetype.h (https://github.com/falsycat/mimetype.h) ----
 add_subdirectory(mimetype.h)
 

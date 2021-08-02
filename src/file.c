@@ -85,6 +85,8 @@ upd_file_t* upd_file_new_(const upd_file_t* src) {
       .id       = iso->files_created++,
       .refcnt   = 1,
 
+      .backend  = src->backend,
+
       .last_update = 0,
       .last_req    = 0,
     },
@@ -143,6 +145,10 @@ void upd_file_delete(upd_file_t* f) {
 
   upd_array_find_and_remove(&f->iso->files, f);
   f->driver->deinit(f);
+
+  if (f->backend) {
+    upd_file_unref(f->backend);
+  }
   upd_free(&f_);
 }
 
