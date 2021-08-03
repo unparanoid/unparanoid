@@ -31,6 +31,9 @@ struct ctx_t_ {
   size_t          refcnt;
 
   task_t_* last_task;
+
+  /* used in config_create_file_'s recursion */
+  uint8_t temp[UPD_PATH_MAX];
 };
 
 struct task_t_ {
@@ -307,6 +310,7 @@ static upd_file_t* config_create_file_(
       return NULL;
     }
 
+    uint8_t* npath_abs = ctx->temp;
     if (npath) {
       if (HEDLEY_UNLIKELY(proto->npathlen)) {
         config_lognf_(ctx, npath, "backend file cannot override npath");
@@ -324,19 +328,19 @@ static upd_file_t* config_create_file_(
       utf8ncpy(npath_c, npath_, npathlen);
       npath_c[npathlen] = 0;
 
-      uint8_t abs[UPD_PATH_MAX];
       const size_t abslen =
         cwk_path_join((char*) ctx->path, (char*) npath_c, NULL, 0);
-      if (HEDLEY_UNLIKELY(abslen >= sizeof(abs))) {
+      if (HEDLEY_UNLIKELY(abslen >= sizeof(ctx->temp))) {
         config_lognf_(ctx, node, "too long npath");
         return NULL;
       }
-      cwk_path_join((char*) ctx->path, (char*) npath_c, (char*) abs, abslen+1);
-      if (HEDLEY_UNLIKELY(!config_check_npath_(ctx, abs))) {
+      cwk_path_join(
+        (char*) ctx->path, (char*) npath_c, (char*) npath_abs, abslen+1);
+      if (HEDLEY_UNLIKELY(!config_check_npath_(ctx, npath_abs))) {
         config_lognf_(ctx, npath, "directory traversal detected X(");
         return NULL;
       }
-      proto->npath    = abs;
+      proto->npath    = npath_abs;
       proto->npathlen = abslen;
     }
 
