@@ -39,6 +39,7 @@ void upd_driver_setup(upd_iso_t* iso) {
   const bool reg =
     upd_driver_register(iso, &upd_driver_bin) &&
     upd_driver_register(iso, &upd_driver_factory) &&
+    upd_driver_register(iso, &upd_driver_srv_tcp) &&
     upd_driver_register(iso, &upd_driver_syncdir) &&
     upd_driver_register(iso, &upd_driver_tensor);
   if (HEDLEY_UNLIKELY(!reg)) {
