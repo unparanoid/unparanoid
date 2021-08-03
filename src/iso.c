@@ -162,8 +162,6 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
   if (HEDLEY_UNLIKELY(!uv_ok)) {
     return NULL;
   }
-  uv_unref((uv_handle_t*) &iso->sigint);
-  uv_unref((uv_handle_t*) &iso->sighup);
   uv_unref((uv_handle_t*) &iso->walker.timer);
 
   /* init curl */
