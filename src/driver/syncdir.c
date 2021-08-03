@@ -517,6 +517,7 @@ static upd_file_t* syncdir_create_file_from_rule_(
     proto->driver   = item->driver;
     proto->param    = item->param;
     proto->paramlen = item->paramlen;
+    proto->backend  = fc;
 
     upd_file_t* temp = upd_file_new(proto);
     if (HEDLEY_UNLIKELY(temp == NULL)) {
