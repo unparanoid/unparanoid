@@ -520,8 +520,9 @@ static upd_file_t* syncdir_create_file_from_rule_(
     proto->backend  = fc;
 
     upd_file_t* temp = upd_file_new(proto);
+    if (fc) upd_file_unref(fc);
+
     if (HEDLEY_UNLIKELY(temp == NULL)) {
-      if (fc) upd_file_unref(fc);
       return NULL;
     }
     if (HEDLEY_UNLIKELY(temp->driver == &upd_driver_syncdir)) {

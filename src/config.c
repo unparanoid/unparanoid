@@ -362,12 +362,12 @@ static upd_file_t* config_create_file_(
 
       const yaml_node_t* item = yaml_document_get_node(&ctx->doc, *itr);
 
-      if (f) {
-        proto->backend = f;
-      }
+      proto->backend  = f;
       proto->paramlen = 0;
 
       upd_file_t* temp = config_create_file_(ctx, item, proto);
+      if (f) upd_file_unref(f);
+
       if (HEDLEY_UNLIKELY(temp == NULL)) {
         if (f) upd_file_unref(f);
         return NULL;

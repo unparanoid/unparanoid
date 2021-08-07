@@ -65,8 +65,9 @@ file_handle_close_cb_(
 
 
 upd_file_t* upd_file_new_(const upd_file_t* src) {
-  upd_iso_t*          iso = src->iso;
-  const upd_driver_t* d   = src->driver;
+  upd_iso_t*          iso     = src->iso;
+  const upd_driver_t* d       = src->driver;
+  upd_file_t*         backend = src->backend;
 
   const size_t pathlen  = src->pathlen  + !!src->pathlen;
   const size_t npathlen = src->npathlen + !!src->npathlen;
@@ -85,7 +86,7 @@ upd_file_t* upd_file_new_(const upd_file_t* src) {
       .id       = iso->files_created++,
       .refcnt   = 1,
 
-      .backend  = src->backend,
+      .backend  = backend,
 
       .last_update = 0,
       .last_req    = 0,
@@ -127,6 +128,10 @@ upd_file_t* upd_file_new_(const upd_file_t* src) {
     file_close_all_handlers_(f);
     upd_free(&f);
     return NULL;
+  }
+
+  if (backend) {
+    upd_file_ref(backend);
   }
   return &f->super;
 }
