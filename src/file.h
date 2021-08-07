@@ -195,6 +195,7 @@ static inline void upd_file_unlock(upd_file_lock_t* l) {
   if (HEDLEY_UNLIKELY(--f->lock.refcnt)) {
     return;
   }
+  f->super.last_touch = upd_iso_now(f->super.iso);
 
   upd_array_t* pen = &f->lock.pending;
 

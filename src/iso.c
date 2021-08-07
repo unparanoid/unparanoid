@@ -5,8 +5,9 @@
 
 #define DESTROYER_PERIOD_ 100
 
-#define WALKER_PERIOD_           1000
-#define WALKER_FILES_PER_PERIOD_ 1000
+#define WALKER_PERIOD_               1000
+#define WALKER_FILES_PER_PERIOD_     1000
+#define WALKER_FILES_UNCACHE_DELAY_ 10000
 
 
 typedef struct curl_t_ {
@@ -410,7 +411,10 @@ static void walker_handle_(upd_file_t* f) {
     f->cache > 0         &&
     f->cache >= iso->walker.cache.thresh;
   if (HEDLEY_UNLIKELY(uncache)) {
-    upd_file_trigger(f, UPD_FILE_UNCACHE);
+    const uint64_t thresh = f->last_touch + WALKER_FILES_UNCACHE_DELAY_;
+    if (HEDLEY_UNLIKELY(now >= thresh)) {
+      upd_file_trigger(f, UPD_FILE_UNCACHE);
+    }
   }
 }
 
