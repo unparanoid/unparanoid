@@ -161,6 +161,9 @@ static inline bool upd_file_lock(upd_file_lock_t* l) {
   if (HEDLEY_LIKELY(upd_file_try_lock(l))) {
     return true;
   }
+  if (HEDLEY_UNLIKELY(l->timeout == 1)) {  /* trylock failure */
+    return false;
+  }
   l->ok = false;
   if (HEDLEY_UNLIKELY(!upd_array_insert(&f->lock.pending, l, SIZE_MAX))) {
     return false;
