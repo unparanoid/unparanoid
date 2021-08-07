@@ -47,6 +47,13 @@ struct upd_iso_t {
   struct {
     uv_timer_t    timer;
     upd_file_id_t last_seen;
+
+    struct {
+      size_t part;
+      size_t whole;
+      size_t avg;
+      size_t thresh;
+    } cache;
   } walker;
 
   struct {

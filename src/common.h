@@ -36,6 +36,7 @@
 #include <libupd/path.h>
 #include <libupd/pathfind.h>
 #include <libupd/str.h>
+#include <libupd/tensor.h>
 #include <libupd/yaml.h>
 
 

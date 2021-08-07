@@ -87,9 +87,6 @@ upd_file_t* upd_file_new_(const upd_file_t* src) {
       .refcnt   = 1,
 
       .backend  = backend,
-
-      .last_update = 0,
-      .last_req    = 0,
     },
   };
 

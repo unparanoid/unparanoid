@@ -92,12 +92,6 @@ static inline void upd_file_unwatch(upd_file_watch_t* w) {
 }
 
 static inline void upd_file_trigger(upd_file_t* f, upd_file_event_t e) {
-  switch (e) {
-  case UPD_FILE_UPDATE:
-    f->last_update = upd_iso_now(f->iso);
-    break;
-  }
-
   if (HEDLEY_UNLIKELY(e != UPD_FILE_DELETE)) {
     upd_file_ref(f);
   }

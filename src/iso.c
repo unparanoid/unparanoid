@@ -387,7 +387,8 @@ static void iso_abort_all_pkg_installations_(upd_iso_t* iso) {
 
 
 static void walker_handle_(upd_file_t* f) {
-  upd_file_t_* f_ = (void*) f;
+  upd_file_t_* f_  = (void*) f;
+  upd_iso_t*   iso = f->iso;
 
   const uint64_t now = upd_iso_now(f->iso);
 
@@ -405,16 +406,11 @@ static void walker_handle_(upd_file_t* f) {
 
   /* trigger uncache event */
   const bool uncache =
-    f->driver->uncache_period > 0 &&
-    f->last_req > 0 &&
-    f->last_req >= f->last_uncache &&
-    f_->lock.refcnt == 0;
+    f_->lock.refcnt == 0 &&
+    f->cache > 0         &&
+    f->cache >= iso->walker.cache.thresh;
   if (HEDLEY_UNLIKELY(uncache)) {
-    const uint64_t t = now > f->last_req? now - f->last_req: 0;
-    if (HEDLEY_UNLIKELY(t > f->driver->uncache_period)) {
-      upd_file_trigger(f, UPD_FILE_UNCACHE);
-      f->last_uncache = now;
-    }
+    upd_file_trigger(f, UPD_FILE_UNCACHE);
   }
 }
 
@@ -526,10 +522,21 @@ static void walker_cb_(uv_timer_t* timer) {
   for (size_t j = 0; j < iso->files.n && j < WALKER_FILES_PER_PERIOD_; ++j) {
     if (HEDLEY_UNLIKELY((size_t) i >= iso->files.n)) {
       i = 0;
+
+      const size_t cache = iso->walker.cache.part;
+      const size_t avg   = cache / iso->files.n;
+      const size_t pth   = iso->walker.cache.thresh;
+
+      iso->walker.cache.whole  = cache;
+      iso->walker.cache.avg    = avg;
+      iso->walker.cache.thresh = pth/10*2 + avg/10*6;
+      iso->walker.cache.part   = 0;
     }
     upd_file_t* f = iso->files.p[i++];
     walker_handle_(f);
-    iso->walker.last_seen = f->id;
+
+    iso->walker.cache.part += f->cache;
+    iso->walker.last_seen   = f->id;
   }
 }
 

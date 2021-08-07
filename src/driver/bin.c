@@ -66,7 +66,6 @@ const upd_driver_t upd_driver_bin = {
     UPD_REQ_STREAM,
     0,
   },
-  .uncache_period = 10000,
   .flags = {
     .npoll = true,
   },
@@ -520,6 +519,7 @@ static void task_open_cb_(uv_fs_t* fsreq) {
 
   ctx->fd   = result;
   ctx->open = true;
+  f->cache  = BUF_MAX_ < ctx->bytes? BUF_MAX_: ctx->bytes;
 
 EXIT:
   task_finalize_(task);
@@ -702,6 +702,9 @@ static void task_close_exec_cb_(task_t_* task) {
   if (HEDLEY_UNLIKELY(!ctx->open)) {
     goto ABORT;
   }
+
+  /* we don't care about if the file is actually closed */
+  f->cache = 0;
 
   const int err = uv_fs_close(
     &iso->loop, &task->fsreq, ctx->fd, task_close_cb_);
