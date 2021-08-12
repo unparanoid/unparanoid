@@ -22,18 +22,17 @@ jobs:
 
       - name: build
         run: |
-          mkdir -p /tmp/upd
-          cd /tmp/upd
+          mkdir -p /tmp/build
+          cd /tmp/build
           cmake -DCMAKE_BUILD_TYPE=${{ matrix.mode.full }} ${{ github.workspace }}
-          make -j VERBOSE=1
+          cmake --build . --verbose --parallel
 
       - name: upload
         uses: actions/upload-artifact@v2
         with:
           name: upd-elf-x86_64-${{ matrix.mode.short }}
           path: |
-            /tmp/upd/upd
-            /tmp/upd/hello.x86_64.so
+            /tmp/build/upd
           if-no-files-found: ignore
 
   build-on-win64:
@@ -55,17 +54,16 @@ jobs:
 
       - name: building
         run: |
-          mkdir -p /tmp/upd
-          cd /tmp/upd
+          mkdir -p /tmp/build
+          cd /tmp/build
           cmake -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=${{ matrix.mode.full }} ${{ github.workspace }}
-          cmake --build . --verbose
+          cmake --build . --verbose --parallel
 
       - name: 'uploading artifacts'
         uses: actions/upload-artifact@v2
         with:
           name: upd-coff-x86_64-${{ matrix.mode.short }}
           path: |
-            /tmp/upd/upd.exe
-            /tmp/upd/hello.x86_64.dll
+            /tmp/build/upd.exe
           if-no-files-found: ignore
 
