@@ -103,4 +103,4 @@ target_sources(upd
 
 
 # ---- official drivers ----
-add_subdirectory(drivers)
+add_subdirectory(driver)
