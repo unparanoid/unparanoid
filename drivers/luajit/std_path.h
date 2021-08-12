@@ -68,36 +68,3 @@ static int path_basename_(lua_State* L) {
   lua_pushlstring(L, (char*) path, len);
   return 1;
 }
-
-
-static void path_create_(lua_State* L, upd_iso_t* iso) {
-  lua_createtable(L, 0, 0);
-  {
-    lua_createtable(L, 0, 0);
-    {
-      lua_createtable(L, 0, 0);
-      {
-        lua_pushlightuserdata(L, iso);
-        lua_pushcclosure(L, path_normalize_, 1);
-        lua_setfield(L, -2, "normalize");
-
-        lua_pushcfunction(L, path_validate_name_);
-        lua_setfield(L, -2, "validateName");
-
-        lua_pushcfunction(L, path_drop_trailing_slash_);
-        lua_setfield(L, -2, "dropTrailingSlash");
-
-        lua_pushcfunction(L, path_dirname_);
-        lua_setfield(L, -2, "dirname");
-
-        lua_pushcfunction(L, path_basename_);
-        lua_setfield(L, -2, "basename");
-      }
-      lua_setfield(L, -2, "__index");
-
-      lua_pushcfunction(L, lj_lua_immutable_newindex);
-      lua_setfield(L, -2, "__newindex");
-    }
-    lua_setmetatable(L, -2);
-  }
-}

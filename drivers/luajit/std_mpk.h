@@ -27,19 +27,18 @@ static int mpk_packer_new_(lua_State* L) {
   return 1;
 }
 
-static int mpk_packer_clear_(lua_State* L) {
-  mpk_packer_t_* pk = lua_touserdata(L, lua_upvalueindex(1));
+static int mpk_packer_take_(lua_State* L) {
+  mpk_packer_t_* pk = luaL_checkudata(L, 1, "std_mpk_Packer");
+
+  lua_pushlstring(L, pk->buf.data, pk->buf.size);
   msgpack_sbuffer_clear(&pk->buf);
-  return 0;
+  return 1;
 }
 
-static bool mpk_packer_pack_any_proc_(lua_State* L, int i, msgpack_packer* pk) {
+static bool mpk_packer_pack_proc_(lua_State* L, int i, msgpack_packer* pk) {
   const int t = lua_type(L, i);
 
   switch (t) {
-  case LUA_TNIL:
-    return !msgpack_pack_nil(pk);
-
   case LUA_TNUMBER: {
     const lua_Number f = lua_tonumber(L, i);
     if (f == (intmax_t) f) {
@@ -81,11 +80,11 @@ static bool mpk_packer_pack_any_proc_(lua_State* L, int i, msgpack_packer* pk) {
     while (lua_next(L, i) != 0) {
       const int i = lua_gettop(L);
       if (!arr) {
-        if (HEDLEY_UNLIKELY(!mpk_packer_pack_any_proc_(L, i-1, pk))) {
+        if (HEDLEY_UNLIKELY(!mpk_packer_pack_proc_(L, i-1, pk))) {
           return false;
         }
       }
-      if (HEDLEY_UNLIKELY(!mpk_packer_pack_any_proc_(L, i, pk))) {
+      if (HEDLEY_UNLIKELY(!mpk_packer_pack_proc_(L, i, pk))) {
         return false;
       }
       lua_pop(L, 1);
@@ -93,137 +92,24 @@ static bool mpk_packer_pack_any_proc_(lua_State* L, int i, msgpack_packer* pk) {
   } return true;
 
   default:
-    return false;
+    return !msgpack_pack_nil(pk);
   }
 }
-static int mpk_packer_pack_any_(lua_State* L) {
-  mpk_packer_t_* pk = lua_touserdata(L, lua_upvalueindex(1));
+static int mpk_packer_pack_(lua_State* L) {
+  mpk_packer_t_* pk = luaL_checkudata(L, 1, "std_mpk_Packer");
 
   const int n = lua_gettop(L);
-  for (int i = 1; i <= n; ++i) {
-    if (HEDLEY_UNLIKELY(!mpk_packer_pack_any_proc_(L, i, &pk->pk))) {
+  for (int i = 2; i <= n; ++i) {
+    if (HEDLEY_UNLIKELY(!mpk_packer_pack_proc_(L, i, &pk->pk))) {
       return luaL_error(L,
-        "pack failure (invalid table or allocation failure)");
+        "pack failure (allocation failure)");
     }
   }
   return 0;
-}
-
-static int mpk_packer_pack_(lua_State* L) {
-  mpk_packer_t_*      pk   = lua_touserdata(L, lua_upvalueindex(1));
-  msgpack_object_type type = lua_tointeger(L,  lua_upvalueindex(2));
-
-  msgpack_packer* p = &pk->pk;
-
-  int ret = 0;
-  switch (type) {
-  case MSGPACK_OBJECT_ARRAY: {
-    const lua_Integer n = luaL_checkinteger(L, 1);
-    if (HEDLEY_UNLIKELY(n < 0)) {
-      return luaL_error(L, "negative count");
-    }
-    ret = msgpack_pack_array(p, n);
-  } break;
-
-  case MSGPACK_OBJECT_BOOLEAN:
-    ret = (lua_toboolean(L, 1)? msgpack_pack_true: msgpack_pack_false)(p);
-    break;
-
-  case MSGPACK_OBJECT_FLOAT:
-    ret = msgpack_pack_float(p, luaL_checknumber(L, 1));
-    break;
-
-  case MSGPACK_OBJECT_POSITIVE_INTEGER:
-    ret = msgpack_pack_int64(p, luaL_checkinteger(L, 1));
-    break;
-
-  case MSGPACK_OBJECT_NIL:
-    ret = msgpack_pack_nil(p);
-    break;
-
-  case MSGPACK_OBJECT_MAP: {
-    const lua_Integer n = luaL_checkinteger(L, 1);
-    if (HEDLEY_UNLIKELY(n < 0)) {
-      return luaL_error(L, "negative count");
-    }
-    ret = msgpack_pack_map(p, n);
-  } break;
-
-  case MSGPACK_OBJECT_STR: {
-    size_t len;
-    const char* str = luaL_checklstring(L, 1, &len);
-    ret = msgpack_pack_str_with_body(p, str, len);
-  } break;
-
-  default:
-    assert(false);
-    HEDLEY_UNREACHABLE();
-  }
-  if (HEDLEY_UNLIKELY(ret != 0)) {
-    return luaL_error(L, "buffer allocation failure");
-  }
-  return 0;
-}
-
-static int mpk_packer_index_(lua_State* L) {
-  mpk_packer_t_* pk = lua_touserdata(L, 1);
-
-  const char* key = lua_tostring(L, 2);
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "buffer") == 0)) {
-    lua_pushlstring(L, pk->buf.data, pk->buf.size);
-    return 1;
-  }
-
-  lua_pushvalue(L, 1);
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "clear") == 0)) {
-    lua_pushcclosure(L, mpk_packer_clear_, 1);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "pack") == 0)) {
-    lua_pushcclosure(L, mpk_packer_pack_any_, 1);
-    return 1;
-  }
-
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "packArray") == 0)) {
-    lua_pushinteger(L, MSGPACK_OBJECT_ARRAY);
-    lua_pushcclosure(L, mpk_packer_pack_, 2);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "packBool") == 0)) {
-    lua_pushinteger(L, MSGPACK_OBJECT_BOOLEAN);
-    lua_pushcclosure(L, mpk_packer_pack_, 2);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "packFloat") == 0)) {
-    lua_pushinteger(L, MSGPACK_OBJECT_FLOAT64);
-    lua_pushcclosure(L, mpk_packer_pack_, 2);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "packInt") == 0)) {
-    lua_pushinteger(L, MSGPACK_OBJECT_POSITIVE_INTEGER);
-    lua_pushcclosure(L, mpk_packer_pack_, 2);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "packNil") == 0)) {
-    lua_pushinteger(L, MSGPACK_OBJECT_NIL);
-    lua_pushcclosure(L, mpk_packer_pack_, 2);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "packMap") == 0)) {
-    lua_pushinteger(L, MSGPACK_OBJECT_MAP);
-    lua_pushcclosure(L, mpk_packer_pack_, 2);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "packStr") == 0)) {
-    lua_pushinteger(L, MSGPACK_OBJECT_STR);
-    lua_pushcclosure(L, mpk_packer_pack_, 2);
-    return 1;
-  }
-  return luaL_error(L, "unknown field");
 }
 
 static int mpk_packer_gc_(lua_State* L) {
-  mpk_packer_t_* pk = lua_touserdata(L, 1);
+  mpk_packer_t_* pk = luaL_checkudata(L, 1, "std_mpk_Packer");
 
   msgpack_sbuffer_destroy(&pk->buf);
   return 0;
@@ -251,6 +137,18 @@ static int mpk_unpacker_new_(lua_State* L) {
     return luaL_error(L, "allocation failure");
   }
   return 1;
+}
+
+static int mpk_unpacker_drop_(lua_State* L) {
+  mpk_unpacker_t_* upk = luaL_checkudata(L, 1, "std_mpk_Unpacker");
+
+  for (size_t i = 0; i < upk->upkd.n; ++i) {
+    msgpack_unpacked* upkd = upk->upkd.p[i];
+    msgpack_unpacked_destroy(upkd);
+    upd_free(&upkd);
+  }
+  upd_array_clear(&upk->upkd);
+  return 0;
 }
 
 static void mpk_unpacker_pop_proc_(lua_State* L, const msgpack_object* obj) {
@@ -296,20 +194,27 @@ static void mpk_unpacker_pop_proc_(lua_State* L, const msgpack_object* obj) {
   }
 }
 static int mpk_unpacker_pop_(lua_State* L) {
-  mpk_unpacker_t_* upk = lua_touserdata(L, lua_upvalueindex(1));
+  mpk_unpacker_t_* upk = luaL_checkudata(L, 1, "std_mpk_Unpacker");
 
-  msgpack_unpacked* upkd = upd_array_remove(&upk->upkd, 0);
-  if (HEDLEY_UNLIKELY(upkd == NULL)) {
-    return 0;
+  const lua_Integer n = lua_gettop(L) >= 2? lua_tointeger(L, 2): 1;
+  if (HEDLEY_UNLIKELY(n < 0)) {
+    return luaL_error(L, "invalid pop count");
   }
-  mpk_unpacker_pop_proc_(L, &upkd->data);
-  msgpack_unpacked_destroy(upkd);
-  upd_free(&upkd);
-  return 1;
+
+  for (lua_Integer i = 0; i < n; ++i) {
+    msgpack_unpacked* upkd = upd_array_remove(&upk->upkd, 0);
+    if (HEDLEY_UNLIKELY(upkd == NULL)) {
+      return i;
+    }
+    mpk_unpacker_pop_proc_(L, &upkd->data);
+    msgpack_unpacked_destroy(upkd);
+    upd_free(&upkd);
+  }
+  return n;
 }
 
 static int mpk_unpacker_unpack_(lua_State* L) {
-  mpk_unpacker_t_* upk = lua_touserdata(L, lua_upvalueindex(1));
+  mpk_unpacker_t_* upk = luaL_checkudata(L, 1, "std_mpk_Unpacker");
 
   if (HEDLEY_UNLIKELY(upk->broken)) {
     return luaL_error(L, "unpacker is broken");
@@ -318,7 +223,7 @@ static int mpk_unpacker_unpack_(lua_State* L) {
   const int n = lua_gettop(L);
 
   size_t sum = 0;
-  for (int i = 1; i <= n; ++i) {
+  for (int i = 2; i <= n; ++i) {
     size_t len;
     luaL_checklstring(L, i, &len);
     sum += len;
@@ -327,7 +232,7 @@ static int mpk_unpacker_unpack_(lua_State* L) {
     return luaL_error(L, "unpacker buffer allocation failure");
   }
 
-  for (int i = 1; i <= n; ++i) {
+  for (int i = 2; i <= n; ++i) {
     size_t len;
     const char* buf = luaL_checklstring(L, i, &len);
     memcpy(msgpack_unpacker_buffer(&upk->upk), buf, len);
@@ -344,87 +249,32 @@ static int mpk_unpacker_unpack_(lua_State* L) {
     const int ret = msgpack_unpacker_next(&upk->upk, upkd);
     switch (ret) {
     case MSGPACK_UNPACK_SUCCESS:
-      if (HEDLEY_LIKELY(upd_array_insert(&upk->upkd, upkd, SIZE_MAX))) {
-        continue;
+      if (HEDLEY_UNLIKELY(!upd_array_insert(&upk->upkd, upkd, SIZE_MAX))) {
+        msgpack_unpacked_destroy(upkd);
+        upd_free(&upkd);
+        return luaL_error(L, "unpacked data insertion failure");
       }
-      msgpack_unpacked_destroy(upkd);
-      upd_free(&upkd);
-      return luaL_error(L, "unpacked data insertion failure");
+      continue;
 
     case MSGPACK_UNPACK_CONTINUE:
+      msgpack_unpacked_destroy(upkd);
+      upd_free(&upkd);
+      lua_pushinteger(L, upk->upkd.n);
+      return 1;
+
     case MSGPACK_UNPACK_PARSE_ERROR:
       msgpack_unpacked_destroy(upkd);
       upd_free(&upkd);
-      upk->broken = (ret == MSGPACK_UNPACK_PARSE_ERROR);
+      upk->broken = true;
       return 0;
     }
   }
 }
 
-static int mpk_unpacker_index_(lua_State* L) {
-  mpk_unpacker_t_* upk = lua_touserdata(L, 1);
-
-  const char* key = lua_tostring(L, 2);
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "broken") == 0)) {
-    lua_pushboolean(L, upk->broken);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "count") == 0)) {
-    lua_pushinteger(L, upk->upkd.n);
-    return 1;
-  }
-
-  lua_pushvalue(L, 1);
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "pop") == 0)) {
-    lua_pushcclosure(L, mpk_unpacker_pop_, 1);
-    return 1;
-  }
-  if (HEDLEY_UNLIKELY(utf8cmp(key, "unpack") == 0)) {
-    lua_pushcclosure(L, mpk_unpacker_unpack_, 1);
-    return 1;
-  }
-  return luaL_error(L, "unknown field");
-}
-
 static int mpk_unpacker_gc_(lua_State* L) {
   mpk_unpacker_t_* upk = lua_touserdata(L, 1);
+  mpk_unpacker_drop_(L);
 
   msgpack_unpacker_destroy(&upk->upk);
-
-  for (size_t i = 0; i < upk->upkd.n; ++i) {
-    msgpack_unpacked* upkd = upk->upkd.p[i];
-    msgpack_unpacked_destroy(upkd);
-    upd_free(&upkd);
-  }
-  upd_array_clear(&upk->upkd);
   return 0;
-}
-
-
-static void mpk_create_(lua_State* L, int std) {
-  lua_newuserdata(L, 0);
-  {
-    lua_createtable(L, 0, 0);
-    {
-      lua_createtable(L, 0, 0);
-      {
-        lua_pushcfunction(L, mpk_packer_new_);
-        lua_setfield(L, -2, "packer");
-
-        lua_pushcfunction(L, mpk_unpacker_new_);
-        lua_setfield(L, -2, "unpacker");
-
-        lua_getfield(L, std, "mpk_unpack");
-        lua_setfield(L, -2, "unpack");
-
-        lua_getfield(L, std, "mpk_pack");
-        lua_setfield(L, -2, "pack");
-      }
-      lua_setfield(L, -2, "__index");
-
-      lua_pushcfunction(L, lj_lua_immutable_newindex);
-      lua_setfield(L, -2, "__newindex");
-    }
-    lua_setmetatable(L, -2);
-  }
 }
