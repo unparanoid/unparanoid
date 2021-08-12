@@ -98,3 +98,7 @@ target_sources(upd
   PRIVATE
     src/main.c
 )
+
+
+# ---- official drivers ----
+add_subdirectory(drivers)

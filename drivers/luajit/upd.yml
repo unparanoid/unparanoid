@@ -1,0 +1,6 @@
+driver:
+  - upd.luajit
+
+file:
+  /sys/upd.luajit.dev:
+    driver: upd.luajit.dev

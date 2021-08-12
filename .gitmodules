@@ -25,3 +25,9 @@
 [submodule "thirdparty/tiny-regex-c"]
 	path = thirdparty/tiny-regex-c
 	url = https://github.com/kokke/tiny-regex-c
+[submodule "thirdparty/picohttpparser"]
+	path = thirdparty/picohttpparser
+	url = https://github.com/h2o/picohttpparser
+[submodule "thirdparty/LuaJIT"]
+	path = thirdparty/luajit
+	url = https://github.com/LuaJIT/LuaJIT

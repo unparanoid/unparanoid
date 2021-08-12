@@ -33,6 +33,7 @@ jobs:
           name: upd-elf-x86_64-${{ matrix.mode.short }}
           path: |
             /tmp/build/upd
+            /tmp/build/drivers/**/dst/
           if-no-files-found: ignore
 
   build-on-win64:
@@ -65,5 +66,6 @@ jobs:
           name: upd-coff-x86_64-${{ matrix.mode.short }}
           path: |
             /tmp/build/upd.exe
+            /tmp/build/drivers/**/dst/
           if-no-files-found: ignore
 

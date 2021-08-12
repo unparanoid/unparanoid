@@ -1,0 +1,6 @@
+driver:
+  - upd.http
+
+file:
+  /sys/upd.http:
+    driver: upd.http

@@ -51,8 +51,61 @@ else()
 endif()
 
 
+# ---- luajit (https://github.com/LuaJIT/LuaJIT) ----
+function (include_luajit)
+  file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/luajit" DESTINATION .)
+
+  if (WIN32)
+    set(LUAJIT_TYPE  STATIC)
+    set(LUAJIT_LIB   lua51.lib)
+    add_custom_target(luajit-build
+      WORKING_DIRECTORY luajit/src
+      COMMAND           msvcbuild.bat static
+      VERBATIM
+    )
+
+  else()
+    set(LUAJIT_TYPE STATIC)
+    set(LUAJIT_LIB  libluajit.a)
+    add_custom_target(luajit-build
+      WORKING_DIRECTORY luajit
+      COMMAND           make -j BUILDMODE=static CFLAGS=-fPIC
+      VERBATIM
+    )
+  endif()
+
+  add_library(luajit-imported ${LUAJIT_TYPE} IMPORTED)
+  set_target_properties(luajit-imported PROPERTIES
+    IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/${LUAJIT_LIB}"
+    IMPORTED_IMPLIB   "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/${LUAJIT_IMPLIB}"
+# INTERFACE_INCLUDE_DIRECTORIES doesn't work well ;(
+  )
+  add_dependencies(luajit-imported luajit-build)
+
+  add_library(luajit INTERFACE)
+  target_link_libraries(luajit
+    INTERFACE luajit-imported $<$<PLATFORM_ID:Linux>:m>
+  )
+  target_include_directories(luajit SYSTEM BEFORE
+    INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/luajit/src"
+  )
+endfunction()
+include_luajit()
+
+
 # ---- mimetype.h (https://github.com/falsycat/mimetype.h) ----
 add_subdirectory(mimetype.h)
+
+
+# ---- picohttpparser (https://github.com/h2o/picohttpparser) ----
+add_library(picohttpparser)
+target_include_directories(picohttpparser SYSTEM BEFORE
+  PUBLIC picohttpparser
+)
+target_sources(picohttpparser
+  PRIVATE picohttpparser/picohttpparser.c
+  PUBLIC  picohttpparser/picohttpparser.h
+)
 
 
 # ---- tiny-regex-c (https://github.com/kokke/tiny-regex-c) ----

@@ -1,0 +1,12 @@
+add_driver(upd.yaml)
+target_sources(upd.yaml
+  PRIVATE
+    yaml.c
+)
+target_link_libraries(upd.yaml
+  PRIVATE
+    hedley
+    libyaml
+    msgpackc
+    utf8.h
+)
