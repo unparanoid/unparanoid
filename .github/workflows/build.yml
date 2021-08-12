@@ -16,6 +16,14 @@ jobs:
     name: ${{ matrix.mode.short }} (Ubuntu x86_64)
     runs-on: ubuntu-latest
     steps:
+      - name: env construction
+        run: |
+          sudo apt install -y --no-install-recommends \
+            libgl1-mesa-dev  \
+            libglu1-mesa-dev  \
+            mesa-common-dev  \
+            xorg-dev
+
       - uses: actions/checkout@v2
         with:
           submodules: recursive

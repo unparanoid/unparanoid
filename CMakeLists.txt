@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(unparanoid C)
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 
 # ---- include external deps ----
 include(CTest)

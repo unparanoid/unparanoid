@@ -38,6 +38,33 @@ set(IGNORE_WARNINGS ON)
 add_subdirectory(cwalk)
 
 
+# ---- additional headers for MSVC
+#   - https://github.com/cdschreiber/c11
+#   - https://www.khronos.org/registry/OpenGL/api/GL/glext.h
+add_library(for-msvc INTERFACE)
+if (CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+  target_sources(for-msvc
+    INTERFACE
+      for-msvc/stdatomic.h
+  )
+  target_include_directories(for-msvc
+    INTERFACE for-msvc
+  )
+endif()
+
+
+# ---- glew (https://github.com/Perlmint/glew-cmake) ----
+add_subdirectory(glew)
+add_library(glew ALIAS libglew_static)
+
+
+# ---- glfw (https://github.com/glfw/glfw) ----
+set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory(glfw)
+
+
 # ---- libupd (https://github.com/falsycat/libupd)
 add_subdirectory(libupd)
 

@@ -63,6 +63,7 @@ function (add_driver name)
 endfunction()
 
 
+add_subdirectory(graphics)
 add_subdirectory(http)
 add_subdirectory(luajit)
 add_subdirectory(msgpack)

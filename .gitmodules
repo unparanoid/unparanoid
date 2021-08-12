@@ -31,3 +31,9 @@
 [submodule "thirdparty/LuaJIT"]
 	path = thirdparty/luajit
 	url = https://github.com/LuaJIT/LuaJIT
+[submodule "thirdparty/glfw"]
+	path = thirdparty/glfw
+	url = https://github.com/glfw/glfw
+[submodule "thirdparty/glew-cmake"]
+	path = thirdparty/glew
+	url = https://github.com/Perlmint/glew-cmake
