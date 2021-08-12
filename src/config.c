@@ -261,17 +261,10 @@ static void config_lognf_(
 }
 
 static bool config_check_npath_(ctx_t_* ctx, const uint8_t* npath) {
-  /* FIXME: doesn't work well in Windows */
-  const size_t interlen =
-    cwk_path_get_intersection((char*) ctx->path, (char*) npath); 
-  switch (ctx->path[interlen]) {
-  case 0:
-    return true;
-  case '/':
-    return ctx->path[interlen+1] == 0;
-  default:
-    return false;
-  }
+  /* TODO: check npath is inside of ctx->path */
+  (void) ctx;
+  (void) npath;
+  return true;
 }
 
 static upd_file_t* config_create_file_(
