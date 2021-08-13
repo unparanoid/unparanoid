@@ -56,6 +56,7 @@ struct http_t_ {
   upd_file_t*      ws;
   upd_file_watch_t wswatch;
   upd_buf_t        wsbuf;
+  upd_buf_t        wspipebuf;
 };
 
 struct req_t_ {
@@ -287,6 +288,7 @@ static void stream_deinit_(upd_file_t* f) {
     upd_file_unref(ctx->ws);
   }
   upd_buf_clear(&ctx->wsbuf);
+  upd_buf_clear(&ctx->wspipebuf);
 
   upd_buf_clear(&ctx->out);
   upd_free(&ctx);
@@ -749,15 +751,21 @@ static void wsock_lock_for_input_cb_(upd_file_lock_t* lock) {
   http_t_*             ctx = req->file->ctx;
   upd_req_stream_io_t* io  = &req->stream.io;
 
-  const size_t prev_size = ctx->wsbuf.size;
-
-  size_t         rem = io->size;
-  const uint8_t* buf = io->buf;
-  bool           end = false;
+  bool   end       = false;
+  bool   try_input = false;
+  size_t used      = 0;
 
   if (HEDLEY_UNLIKELY(!lock->ok || ctx->state != WSOCK_)) {
+    end = true;
     goto EXIT;
   }
+  if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->wsbuf, io->buf, io->size))) {
+    end = true;
+    goto EXIT;
+  }
+
+  const uint8_t* buf = ctx->wsbuf.ptr;
+  size_t         rem = ctx->wsbuf.size;
 
   while (rem) {
     wsock_t w = {0};
@@ -770,22 +778,23 @@ static void wsock_lock_for_input_cb_(upd_file_lock_t* lock) {
     const uint8_t* body  = buf + header;
     const size_t   whole = header + w.payload_len;
 
-    buf += whole;
-    rem -= whole;
+    buf  += whole;
+    used += whole;
+    rem  -= whole;
 
     switch (w.opcode) {
     case WSOCK_OPCODE_CONT:
     case WSOCK_OPCODE_TEXT:
     case WSOCK_OPCODE_BIN: {
       const bool append =
-        !w.payload_len || upd_buf_append(&ctx->wsbuf, body, w.payload_len);
+        !w.payload_len || upd_buf_append(&ctx->wspipebuf, body, w.payload_len);
       if (HEDLEY_UNLIKELY(!append)) {
         end = true;
         goto EXIT;
       }
       if (HEDLEY_UNLIKELY(w.mask)) {
-        const size_t head = ctx->wsbuf.size - w.payload_len;
-        wsock_mask(ctx->wsbuf.ptr+head, w.payload_len, w.mask_key);
+        const size_t head = ctx->wspipebuf.size - w.payload_len;
+        wsock_mask(ctx->wspipebuf.ptr+head, w.payload_len, w.mask_key);
       }
     } break;
 
@@ -813,17 +822,18 @@ static void wsock_lock_for_input_cb_(upd_file_lock_t* lock) {
     }
   }
 
-  bool try_input;
 EXIT:
-  try_input = ctx->wsbuf.size != prev_size;
+  upd_buf_drop_head(&ctx->wsbuf, used);
+
+  try_input = !!ctx->wspipebuf.size;
   if (HEDLEY_LIKELY(try_input)) {
     lock->udata = ctx;
     const bool input = upd_req_with_dup(&(upd_req_t) {
         .file = ctx->ws,
         .type = UPD_REQ_DSTREAM_WRITE,
         .stream = { .io = {
-          .size = ctx->wsbuf.size,
-          .buf  = ctx->wsbuf.ptr,
+          .size = ctx->wspipebuf.size,
+          .buf  = ctx->wspipebuf.ptr,
         }, },
         .udata = lock,
         .cb    = wsock_input_cb_,
@@ -832,6 +842,7 @@ EXIT:
       try_input = false;
       end       = true;
     }
+    ctx->wspipebuf = (upd_buf_t) {0};  /* release pointer */
   }
   if (HEDLEY_UNLIKELY(end)) {
     stream_end_(ctx);
@@ -841,9 +852,6 @@ EXIT:
     upd_iso_unstack(ctx->file->iso, lock);
     upd_file_unref(ctx->file);
   }
-
-  io->size = io->size - rem;
-
   req->result = UPD_REQ_OK;
   req->cb(req);  /* We don't need io->buf anymore. :) */
 }
@@ -852,17 +860,18 @@ static void wsock_input_cb_(upd_req_t* req) {
   upd_file_lock_t* lock = req->udata;
   http_t_*         ctx  = lock->udata;
 
-  const upd_req_result_t result   = req->result;
-  const size_t           consumed = req->stream.io.size;
-  const bool             tail     = req->stream.io.tail;
-  upd_iso_unstack(ctx->file->iso, req);
+  const upd_req_result_t result = req->result;
+  const bool             tail   = req->stream.io.tail;
 
   if (HEDLEY_LIKELY(result == UPD_REQ_OK && !tail)) {
-    upd_buf_drop_head(&ctx->wsbuf, consumed);
+    upd_free(&req->stream.io.buf);
   } else {
     stream_end_(ctx);
   }
+
   upd_file_unlock(lock);
+
+  upd_iso_unstack(ctx->file->iso, req);
   upd_iso_unstack(ctx->file->iso, lock);
 
   upd_file_unref(ctx->file);
