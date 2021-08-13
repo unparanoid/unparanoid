@@ -13,9 +13,11 @@ RUN  \
     gdb  \
     git  \
     g++  \
+    libgl1-mesa-dev  \
+    libglu1-mesa-dev  \
     libssl-dev  \
     make  \
-    mesa-utils  \
+    mesa-common-dev  \
     python3-pip  \
     python3-setuptools  \
     pkgconf  \
