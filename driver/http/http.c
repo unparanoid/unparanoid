@@ -51,11 +51,12 @@ typedef struct req_t_   req_t_;
 struct http_t_ {
   upd_file_t*   file;
   http_state_t_ state;
-  upd_buf_t     out;
+
+  upd_buf_t in;
+  upd_buf_t out;
 
   upd_file_t*      ws;
   upd_file_watch_t wswatch;
-  upd_buf_t        wsbuf;
   upd_buf_t        wspipebuf;
 };
 
@@ -287,9 +288,9 @@ static void stream_deinit_(upd_file_t* f) {
     }
     upd_file_unref(ctx->ws);
   }
-  upd_buf_clear(&ctx->wsbuf);
   upd_buf_clear(&ctx->wspipebuf);
 
+  upd_buf_clear(&ctx->in);
   upd_buf_clear(&ctx->out);
   upd_free(&ctx);
 }
@@ -374,10 +375,15 @@ static void stream_end_(http_t_* ctx) {
 }
 
 static bool stream_parse_req_(http_t_* ctx, upd_req_t* req) {
-  upd_req_stream_io_t* io = &req->stream.io;
+  const upd_req_stream_io_t* io = &req->stream.io;
+  if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->in, io->buf, io->size))) {
+    req->result = UPD_REQ_NOMEM;
+    return false;
+  }
 
   req_t_* hreq = upd_iso_stack(ctx->file->iso, sizeof(*hreq));
   if (HEDLEY_UNLIKELY(hreq == NULL)) {
+    req->result = UPD_REQ_NOMEM;
     return false;
   }
   *hreq = (req_t_) {
@@ -387,7 +393,7 @@ static bool stream_parse_req_(http_t_* ctx, upd_req_t* req) {
   };
 
   const int result = phr_parse_request(
-    (char*) io->buf, io->size,
+    (char*) ctx->in.ptr, ctx->in.size,
     (const char**) &hreq->method, &hreq->method_len,
     (const char**) &hreq->path, &hreq->path_len,
     &hreq->minor_version,
@@ -395,27 +401,33 @@ static bool stream_parse_req_(http_t_* ctx, upd_req_t* req) {
 
   if (HEDLEY_UNLIKELY(result == -1)) {
     upd_iso_unstack(ctx->file->iso, hreq);
-    req->result = UPD_REQ_OK;
-    req->cb(req);
-    return stream_output_http_error_(ctx, 400, "invalid request");
-  }
-
-  if (HEDLEY_LIKELY(result == -2)) {
-    upd_iso_unstack(ctx->file->iso, hreq);
-    io->size = 0;
+    if (HEDLEY_UNLIKELY(!stream_output_http_error_(ctx, 400, "invalid request"))) {
+      req->result = UPD_REQ_ABORTED;
+      return false;
+    }
     req->result = UPD_REQ_OK;
     req->cb(req);
     return true;
   }
 
-  io->size   = result;
+  if (HEDLEY_LIKELY(result == -2)) {
+    upd_iso_unstack(ctx->file->iso, hreq);
+    req->result = UPD_REQ_OK;
+    req->cb(req);
+    return true;
+  }
+
   ctx->state = RESPONSE_;
 
   if (HEDLEY_UNLIKELY(!upd_strcaseq_c("GET", hreq->method, hreq->method_len))) {
     upd_iso_unstack(ctx->file->iso, hreq);
+    if (HEDLEY_UNLIKELY(!stream_output_http_error_(ctx, 405, "unknown method"))) {
+      req->result = UPD_REQ_ABORTED;
+      return false;
+    }
     req->result = UPD_REQ_OK;
     req->cb(req);
-    return stream_output_http_error_(ctx, 405, "unknown method");
+    return true;
   }
 
   upd_file_ref(ctx->file);
@@ -429,9 +441,13 @@ static bool stream_parse_req_(http_t_* ctx, upd_req_t* req) {
   if (HEDLEY_UNLIKELY(!pathfind)) {
     upd_file_unref(ctx->file);
     upd_iso_unstack(ctx->file->iso, hreq);
+    if (HEDLEY_UNLIKELY(!stream_output_http_error_(ctx, 500, "pathfind failure"))) {
+      req->result = UPD_REQ_ABORTED;
+      return false;
+    }
     req->result = UPD_REQ_OK;
     req->cb(req);
-    return stream_output_http_error_(ctx, 500, "pathfind failure");
+    return true;
   }
   return true;
 }
@@ -701,6 +717,8 @@ EXIT:
   upd_file_unlock(lock);
   upd_iso_unstack(ctx->file->iso, lock);
 
+  upd_buf_clear(&ctx->in);
+
   hreq->req->result = UPD_REQ_OK;
   hreq->req->cb(hreq->req);
   upd_iso_unstack(ctx->file->iso, hreq);
@@ -759,13 +777,13 @@ static void wsock_lock_for_input_cb_(upd_file_lock_t* lock) {
     end = true;
     goto EXIT;
   }
-  if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->wsbuf, io->buf, io->size))) {
+  if (HEDLEY_UNLIKELY(!upd_buf_append(&ctx->in, io->buf, io->size))) {
     end = true;
     goto EXIT;
   }
 
-  const uint8_t* buf = ctx->wsbuf.ptr;
-  size_t         rem = ctx->wsbuf.size;
+  const uint8_t* buf = ctx->in.ptr;
+  size_t         rem = ctx->in.size;
 
   while (rem) {
     wsock_t w = {0};
@@ -823,7 +841,7 @@ static void wsock_lock_for_input_cb_(upd_file_lock_t* lock) {
   }
 
 EXIT:
-  upd_buf_drop_head(&ctx->wsbuf, used);
+  upd_buf_drop_head(&ctx->in, used);
 
   try_input = !!ctx->wspipebuf.size;
   if (HEDLEY_LIKELY(try_input)) {
