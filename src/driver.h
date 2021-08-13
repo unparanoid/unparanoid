@@ -31,7 +31,6 @@ extern const upd_driver_t upd_driver_factory;
 extern const upd_driver_t upd_driver_syncdir;
 extern const upd_driver_t upd_driver_srv;
 extern const upd_driver_t upd_driver_srv_tcp;
-extern const upd_driver_t upd_driver_tensor;
 
 
 HEDLEY_NON_NULL(1)
