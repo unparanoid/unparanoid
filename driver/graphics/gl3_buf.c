@@ -31,11 +31,6 @@ buf_handle_(
 
 static
 bool
-buf_handle_alloc_(
-  upd_req_t* req);
-
-static
-bool
 buf_handle_meta_(
   upd_req_t* req);
 
@@ -90,11 +85,6 @@ buf_new_cb_(
 static
 void
 buf_del_cb_(
-  gra_gl3_req_t* req);
-
-static
-void
-buf_alloc_cb_(
   gra_gl3_req_t* req);
 
 static
@@ -175,9 +165,6 @@ static bool buf_handle_(upd_req_t* req) {
   }
 
   switch (req->type) {
-  case UPD_REQ_TENSOR_ALLOC:
-    return buf_handle_alloc_(req);
-
   case UPD_REQ_TENSOR_META:
     return buf_handle_meta_(req);
 
@@ -193,46 +180,6 @@ static bool buf_handle_(upd_req_t* req) {
   }
 }
 
-static bool buf_handle_alloc_(upd_req_t* req) {
-  upd_file_t*    f   = req->file;
-  upd_iso_t*     iso = f->iso;
-  gra_gl3_buf_t* ctx = f->ctx;
-
-  const upd_req_tensor_meta_t* m = &req->tensor.meta;
-
-  ctx->broken = true;
-  ctx->type   = m->type;
-  ctx->reso   = upd_tensor_type_sizeof(m->type);
-
-  for (size_t i = 0; i < m->rank; ++i) {
-    if (HEDLEY_UNLIKELY(ctx->reso < UINT32_MAX/m->reso[i])) {
-      upd_iso_msgf(iso, LOG_PREFIX_"buffer size overflow\n");
-      req->result = UPD_REQ_INVALID;
-      return false;
-    }
-    ctx->reso *= m->reso[i];
-  }
-
-  const bool ok = gra_gl3_lock_and_req_with_dup(&(gra_gl3_req_t) {
-      .dev  = ctx->gl,
-      .type = GRA_GL3_REQ_BUF_ALLOC,
-      .buf_alloc = {
-        .id     = ctx->id,
-        .target = ctx->target,
-        .usage  = GL_DYNAMIC_DRAW,
-        .data   = req->tensor.data.ptr,
-        .size   = ctx->reso,
-      },
-      .udata = req,
-      .cb    = buf_alloc_cb_,
-    });
-  if (HEDLEY_UNLIKELY(!ok)) {
-    req->result = UPD_REQ_ABORTED;
-    return false;
-  }
-  return true;
-}
-
 static bool buf_handle_meta_(upd_req_t* req) {
   upd_file_t*    f   = req->file;
   gra_gl3_buf_t* ctx = f->ctx;
@@ -243,10 +190,9 @@ static bool buf_handle_meta_(upd_req_t* req) {
   }
 
   req->tensor.meta = (upd_req_tensor_meta_t) {
-    .type    = ctx->type,
-    .rank    = 1,
-    .reso    = &ctx->reso,
-    .inplace = true,
+    .type = ctx->type,
+    .rank = 1,
+    .reso = &ctx->reso,
   };
   req->result = UPD_REQ_OK;
   req->cb(req);
@@ -262,7 +208,7 @@ static bool buf_handle_data_(upd_req_t* req) {
     return false;
   }
 
-  ctx->map.mode = req->tensor.meta.inplace? GL_READ_WRITE: GL_READ_ONLY;
+  ctx->map.mode = GL_READ_ONLY;
 
   const bool ok = gra_gl3_lock_and_req_with_dup(&(gra_gl3_req_t) {
       .dev  = ctx->gl,
@@ -406,21 +352,6 @@ static void buf_new_cb_(gra_gl3_req_t* req) {
 
 static void buf_del_cb_(gra_gl3_req_t* req) {
   upd_iso_t* iso = req->udata;
-
-  upd_file_unlock(&req->lock);
-  upd_iso_unstack(iso, req);
-}
-
-static void buf_alloc_cb_(gra_gl3_req_t* req) {
-  upd_req_t*     oreq = req->udata;
-  upd_file_t*    f    = oreq->file;
-  upd_iso_t*     iso  = f->iso;
-  gra_gl3_buf_t* ctx  = f->ctx;
-
-  ctx->broken = !req->ok;
-
-  oreq->result = ctx->broken? UPD_REQ_ABORTED: UPD_REQ_OK;
-  oreq->cb(oreq);
 
   upd_file_unlock(&req->lock);
   upd_iso_unstack(iso, req);

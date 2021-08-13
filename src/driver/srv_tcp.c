@@ -744,6 +744,10 @@ static void cli_stream_read_cb_(upd_req_t* req) {
     goto EXIT;
   }
 
+  if (HEDLEY_UNLIKELY(io->tail)) {
+    cli_close_(f);
+  }
+
 EXIT:
   upd_iso_unstack(iso, req);
   upd_file_unref(f);

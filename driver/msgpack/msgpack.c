@@ -787,8 +787,9 @@ static void stream_read_bin_cb_(upd_req_t* req) {
     return;
   }
 
-  const uint8_t* buf = req->stream.io.buf;
-  const size_t   len = req->stream.io.size;
+  const uint8_t* buf  = req->stream.io.buf;
+  const size_t   len  = req->stream.io.size;
+  const bool     tail = req->stream.io.tail;
   ctx->bin_offset += len;
 
   if (msgpack_unpacker_buffer_capacity(&tar->upk) < len) {
@@ -827,7 +828,7 @@ static void stream_read_bin_cb_(upd_req_t* req) {
     msgpack_unpacked_destroy(upkd);
     upd_iso_unstack(iso, upkd);
 
-    if (HEDLEY_UNLIKELY(len == 0)) {
+    if (HEDLEY_UNLIKELY(len == 0 || tail)) {
       upd_iso_unstack(iso, req);
       stream_return_(f, true, "loaded data is incompleted");
       return;

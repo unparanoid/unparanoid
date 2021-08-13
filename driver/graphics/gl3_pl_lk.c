@@ -53,6 +53,7 @@ struct assign_t_ {
   upd_file_t*     file;  /* tex or buf */
   upd_file_lock_t lock;
   upd_req_t       req;
+  gra_gl3_req_t   greq;
   uint32_t        reso[4];
 
   upd_file_t* src;
@@ -170,7 +171,7 @@ lk_lock_output_cb_(
 static
 void
 lk_alloc_output_cb_(
-  upd_req_t* req);
+  gra_gl3_req_t* greq);
 
 static
 void
@@ -781,7 +782,7 @@ static void lk_lock_output_cb_(upd_file_lock_t* k) {
   *(GLuint*) (ctx->varbuf + var->offset) = tex->id;
 
   const size_t rank = (var->type & GRA_GL3_PL_VAR_DIM_MASK)+1;
-  assert(rank <= 4);
+  assert(2 <= rank && rank <= 4);
 
   for (size_t i = 0; i < rank; ++i) {
     intmax_t v = 0;
@@ -793,17 +794,22 @@ static void lk_lock_output_cb_(upd_file_lock_t* k) {
     ass->reso[i] = v;
   }
 
-  ass->req = (upd_req_t) {
-    .file = ass->file,
-    .type = UPD_REQ_TENSOR_ALLOC,
-    .tensor = { .meta = {
-      .rank = rank,
-      .reso = ass->reso,
-    }, },
+  ass->greq = (gra_gl3_req_t) {
+    .dev  = tex->gl,
+    .type = GRA_GL3_REQ_TEX_ALLOC,
+    .tex  = {
+      .id     = tex->id,
+      .target = gra_gl3_rank_to_tex_target(rank),
+      .fmt    = gra_gl3_dim_to_color_fmt(ass->reso[0]),
+      .type   = GL_UNSIGNED_BYTE,
+      .w      = ass->reso[1],
+      .h      = ass->reso[2],
+      .d      = ass->reso[3],
+    },
     .udata = ass,
     .cb    = lk_alloc_output_cb_,
   };
-  if (HEDLEY_UNLIKELY(!upd_req(&ass->req))) {
+  if (HEDLEY_UNLIKELY(!gra_gl3_lock_and_req(&ass->greq))) {
     goto ABORT;
   }
   return;
@@ -815,16 +821,17 @@ ABORT:
   lk_unref_link_(f);
 }
 
-static void lk_alloc_output_cb_(upd_req_t* req) {
-  assign_t_*  ass = req->udata;
+static void lk_alloc_output_cb_(gra_gl3_req_t* greq) {
+  assign_t_*  ass = greq->udata;
   upd_file_t* f   = ass->def;
   upd_iso_t*  iso = f->iso;
   ctx_t_*     ctx = f->ctx;
 
-  if (HEDLEY_UNLIKELY(req->result != UPD_REQ_OK)) {
+  if (HEDLEY_UNLIKELY(!greq->ok)) {
     ctx->aborted = true;
   }
 
+  upd_file_unlock(&ass->greq.lock);
   upd_file_unlock(&ass->lock);
   upd_iso_unstack(iso, ass);
 

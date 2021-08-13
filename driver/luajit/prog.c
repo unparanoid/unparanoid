@@ -393,6 +393,10 @@ static void compile_read_bin_cb_(upd_req_t* req) {
   }
 
   const upd_req_stream_io_t* io = &req->stream.io;
+  if (HEDLEY_UNLIKELY(!io->tail)) {
+    prog_logf_(cp->prog, "script may be too huge");
+    goto EXIT;
+  }
 
   const int ret = luaL_loadbuffer(
     L, (char*) io->buf, io->size, (char*) cp->prog->npath);

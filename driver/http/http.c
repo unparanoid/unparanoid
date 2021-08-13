@@ -297,17 +297,19 @@ static bool stream_handle_(upd_req_t* req) {
 
   switch (req->type) {
   case UPD_REQ_DSTREAM_READ: {
+    const bool alive = ctx->state != END_;
     if (HEDLEY_UNLIKELY(req->stream.io.offset)) {
       req->result = UPD_REQ_INVALID;
       return false;
     }
-    if (HEDLEY_UNLIKELY(ctx->state == END_ && !ctx->out.size)) {
+    if (HEDLEY_UNLIKELY(!alive && !ctx->out.size)) {
       req->result = UPD_REQ_ABORTED;
       return false;
     }
     req->stream.io = (upd_req_stream_io_t) {
       .buf  = ctx->out.ptr,
       .size = ctx->out.size,
+      .tail = !alive,
     };
     upd_buf_t oldbuf = ctx->out;
     ctx->out = (upd_buf_t) {0};
@@ -852,9 +854,10 @@ static void wsock_input_cb_(upd_req_t* req) {
 
   const upd_req_result_t result   = req->result;
   const size_t           consumed = req->stream.io.size;
+  const bool             tail     = req->stream.io.tail;
   upd_iso_unstack(ctx->file->iso, req);
 
-  if (HEDLEY_LIKELY(result == UPD_REQ_OK)) {
+  if (HEDLEY_LIKELY(result == UPD_REQ_OK && !tail)) {
     upd_buf_drop_head(&ctx->wsbuf, consumed);
   } else {
     stream_end_(ctx);

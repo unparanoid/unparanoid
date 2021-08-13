@@ -29,6 +29,7 @@
 #include <libupd/tensor.h>
 
 
+#include "gl3_enum.h"
 #include "gl3_pl.h"
 
 #include "gl3.h"

@@ -379,10 +379,6 @@ static bool png_handle_(upd_req_t* req) {
     upd_file_unref(stf);
   } return true;
 
-  case UPD_REQ_TENSOR_ALLOC:
-    req->result = UPD_REQ_INVALID;
-    return false;
-
   case UPD_REQ_TENSOR_META:
   case UPD_REQ_TENSOR_DATA:
     /* this req can be caused with inclusive lock,

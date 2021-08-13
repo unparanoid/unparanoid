@@ -10,6 +10,7 @@ target_sources(upd.graphics
     gl3.h
     gl3_buf.c
     gl3_dev.c
+    gl3_enum.h
     gl3_glsl.c
     gl3_pl.h
     gl3_pl_def.c

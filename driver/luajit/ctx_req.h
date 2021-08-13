@@ -39,9 +39,6 @@ static void req_cb_(upd_req_t* req) {
     pro->registry.result = luaL_ref(L, LUA_REGISTRYINDEX);
     break;
 
-  case UPD_REQ_PROG_COMPILE:
-    break;
-
   case UPD_REQ_PROG_EXEC:
     lj_file_new(stf, req->prog.exec);
     pro->registry.result = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -112,7 +109,6 @@ static int req_(lua_State* L) {
   case UPD_REQ_STREAM_TRUNCATE:
   case UPD_REQ_DSTREAM_READ:
   case UPD_REQ_DSTREAM_WRITE:
-  case UPD_REQ_TENSOR_ALLOC:
   case UPD_REQ_TENSOR_META:
   case UPD_REQ_TENSOR_DATA:
   case UPD_REQ_TENSOR_FLUSH:

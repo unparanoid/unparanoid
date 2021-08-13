@@ -687,15 +687,20 @@ static void stream_read_bin_cb_(upd_req_t* req) {
   stream_t_*  ctx = f->ctx;
   prog_t_*    tar = ctx->target->ctx;
 
-  if (HEDLEY_UNLIKELY(req->result != UPD_REQ_OK)) {
-    upd_iso_unstack(iso, req);
+  const bool     ok   = req->result == UPD_REQ_OK;
+  const uint8_t* buf  = req->stream.io.buf;
+  const size_t   len  = req->stream.io.size;
+  const bool     tail = req->stream.io.tail;
+  upd_iso_unstack(iso, req);
+
+  if (HEDLEY_UNLIKELY(!ok)) {
     stream_return_(f, true, "backend read failure");
     return;
   }
-
-  const uint8_t* buf = req->stream.io.buf;
-  const size_t   len = req->stream.io.size;
-  upd_iso_unstack(iso, req);
+  if (HEDLEY_UNLIKELY(!tail)) {
+    stream_return_(f, true, "data is too huge");
+    return;
+  }
 
   yaml_parser_t parser;
   if (HEDLEY_UNLIKELY(!yaml_parser_initialize(&parser))) {

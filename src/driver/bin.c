@@ -578,6 +578,7 @@ static void task_read_cb_(uv_fs_t* fsreq) {
   upd_file_t* f    = task->file;
   upd_req_t*  req  = task->req;
   upd_iso_t*  iso  = f->iso;
+  bin_t_*     ctx  = f->ctx;
 
   const ssize_t result = fsreq->result;
   uv_fs_req_cleanup(fsreq);
@@ -593,6 +594,7 @@ static void task_read_cb_(uv_fs_t* fsreq) {
     .offset = off,
     .size   = result,
     .buf    = task->buf,
+    .tail   = off+result >= ctx->bytes,
   };
   req->result = UPD_REQ_OK;
 

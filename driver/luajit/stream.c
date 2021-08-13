@@ -130,6 +130,7 @@ static bool stream_init_(upd_file_t* f) {
     return false;
   }
   *ctx = (lj_stream_t) {
+    .state = LJ_STREAM_RUNNING,
     .watch = {
       .file  = f,
       .udata = f,
@@ -182,6 +183,7 @@ static bool stream_handle_(upd_req_t* req) {
     req->stream.io = (upd_req_stream_io_t) {
       .buf  = ctx->out.ptr,
       .size = ctx->out.size,
+      .tail = !alive,
     };
 
     upd_buf_t temp = ctx->out;
@@ -343,22 +345,22 @@ static void stream_watch_cb_(upd_file_watch_t* w) {
    * without this reference... */
   upd_file_ref(f);
   {
-    if (HEDLEY_UNLIKELY(ctx->out.size)) {
-      upd_file_trigger(f, UPD_FILE_UPDATE);
-    }
-
+    bool update = !!ctx->out.size;
     switch (ctx->state) {
-    case LJ_STREAM_RUNNING: {
+    case LJ_STREAM_RUNNING:
       lj_stream_resume(f);
-    } break;
+      break;
 
     case LJ_STREAM_EXITED:
     case LJ_STREAM_ABORTED:
-      upd_file_trigger(f, UPD_FILE_UPDATE);
+      update = true;
       break;
 
     default:
       break;
+    }
+    if (HEDLEY_UNLIKELY(update)) {
+      upd_file_trigger(f, UPD_FILE_UPDATE);
     }
   }
   upd_file_unref(f);

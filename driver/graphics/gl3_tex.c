@@ -37,11 +37,6 @@ tex_handle_(
 
 static
 bool
-tex_handle_alloc_(
-  upd_req_t* req);
-
-static
-bool
 tex_handle_meta_(
   upd_req_t* req);
 
@@ -117,11 +112,6 @@ tex_del_cb_(
 static
 void
 tex_buf_del_cb_(
-  gra_gl3_req_t* req);
-
-static
-void
-tex_alloc_cb_(
   gra_gl3_req_t* req);
 
 static
@@ -220,9 +210,6 @@ static bool tex_handle_(upd_req_t* req) {
   }
 
   switch (req->type) {
-  case UPD_REQ_TENSOR_ALLOC:
-    return tex_handle_alloc_(req);
-
   case UPD_REQ_TENSOR_META:
     return tex_handle_meta_(req);
 
@@ -238,78 +225,6 @@ static bool tex_handle_(upd_req_t* req) {
   }
 }
 
-static bool tex_handle_alloc_(upd_req_t* req) {
-  upd_file_t*    f   = req->file;
-  gra_gl3_tex_t* ctx = f->ctx;
-
-  const upd_req_tensor_meta_t* m = &req->tensor.meta;
-
-  const GLenum target =
-    m->rank == 2? GL_TEXTURE_1D:
-    m->rank == 3? GL_TEXTURE_2D:
-    m->rank == 4? GL_TEXTURE_3D: 0;
-
-  const GLenum type =
-    m->type == UPD_TENSOR_U8?  GL_UNSIGNED_BYTE:
-    m->type == UPD_TENSOR_U16? GL_UNSIGNED_SHORT:
-    m->type == UPD_TENSOR_F32? GL_FLOAT: 0;
-
-  if (HEDLEY_UNLIKELY(target != ctx->target || type == 0)) {
-    req->result = UPD_REQ_INVALID;
-    req->cb(req);
-    return false;
-  }
-
-  const GLenum fmt =
-    m->reso[0] == 1? GL_RED:
-    m->reso[0] == 2? GL_RG:
-    m->reso[0] == 3? GL_RGB:
-    m->reso[0] == 4? GL_RGBA: 0;
-  if (HEDLEY_UNLIKELY(fmt == 0)) {
-    req->result = UPD_REQ_INVALID;
-    req->cb(req);
-    return false;
-  }
-
-  ctx->broken = true;
-  ctx->fmt    = fmt;
-
-  switch (m->rank) {
-  case 4:
-    ctx->d = m->reso[3];
-    HEDLEY_FALL_THROUGH;
-  case 3:
-    ctx->h = m->reso[2];
-    HEDLEY_FALL_THROUGH;
-  case 2:
-    ctx->w  = m->reso[1];
-    ctx->ch = m->reso[0];
-  }
-
-  const bool ok = gra_gl3_lock_and_req_with_dup(&(gra_gl3_req_t) {
-      .dev = ctx->gl,
-      .type = GRA_GL3_REQ_TEX_ALLOC,
-      .tex = {
-        .target = target,
-        .id     = ctx->id,
-        .fmt    = fmt,
-        .type   = type,
-        .w      = ctx->w,
-        .h      = ctx->h,
-        .d      = ctx->d,
-        .data   = req->tensor.data.ptr,
-      },
-      .udata = req,
-      .cb    = tex_alloc_cb_,
-    });
-  if (HEDLEY_UNLIKELY(!ok)) {
-    req->result = UPD_REQ_ABORTED;
-    req->cb(req);
-    return false;
-  }
-  return true;
-}
-
 static bool tex_handle_meta_(upd_req_t* req) {
   upd_file_t*    f   = req->file;
   gra_gl3_tex_t* ctx = f->ctx;
@@ -323,10 +238,9 @@ static bool tex_handle_meta_(upd_req_t* req) {
     ctx->ch, ctx->w, ctx->h, ctx->d,
   };
   req->tensor.meta = (upd_req_tensor_meta_t) {
-    .rank    = ctx->rank,
-    .type    = UPD_TENSOR_F32,
-    .reso    = (uint32_t*) reso,
-    .inplace = true,
+    .rank = ctx->rank,
+    .type = UPD_TENSOR_F32,
+    .reso = (uint32_t*) reso,
   };
   req->result = UPD_REQ_OK;
   req->cb(req);
@@ -342,8 +256,7 @@ static bool tex_handle_data_(upd_req_t* req) {
     return false;
   }
 
-  const bool inplace = req->tensor.meta.inplace;
-  ctx->map.mode = inplace? GL_READ_WRITE: GL_READ_ONLY;
+  ctx->map.mode = GL_READ_ONLY;
 
   const upd_tensor_type_t type = req->tensor.meta.type;
   ctx->map.type =
@@ -551,36 +464,19 @@ static void tex_buf_del_cb_(gra_gl3_req_t* req) {
   upd_iso_unstack(iso, req);
 }
 
-static void tex_alloc_cb_(gra_gl3_req_t* req) {
-  upd_req_t*     oreq = req->udata;
-  upd_file_t*    f    = oreq->file;
-  upd_iso_t*     iso  = f->iso;
-  gra_gl3_tex_t* ctx  = f->ctx;
-
-  ctx->broken = !req->ok;
-
-  oreq->result = req->ok? UPD_REQ_OK: UPD_REQ_ABORTED;
-  oreq->cb(oreq);
-
-  upd_file_unlock(&req->lock);
-  upd_iso_unstack(iso, req);
-}
-
 static void tex_buf_map_pbo_cb_(gra_gl3_req_t* req) {
   upd_req_t*     oreq = req->udata;
   upd_file_t*    f    = oreq->file;
   upd_iso_t*     iso  = f->iso;
   gra_gl3_tex_t* ctx  = f->ctx;
 
-  const upd_tensor_type_t type    = oreq->tensor.meta.type;
-  const bool              inplace = oreq->tensor.meta.inplace;
+  const upd_tensor_type_t type = oreq->tensor.meta.type;
 
   oreq->tensor.data = (upd_req_tensor_data_t) {
     .meta = {
-      .type    = type,
-      .rank    = ctx->rank,
-      .reso    = (uint32_t[]) { ctx->ch, ctx->w, ctx->h, ctx->d, },
-      .inplace = inplace,
+      .type = type,
+      .rank = ctx->rank,
+      .reso = (uint32_t[]) { ctx->ch, ctx->w, ctx->h, ctx->d, },
     },
     .ptr  = req->buf_map_pbo.data,
     .size = req->buf_map_pbo.size,
