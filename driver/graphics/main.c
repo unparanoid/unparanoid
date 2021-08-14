@@ -13,6 +13,7 @@ upd_external_t upd = {
     &gra_gl3_tex_1d,
     &gra_gl3_tex_2d,
     &gra_gl3_tex_3d,
+    &gra_gl3_view,
     &gra_glfw_dev,
     NULL,
   },

@@ -8,12 +8,12 @@ extern const upd_driver_t gra_gl3_buf_element;
 extern const upd_driver_t gra_gl3_dev;
 extern const upd_driver_t gra_gl3_glsl_fragment;
 extern const upd_driver_t gra_gl3_glsl_vertex;
-extern const upd_driver_t gra_gl3_output;
 extern const upd_driver_t gra_gl3_pl_def;
 extern const upd_driver_t gra_gl3_pl_lk;
 extern const upd_driver_t gra_gl3_tex_1d;
 extern const upd_driver_t gra_gl3_tex_2d;
 extern const upd_driver_t gra_gl3_tex_3d;
+extern const upd_driver_t gra_gl3_view;
 
 
 typedef struct gra_gl3_req_t   gra_gl3_req_t;
@@ -24,6 +24,7 @@ typedef struct gra_gl3_dev_t    gra_gl3_dev_t;
 typedef struct gra_gl3_glsl_t   gra_gl3_glsl_t;
 typedef struct gra_gl3_pl_def_t gra_gl3_pl_def_t;
 typedef struct gra_gl3_tex_t    gra_gl3_tex_t;
+typedef struct gra_gl3_view_t   gra_gl3_view_t;
 
 
 typedef enum gra_gl3_req_type_t {
@@ -229,6 +230,43 @@ struct gra_gl3_tex_t {
 };
 
 
+struct gra_gl3_view_t {
+  upd_file_t* gl;
+  upd_file_t* glfw;
+  upd_file_t* th;
+
+  upd_file_watch_t watch;
+  upd_file_lock_t  gl_lock;
+
+  upd_array_of(upd_file_t*) stream;
+
+  size_t refcnt;
+
+  GLuint vao;
+  GLuint prog;
+  GLuint sampler;
+
+  atomic_bool thread_alive;
+  atomic_bool file_alive;
+  atomic_bool need_update;
+
+  unsigned gl_locked : 1;
+  unsigned broken    : 1;
+
+  struct {
+    atomic_uintmax_t id;
+    atomic_uint_least32_t w, h, aw, ah;
+  } tex;
+  struct {
+    GLFWwindow* ptr;
+    atomic_bool dirty;
+    atomic_uint_least32_t w, h;
+  } win;
+
+  uint8_t err[256];
+};
+
+
 HEDLEY_NON_NULL(1)
 HEDLEY_WARN_UNUSED_RESULT
 bool
@@ -369,21 +407,6 @@ static inline gra_gl3_fetch_t* gra_gl3_lock_and_fetch_with_dup(
     return NULL;
   }
   return fe;
-}
-
-
-static inline const upd_driver_t* gra_gl3_get_driver_from_var_type(
-    gra_gl3_pl_var_type_t type) {
-  switch (type) {
-  case GRA_GL3_PL_VAR_TEX1:        return &gra_gl3_tex_1d;
-  case GRA_GL3_PL_VAR_TEX2:        return &gra_gl3_tex_2d;
-  case GRA_GL3_PL_VAR_TEX3:        return &gra_gl3_tex_3d;
-  case GRA_GL3_PL_VAR_BUF_ARRAY:   return &gra_gl3_buf_array;
-  case GRA_GL3_PL_VAR_BUF_ELEMENT: return &gra_gl3_buf_element;
-  default:
-    assert(false);
-    HEDLEY_UNREACHABLE();
-  }
 }
 
 

@@ -25,6 +25,7 @@
 #include <libupd/memory.h>
 #include <libupd/msgpack.h>
 #include <libupd/pathfind.h>
+#include <libupd/proto.h>
 #include <libupd/str.h>
 #include <libupd/tensor.h>
 

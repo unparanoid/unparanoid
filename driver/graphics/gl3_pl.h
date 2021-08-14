@@ -422,3 +422,18 @@ static inline gra_gl3_pl_var_type_t gra_gl3_pl_var_type_unstringify(
     upd_strcaseq_c("element", str, len)? GRA_GL3_PL_VAR_BUF_ELEMENT:
     GRA_GL3_PL_VAR_NONE;
 }
+
+
+static inline const upd_driver_t* gra_gl3_get_driver_from_var_type(
+    gra_gl3_pl_var_type_t type) {
+  switch (type) {
+  case GRA_GL3_PL_VAR_TEX1:        return &gra_gl3_tex_1d;
+  case GRA_GL3_PL_VAR_TEX2:        return &gra_gl3_tex_2d;
+  case GRA_GL3_PL_VAR_TEX3:        return &gra_gl3_tex_3d;
+  case GRA_GL3_PL_VAR_BUF_ARRAY:   return &gra_gl3_buf_array;
+  case GRA_GL3_PL_VAR_BUF_ELEMENT: return &gra_gl3_buf_element;
+  default:
+    assert(false);
+    HEDLEY_UNREACHABLE();
+  }
+}

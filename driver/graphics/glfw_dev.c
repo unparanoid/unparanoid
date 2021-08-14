@@ -226,6 +226,10 @@ static void thread_main_(void* udata) {
     thread_errf_(f, "glfwInit failure");
     goto EXIT;
   }
+
+  /* clears error (glfwPostEvent may be called before glfwInit) */
+  glfwGetError(NULL);
+
   while (atomic_load(&ctx->file_alive)) {
     if (HEDLEY_UNLIKELY(!atomic_load(&ctx->done))) {
       ctx->req->ok = thread_handle_req_(f, ctx->req);
@@ -245,7 +249,7 @@ EXIT:
   if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, id))) {
     fprintf(stderr, LOG_PREFIX_
       "failed to trigger ASYNC event, "
-      "this may cause iso machine got stuck X(\n");
+      "this may cause iso machine stuck X(\n");
   }
 }
 
@@ -268,7 +272,6 @@ static bool thread_handle_req_(upd_file_t* f, gra_glfw_req_t* req) {
       thread_errf_(f, "glfwMakeContextCurrent error: %s", err);
       return false;
     }
-
     if (HEDLEY_UNLIKELY(glewInit())) {
       thread_errf_(f, "glewInit error");
       return false;
@@ -276,7 +279,7 @@ static bool thread_handle_req_(upd_file_t* f, gra_glfw_req_t* req) {
     return true;
 
   case GRA_GLFW_REQ_SUB_INIT: {
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_VISIBLE,   GLFW_TRUE);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
     GLFWwindow* win =
