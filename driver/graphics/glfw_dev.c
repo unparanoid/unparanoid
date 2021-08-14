@@ -146,6 +146,7 @@ static void dev_deinit_(upd_file_t* f) {
 
   if (HEDLEY_LIKELY(ctx)) {
     atomic_store(&ctx->file_alive, false);
+    glfwPostEmptyEvent();
     ctx->file = NULL;
   }
   /* resources are freed by thread_deinit_ */
@@ -235,7 +236,7 @@ static void thread_main_(void* udata) {
           "failed to trigger ASYNC event, this may cause dead lock X(\n");
       }
     }
-    glfwPollEvents();
+    glfwWaitEvents();
   }
   glfwTerminate();
 

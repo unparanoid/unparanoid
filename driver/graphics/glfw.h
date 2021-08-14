@@ -107,6 +107,7 @@ static inline void gra_glfw_req(gra_glfw_req_t* req) {
 
   ctx->req = req;
   atomic_store(&ctx->done, false);
+  glfwPostEmptyEvent();
 }
 
 static inline bool gra_glfw_lock_and_req(gra_glfw_req_t* req) {
