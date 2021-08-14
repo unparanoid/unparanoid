@@ -8,6 +8,8 @@ extern const upd_driver_t gra_glfw_dev;
 typedef struct gra_glfw_dev_t gra_glfw_dev_t;
 typedef struct gra_glfw_req_t gra_glfw_req_t;
 
+typedef struct gra_glfw_win_cb_t gra_glfw_win_cb_t;
+
 
 struct gra_glfw_dev_t {
   upd_file_t* file;
@@ -27,7 +29,9 @@ struct gra_glfw_dev_t {
 
 typedef enum gra_glfw_req_type_t {
   GRA_GLFW_REQ_GL3_INIT,
-  GRA_GLFW_REQ_GL3_DEINIT,
+  GRA_GLFW_REQ_SUB_INIT,
+
+  GRA_GLFW_REQ_WIN_DEINIT,
 } gra_glfw_req_type_t;
 
 struct gra_glfw_req_t {
@@ -36,7 +40,15 @@ struct gra_glfw_req_t {
 
   gra_glfw_req_type_t type;
 
-  GLFWwindow* win;
+  union {
+    GLFWwindow* win;
+
+    struct {
+      GLFWwindow*              win;
+      GLFWwindow*              share;
+      const gra_glfw_win_cb_t* cb;
+    } sub;
+  };
 
   unsigned ok : 1;
 
@@ -44,6 +56,19 @@ struct gra_glfw_req_t {
   void
   (*cb)(
     gra_glfw_req_t* req);
+};
+
+
+struct gra_glfw_win_cb_t {
+  GLFWwindowposfun          pos;
+  GLFWwindowsizefun         size;
+  GLFWwindowclosefun        close;
+  GLFWwindowrefreshfun      refresh;
+  GLFWwindowfocusfun        focus;
+  GLFWwindowiconifyfun      iconify;
+  GLFWwindowmaximizefun     maximize;
+  GLFWframebuffersizefun    framebuffersize;
+  GLFWwindowcontentscalefun contentscale;
 };
 
 

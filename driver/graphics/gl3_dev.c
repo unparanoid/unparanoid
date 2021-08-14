@@ -173,7 +173,7 @@ static void dev_deinit_(upd_file_t* f) {
   if (HEDLEY_LIKELY(ctx->glfw && ctx->gl)) {
     const bool req = gra_glfw_lock_and_req_with_dup(&(gra_glfw_req_t) {
         .dev   = ctx->glfw,
-        .type  = GRA_GLFW_REQ_GL3_DEINIT,
+        .type  = GRA_GLFW_REQ_WIN_DEINIT,
         .win   = ctx->gl,
         .udata = iso,
         .cb    = dev_deinit_gl3_cb_,

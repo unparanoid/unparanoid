@@ -8,6 +8,7 @@ extern const upd_driver_t gra_gl3_buf_element;
 extern const upd_driver_t gra_gl3_dev;
 extern const upd_driver_t gra_gl3_glsl_fragment;
 extern const upd_driver_t gra_gl3_glsl_vertex;
+extern const upd_driver_t gra_gl3_output;
 extern const upd_driver_t gra_gl3_pl_def;
 extern const upd_driver_t gra_gl3_pl_lk;
 extern const upd_driver_t gra_gl3_tex_1d;

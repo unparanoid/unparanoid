@@ -255,19 +255,47 @@ static bool thread_handle_req_(upd_file_t* f, gra_glfw_req_t* req) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 
-    req->win = glfwCreateWindow(100, 100, "monitor", NULL, NULL);
+    req->win = glfwCreateWindow(16, 16, "OpenGL context", NULL, NULL);
     if (HEDLEY_UNLIKELY(req->win == NULL)) {
-      thread_errf_(f, "failed to create window");
+      thread_errf_(f, "failed to create OpenGL context");
       return false;
     }
     return true;
 
-  case GRA_GLFW_REQ_GL3_DEINIT:
+  case GRA_GLFW_REQ_SUB_INIT: {
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+
+    GLFWwindow* win =
+      glfwCreateWindow(100, 100, "subwindow", NULL, req->sub.share);
+    if (HEDLEY_UNLIKELY(win == NULL)) {
+      thread_errf_(f, "failed to create OpenGL window");
+      return false;
+    }
+
+    const gra_glfw_win_cb_t* cb = req->sub.cb;
+    if (cb) {
+      glfwSetWindowPosCallback(win, cb->pos);
+      glfwSetWindowSizeCallback(win, cb->size);
+      glfwSetWindowCloseCallback(win, cb->close);
+      glfwSetWindowRefreshCallback(win, cb->refresh);
+      glfwSetWindowFocusCallback(win, cb->focus);
+      glfwSetWindowIconifyCallback(win, cb->iconify);
+      glfwSetWindowMaximizeCallback(win, cb->maximize);
+      glfwSetFramebufferSizeCallback(win, cb->framebuffersize);
+      glfwSetWindowContentScaleCallback(win, cb->contentscale);
+    }
+    req->sub.win = win;
+  } return true;
+
+  case GRA_GLFW_REQ_WIN_DEINIT:
     glfwDestroyWindow(req->win);
     return true;
+
+  default:
+    assert(false);
+    HEDLEY_UNREACHABLE();
   }
-  assert(false);
-  HEDLEY_UNREACHABLE();
 }
 
 
