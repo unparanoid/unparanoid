@@ -261,6 +261,18 @@ static bool thread_handle_req_(upd_file_t* f, gra_glfw_req_t* req) {
       thread_errf_(f, "failed to create OpenGL context");
       return false;
     }
+
+    glfwMakeContextCurrent(req->win);
+    const char* err;
+    if (HEDLEY_UNLIKELY(glfwGetError(&err))) {
+      thread_errf_(f, "glfwMakeContextCurrent error: %s", err);
+      return false;
+    }
+
+    if (HEDLEY_UNLIKELY(glewInit())) {
+      thread_errf_(f, "glewInit error");
+      return false;
+    }
     return true;
 
   case GRA_GLFW_REQ_SUB_INIT: {

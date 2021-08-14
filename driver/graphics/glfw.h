@@ -103,7 +103,11 @@ static inline void gra_glfw_req(gra_glfw_req_t* req) {
   upd_file_t*     f   = req->dev;
   gra_glfw_dev_t* ctx = f->ctx;
 
-  assert(atomic_load(&ctx->done));
+  if (HEDLEY_UNLIKELY(!atomic_load(&ctx->done))) {
+    req->ok = false;
+    req->cb(req);
+    return;
+  }
 
   ctx->req = req;
   atomic_store(&ctx->done, false);
