@@ -69,9 +69,6 @@ thread_handle_req_(
 static const upd_driver_t thread_ = {
   .name = (uint8_t*) "upd.graphics.glfw.dev.thread_",
   .cats = (upd_req_cat_t[]) {0},
-  .flags = {
-    .async = true,
-  },
   .init   = thread_init_,
   .deinit = thread_deinit_,
   .handle = thread_handle_,
@@ -219,7 +216,10 @@ static void thread_errf_(upd_file_t* f, const char* fmt, ...) {
 
 static void thread_main_(void* udata) {
   upd_file_t*     f   = udata;
+  upd_iso_t*      iso = f->iso;
   gra_glfw_dev_t* ctx = f->ctx;
+
+  const upd_file_id_t id = f->id;
 
   if (HEDLEY_UNLIKELY(glfwInit() == 0)) {
     thread_errf_(f, "glfwInit failure");
@@ -230,7 +230,7 @@ static void thread_main_(void* udata) {
       ctx->req->ok = thread_handle_req_(f, ctx->req);
       atomic_store(&ctx->done, true);
 
-      if (HEDLEY_UNLIKELY(!upd_file_trigger_async(f))) {
+      if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, id))) {
         fprintf(stderr, LOG_PREFIX_
           "failed to trigger ASYNC event, this may cause dead lock X(\n");
       }
@@ -241,7 +241,7 @@ static void thread_main_(void* udata) {
 
 EXIT:
   atomic_store(&ctx->thread_alive, false);
-  if (HEDLEY_UNLIKELY(!upd_file_trigger_async(f))) {
+  if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, id))) {
     fprintf(stderr, LOG_PREFIX_
       "failed to trigger ASYNC event, "
       "this may cause iso machine got stuck X(\n");

@@ -3,6 +3,9 @@
 #include "common.h"
 
 
+#define UPD_ISO_ASYNC_MAX 64
+
+
 typedef struct upd_iso_thread_t upd_iso_thread_t;
 typedef struct upd_iso_work_t   upd_iso_work_t;
 
@@ -39,12 +42,6 @@ struct upd_iso_t {
   } stack;
 
   struct {
-    uint8_t runtime[UPD_PATH_MAX];
-    uint8_t pkg    [UPD_PATH_MAX];
-    uint8_t working[UPD_PATH_MAX];
-  } path;
-
-  struct {
     uv_timer_t    timer;
     upd_file_id_t last_seen;
 
@@ -60,6 +57,18 @@ struct upd_iso_t {
     CURLM*     ctx;
     uv_timer_t timer;
   } curl;
+
+  struct {
+    uv_async_t    uv;
+    atomic_size_t head;
+    upd_file_id_t id[UPD_ISO_ASYNC_MAX];
+  } async;
+
+  struct {
+    uint8_t runtime[UPD_PATH_MAX];
+    uint8_t pkg    [UPD_PATH_MAX];
+    uint8_t working[UPD_PATH_MAX];
+  } path;
 };
 
 struct upd_iso_thread_t {

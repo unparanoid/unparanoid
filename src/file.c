@@ -21,11 +21,6 @@ file_init_check_(
 
 static
 bool
-file_init_async_(
-  upd_file_t_* f);
-
-static
-bool
 file_init_timer_(
   upd_file_t_* f);
 
@@ -52,11 +47,6 @@ static
 void
 file_check_cb_(
   uv_check_t* handle);
-
-static
-void
-file_async_cb_(
-  uv_async_t* f);
 
 static
 void
@@ -111,7 +101,6 @@ upd_file_t* upd_file_new_(const upd_file_t* src) {
     (!d->flags.npoll || !npathlen || file_init_poll_(f))    &&
     (!d->flags.preproc            || file_init_prepare_(f)) &&
     (!d->flags.postproc           || file_init_check_(f))   &&
-    (!d->flags.async              || file_init_async_(f))   &&
     (!d->flags.timer              || file_init_timer_(f))   &&
     upd_array_insert(&iso->files, f, SIZE_MAX);
 
@@ -223,23 +212,6 @@ static bool file_init_check_(upd_file_t_* f) {
   return true;
 }
 
-static bool file_init_async_(upd_file_t_* f) {
-  upd_iso_t* iso = f->super.iso;
-
-  if (HEDLEY_UNLIKELY(!upd_malloc(&f->async, sizeof(*f->async)))) {
-    return false;
-  }
-  *f->async = (uv_async_t) { .data = f, };
-
-  const int err = uv_async_init(&iso->loop, f->async, file_async_cb_);
-  if (HEDLEY_UNLIKELY(0 > err)) {
-    upd_free(&f->async);
-    return false;
-  }
-  uv_unref((uv_handle_t*) f->async);
-  return true;
-}
-
 static bool file_init_timer_(upd_file_t_* f) {
   upd_iso_t* iso = f->super.iso;
 
@@ -271,10 +243,6 @@ static void file_close_all_handlers_(upd_file_t_* f) {
     uv_check_stop(f->check);
     uv_close((uv_handle_t*) f->check, file_handle_close_cb_);
     f->check = NULL;
-  }
-  if (f->async) {
-    uv_close((uv_handle_t*) f->async, file_handle_close_cb_);
-    f->async = NULL;
   }
   if (f->timer) {
     uv_close((uv_handle_t*) f->timer, file_handle_close_cb_);
@@ -308,11 +276,6 @@ static void file_prepare_cb_(uv_prepare_t* handle) {
 static void file_check_cb_(uv_check_t* handle) {
   upd_file_t* f = handle->data;
   upd_file_trigger(f, UPD_FILE_POSTPROC);
-}
-
-static void file_async_cb_(uv_async_t* handle) {
-  upd_file_t* f = handle->data;
-  upd_file_trigger(f, UPD_FILE_ASYNC);
 }
 
 static void file_handle_close_cb_(uv_handle_t* handle) {

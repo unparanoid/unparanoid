@@ -70,6 +70,11 @@ void
 iso_shutdown_timer_cb_(
   uv_timer_t* timer);
 
+static
+void
+iso_async_cb_(
+  uv_async_t* async);
+
 
 static
 void
@@ -143,6 +148,10 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     .curl = {
       .timer = { .data = iso, },
     },
+    .async = {
+      .uv   = { .data = iso, },
+      .head = ATOMIC_VAR_INIT(0),
+    },
   };
 
   /* init uv handles */
@@ -152,9 +161,10 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     0 <= uv_tty_init(&iso->loop, &iso->out, 1, 0) &&
     0 <= uv_signal_init(&iso->loop, &iso->sigint) &&
     0 <= uv_signal_init(&iso->loop, &iso->sighup) &&
-    0 <= uv_timer_init(&iso->loop, &iso->walker.timer) &&
     0 <= uv_timer_init(&iso->loop, &iso->shutdown_timer) &&
     0 <= uv_timer_init(&iso->loop, &iso->destroyer) &&
+    0 <= uv_timer_init(&iso->loop, &iso->walker.timer) &&
+    0 <= uv_async_init(&iso->loop, &iso->async.uv, iso_async_cb_) &&
     0 <= uv_signal_start(&iso->sigint, iso_signal_cb_, SIGINT) &&
     0 <= uv_signal_start(&iso->sighup, iso_signal_cb_, SIGHUP) &&
     0 <= uv_timer_start(
@@ -164,6 +174,7 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
     return NULL;
   }
   uv_unref((uv_handle_t*) &iso->walker.timer);
+  uv_unref((uv_handle_t*) &iso->async.uv);
 
   /* init curl */
   iso->curl.ctx = curl_multi_init();
@@ -240,6 +251,7 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   uv_close((uv_handle_t*) &iso->destroyer,      NULL);
   uv_close((uv_handle_t*) &iso->walker.timer,   NULL);
   uv_close((uv_handle_t*) &iso->curl.timer,     NULL);
+  uv_close((uv_handle_t*) &iso->async.uv,       NULL);
   if (HEDLEY_UNLIKELY(0 > uv_run(&iso->loop, UV_RUN_DEFAULT))) {
     return UPD_ISO_PANIC;
   }
@@ -478,11 +490,40 @@ static void iso_signal_cb_(uv_signal_t* sig, int signum) {
   }
 }
 
-
 static void iso_shutdown_timer_cb_(uv_timer_t* timer) {
   upd_iso_t* iso = timer->data;
   upd_iso_msgf(iso, "shutting down...\n");
   upd_iso_exit(iso, UPD_ISO_SHUTDOWN);
+}
+
+static void iso_async_cb_(uv_async_t* async) {
+  upd_iso_t* iso = async->data;
+
+  size_t n = atomic_load(&iso->async.head);
+  if (HEDLEY_UNLIKELY(n >= UPD_ISO_ASYNC_MAX)) {
+    n = UPD_ISO_ASYNC_MAX;
+  }
+
+  upd_file_id_t id[UPD_ISO_ASYNC_MAX];
+  memcpy(id, iso->async.id, sizeof(id)*n);
+  atomic_store(&iso->async.head, 0);
+
+  for (size_t i = 1; i < n; ++i) {
+  }
+
+  for (size_t i = 0; i < n; ++i) {
+    bool dup = false;
+    for (size_t j = 0; j < i; ++j) {
+      if (HEDLEY_UNLIKELY(id[i] == id[j])) {
+        dup = true;
+        break;
+      }
+    }
+    if (HEDLEY_LIKELY(!dup)) {
+      upd_file_t* f = upd_file_get(iso, id[i]);
+      upd_file_trigger(f, UPD_FILE_ASYNC);
+    }
+  }
 }
 
 

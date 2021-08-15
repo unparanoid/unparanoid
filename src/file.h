@@ -11,7 +11,6 @@ typedef struct upd_file_t_ {
   uv_fs_poll_t* poll;
   uv_prepare_t* prepare;
   uv_check_t*   check;
-  uv_async_t*   async;
   uv_timer_t*   timer;
 
   struct {
@@ -106,11 +105,16 @@ static inline void upd_file_trigger(upd_file_t* f, upd_file_event_t e) {
   }
 }
 
-static inline bool upd_file_trigger_async(upd_file_t* f) {
-  upd_file_t_* f_ = (void*) f;
-  assert(f_->async);
-
-  return f_->async && 0 <= uv_async_send(f_->async);
+static inline bool upd_file_trigger_async(upd_iso_t* iso, upd_file_id_t id) {
+  const size_t n = atomic_fetch_add(&iso->async.head, 1);
+  if (HEDLEY_UNLIKELY(n >= UPD_ISO_ASYNC_MAX)) {
+    return false;
+  }
+  iso->async.id[n] = id;
+  if (HEDLEY_UNLIKELY(0 > uv_async_send(&iso->async.uv))) {
+    return false;
+  }
+  return true;
 }
 
 static inline void upd_file_trigger_timer_cb_(uv_timer_t* timer) {

@@ -76,6 +76,7 @@ target_link_libraries(updcore
   PUBLIC
     crypto-algorithms
     cwalk
+    for-msvc
     hedley
     libcurl
     libupd
