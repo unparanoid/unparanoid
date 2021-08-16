@@ -17,8 +17,8 @@ struct ctx_t_ {
   upd_file_t*     def;
   upd_file_lock_t lock;
 
-  upd_msgpack_t     mpk;
-  msgpack_unpacked* upkd;
+  upd_msgpack_t    mpk;
+  msgpack_unpacked upkd;
 
   const gra_gl3_pl_t* pl;
   uint8_t*            varbuf;
@@ -33,8 +33,6 @@ struct ctx_t_ {
 
   unsigned locked  : 1;
   unsigned linked  : 1;
-  unsigned busy    : 1;
-  unsigned broken  : 1;
   unsigned aborted : 1;
 };
 
@@ -83,11 +81,6 @@ lk_handle_(
 static
 void
 lk_clear_(
-  upd_file_t* f);
-
-static
-void
-lk_handle_next_(
   upd_file_t* f);
 
 static
@@ -150,6 +143,11 @@ const upd_driver_t gra_gl3_pl_lk = {
 
 static
 void
+lk_msgpack_cb_(
+  upd_msgpack_t* mpk);
+
+static
+void
 lk_lock_pl_cb_(
   upd_file_lock_t* k);
 
@@ -195,22 +193,18 @@ lk_unlink_cb_(
 
 
 static bool lk_init_(upd_file_t* f) {
-  upd_iso_t* iso = f->iso;
-
   ctx_t_* ctx = NULL;
   if (HEDLEY_UNLIKELY(!upd_malloc(&ctx, sizeof(*ctx)))) {
     return false;
   }
-  *ctx = (ctx_t_) {
-    .mpk = {
-      .iso = iso,
-    },
-  };
+  *ctx = (ctx_t_) {0};
 
   if (HEDLEY_UNLIKELY(!upd_msgpack_init(&ctx->mpk))) {
     upd_free(&ctx);
     return false;
   }
+  ctx->mpk.udata = f;
+  ctx->mpk.cb    = lk_msgpack_cb_;
 
   f->ctx = ctx;
   return true;
@@ -254,39 +248,19 @@ static bool lk_handle_(upd_req_t* req) {
   upd_file_t* f   = req->file;
   ctx_t_*     ctx = f->ctx;
 
-  if (HEDLEY_UNLIKELY(ctx->broken)) {
+  if (HEDLEY_UNLIKELY(ctx->mpk.broken)) {
     req->result = UPD_REQ_ABORTED;
     return false;
   }
 
   switch (req->type) {
-    case UPD_REQ_DSTREAM_WRITE:
-      if (HEDLEY_UNLIKELY(!upd_msgpack_unpack(&ctx->mpk, &req->stream.io))) {
-        req->result = UPD_REQ_ABORTED;
-        return false;
-      }
-      req->result = UPD_REQ_OK;
-      req->cb(req);
+  case UPD_REQ_DSTREAM_WRITE:
+  case UPD_REQ_DSTREAM_READ:
+    return upd_msgpack_handle(&ctx->mpk, req);
 
-      if (HEDLEY_UNLIKELY(!ctx->busy)) {
-        lk_handle_next_(f);
-      }
-      return true;
-
-    case UPD_REQ_DSTREAM_READ:
-      req->stream.io = (upd_req_stream_io_t) {
-        .buf  = (uint8_t*) ctx->mpk.out.data,
-          .size = ctx->mpk.out.size,
-      };
-      uint8_t* ptr = (void*) msgpack_sbuffer_release(&ctx->mpk.out);
-      req->result = UPD_REQ_OK;
-      req->cb(req);
-      free(ptr);
-      return true;
-
-    default:
-      req->result = UPD_REQ_INVALID;
-      return false;
+  default:
+    req->result = UPD_REQ_INVALID;
+    return false;
   }
 }
 
@@ -312,43 +286,19 @@ static void lk_clear_(upd_file_t* f) {
   upd_array_clear(&ctx->copy);
 }
 
-static void lk_handle_next_(upd_file_t* f) {
-  upd_iso_t* iso = f->iso;
-  ctx_t_*    ctx = f->ctx;
-
-  if (HEDLEY_UNLIKELY(ctx->upkd)) {
-    msgpack_unpacked_destroy(ctx->upkd);
-    upd_iso_unstack(iso, ctx->upkd);
-    ctx->upkd = NULL;
-  }
-
-  ctx->upkd = upd_msgpack_pop(&ctx->mpk);
-  if (HEDLEY_UNLIKELY(ctx->upkd == NULL)) {
-    ctx->busy = false;
-    upd_file_unref(f);
-    return;
-  }
-
-  if (HEDLEY_UNLIKELY(!ctx->busy)) {
-    upd_file_ref(f);
-    ctx->busy = true;
-  }
-  (ctx->linked? lk_handle_exec_: lk_handle_link_)(f);
-}
-
 static void lk_handle_link_(upd_file_t* f) {
   ctx_t_*    ctx = f->ctx;
   upd_iso_t* iso = f->iso;
 
   ctx->aborted = false;
 
-  if (HEDLEY_UNLIKELY(ctx->upkd->data.type != MSGPACK_OBJECT_MAP)) {
+  if (HEDLEY_UNLIKELY(ctx->upkd.data.type != MSGPACK_OBJECT_MAP)) {
     lk_error_(f, "object root must be a map");
     return;
   }
 
   uint64_t target = 0;
-  upd_msgpack_find_fields(&ctx->upkd->data.via.map, (upd_msgpack_field_t[]) {
+  upd_msgpack_find_fields(&ctx->upkd.data.via.map, (upd_msgpack_field_t[]) {
       { .name = "target", .ui = &target, },
       { NULL },
       });
@@ -474,7 +424,7 @@ static void lk_error_(upd_file_t* f, const char* msg) {
 
   msgpack_packer* pk = &ctx->mpk.pk;
 
-  ctx->broken =
+  ctx->mpk.broken |=
     msgpack_pack_map(pk, 2)                ||
       upd_msgpack_pack_cstr(pk, "success") ||
       msgpack_pack_false(pk)               ||
@@ -489,7 +439,7 @@ static void lk_error_(upd_file_t* f, const char* msg) {
   }
 
   upd_file_trigger(f, UPD_FILE_UPDATE);
-  lk_handle_next_(f);
+  lk_msgpack_cb_(&ctx->mpk);
 }
 
 static bool lk_assign_input_(
@@ -646,6 +596,33 @@ static bool lk_create_and_assign_output_tex_(
 }
 
 
+static void lk_msgpack_cb_(upd_msgpack_t* mpk) {
+  upd_file_t* f   = mpk->udata;
+  ctx_t_*     ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(!mpk->busy)) {
+    msgpack_unpacked_init(&ctx->upkd);
+  }
+
+  if (HEDLEY_UNLIKELY(!upd_msgpack_pop(mpk, &ctx->upkd))) {
+    msgpack_unpacked_destroy(&ctx->upkd);
+    if (HEDLEY_UNLIKELY(mpk->broken)) {
+      upd_file_trigger(f, UPD_FILE_UPDATE);
+    }
+    if (mpk->busy) {
+      mpk->busy = false;
+      upd_file_unref(f);
+    }
+    return;
+  }
+
+  if (HEDLEY_UNLIKELY(!mpk->busy)) {
+    mpk->busy = true;
+    upd_file_ref(f);
+  }
+  (ctx->linked? lk_handle_link_: lk_handle_exec_)(f);
+}
+
 static void lk_lock_pl_cb_(upd_file_lock_t* k) {
   upd_file_t* f   = k->udata;
   ctx_t_*     ctx = f->ctx;
@@ -690,7 +667,7 @@ static void lk_fetch_pl_cb_(gra_gl3_fetch_t* fe) {
   memset(ctx->varbuf, 0, pl->varbuflen);
 
   const msgpack_object_map* param = NULL;
-  upd_msgpack_find_fields(&ctx->upkd->data.via.map, (upd_msgpack_field_t[]) {
+  upd_msgpack_find_fields(&ctx->upkd.data.via.map, (upd_msgpack_field_t[]) {
       { .name = "param", .map = &param, },
       { NULL, },
     });
@@ -855,7 +832,7 @@ static void lk_link_cb_(gra_gl3_req_t* req) {
   ctx->linked = true;
 
   msgpack_packer* pk = &ctx->mpk.pk;
-  ctx->broken =
+  ctx->mpk.broken =
     msgpack_pack_map(pk, 2)                ||
       upd_msgpack_pack_cstr(pk, "success") ||
         msgpack_pack_true(pk)              ||
@@ -865,13 +842,13 @@ static void lk_link_cb_(gra_gl3_req_t* req) {
   assert(ctx->out.n == ctx->pl->outcnt);
   for (size_t i = 0; i < ctx->out.n; ++i) {
     upd_file_t* of = ctx->out.p[i];
-    ctx->broken |=
+    ctx->mpk.broken |=
       upd_msgpack_pack_cstr(pk, (char*) ctx->pl->out[i].var->name) ||
       msgpack_pack_uint64(pk, of->id);
   }
 
   upd_file_trigger(f, UPD_FILE_UPDATE);
-  lk_handle_next_(f);
+  lk_msgpack_cb_(&ctx->mpk);
 }
 
 static void lk_lock_for_exec_cb_(upd_file_lock_t* k) {
@@ -918,13 +895,13 @@ static void lk_exec_cb_(gra_gl3_req_t* req) {
   }
   upd_array_clear(&ctx->reslock);
 
-  ctx->broken =
+  ctx->mpk.broken =
     msgpack_pack_map(pk, 1)                ||
       upd_msgpack_pack_cstr(pk, "success") ||
         msgpack_pack_true(pk);
 
   upd_file_trigger(f, UPD_FILE_UPDATE);
-  lk_handle_next_(f);
+  lk_msgpack_cb_(&ctx->mpk);
 }
 
 static void lk_unlink_cb_(gra_gl3_req_t* req) {

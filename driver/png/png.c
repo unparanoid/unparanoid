@@ -16,6 +16,7 @@
 #include <libupd/array.h>
 #include <libupd/buf.h>
 #include <libupd/msgpack.h>
+#include <libupd/proto.h>
 #include <libupd/str.h>
 #include <libupd/tensor.h>
 #include <libupd/yaml.h>
@@ -61,13 +62,9 @@ struct png_t_ {
 struct stream_t_ {
   upd_file_t* target;
 
-  upd_msgpack_t             mpk;
-  msgpack_unpacked*         upkd;
-  const msgpack_object_map* param;
-
-  unsigned busy   : 1;
-  unsigned broken : 1;
-  unsigned done   : 1;
+  upd_msgpack_t     mpk;
+  msgpack_unpacked  upkd;
+  upd_proto_parse_t par;
 };
 
 
@@ -157,11 +154,6 @@ stream_handle_(
 
 static
 void
-stream_handle_next_(
-  upd_file_t* f);
-
-static
-void
 stream_success_(
   upd_file_t* f);
 
@@ -170,21 +162,6 @@ void
 stream_error_(
   upd_file_t* f,
   const char* msg);
-
-static
-void
-stream_handle_obj_(
-  upd_file_t* f);
-
-static
-void
-stream_handle_info_(
-  upd_file_t* f);
-
-static
-void
-stream_handle_frame_(
-  upd_file_t* f);
 
 static const upd_driver_t stream_driver_ = {
   .name = (uint8_t*) "upd.png.stream_",
@@ -243,8 +220,13 @@ png_read_cb_(
 
 static
 void
-stream_pathfind_tensor_cb_(
-  upd_pathfind_t* pf);
+stream_msgpack_cb_(
+  upd_msgpack_t* mpk);
+
+static
+void
+stream_proto_parse_cb_(
+  upd_proto_parse_t* par);
 
 static
 void
@@ -461,22 +443,18 @@ static void png_logf_(upd_file_t* f, const char* fmt, ...) {
 
 
 static bool stream_init_(upd_file_t* f) {
-  upd_iso_t* iso = f->iso;
-
   stream_t_* ctx = NULL;
   if (HEDLEY_UNLIKELY(!upd_malloc(&ctx, sizeof(*ctx)))) {
     return false;
   }
-  *ctx = (stream_t_) {
-    .mpk = {
-      .iso = iso,
-    },
-  };
+  *ctx = (stream_t_) {0};
 
   if (HEDLEY_UNLIKELY(!upd_msgpack_init(&ctx->mpk))) {
     upd_free(&ctx);
     return false;
   }
+  ctx->mpk.udata = f;
+  ctx->mpk.cb    = stream_msgpack_cb_;
 
   f->ctx = ctx;
   return true;
@@ -497,34 +475,15 @@ static bool stream_handle_(upd_req_t* req) {
   upd_file_t* f   = req->file;
   stream_t_*  ctx = f->ctx;
 
-  if (HEDLEY_UNLIKELY(ctx->broken)) {
+  if (HEDLEY_UNLIKELY(ctx->mpk.broken)) {
     req->result = UPD_REQ_ABORTED;
     return false;
   }
 
   switch (req->type) {
-  case UPD_REQ_DSTREAM_WRITE: {
-    if (HEDLEY_UNLIKELY(!upd_msgpack_unpack(&ctx->mpk, &req->stream.io))) {
-      req->result = UPD_REQ_ABORTED;
-      return false;
-    }
-    if (HEDLEY_UNLIKELY(!ctx->busy)) {
-      stream_handle_next_(f);
-    }
-    req->result = UPD_REQ_OK;
-    req->cb(req);
-  } return true;
-
-  case UPD_REQ_DSTREAM_READ: {
-    req->stream.io = (upd_req_stream_io_t) {
-      .buf  = (uint8_t*) ctx->mpk.out.data,
-      .size = ctx->mpk.out.size,
-    };
-    uint8_t* ptr = (void*) msgpack_sbuffer_release(&ctx->mpk.out);
-    req->result = UPD_REQ_OK;
-    req->cb(req);
-    free(ptr);
-  } return true;
+  case UPD_REQ_DSTREAM_WRITE:
+  case UPD_REQ_DSTREAM_READ:
+    return upd_msgpack_handle(&ctx->mpk, req);
 
   default:
     req->result = UPD_REQ_INVALID;
@@ -532,42 +491,18 @@ static bool stream_handle_(upd_req_t* req) {
   }
 }
 
-static void stream_handle_next_(upd_file_t* f) {
-  upd_iso_t* iso = f->iso;
-  stream_t_* ctx = f->ctx;
-
-  if (HEDLEY_LIKELY(ctx->upkd != NULL)) {
-    msgpack_unpacked_destroy(ctx->upkd);
-    upd_iso_unstack(iso, ctx->upkd);
-    ctx->upkd = NULL;
-  }
-
-  msgpack_unpacked* upkd = upd_msgpack_pop(&ctx->mpk);
-  if (HEDLEY_UNLIKELY(upkd == NULL)) {
-    ctx->busy = false;
-    upd_file_unref(f);
-    return;
-  }
-  if (HEDLEY_LIKELY(!ctx->busy)) {
-    ctx->busy = true;
-    upd_file_ref(f);
-  }
-  ctx->upkd = upkd;
-  stream_handle_obj_(f);
-}
-
 static void stream_success_(upd_file_t* f) {
   stream_t_* ctx = f->ctx;
 
   msgpack_packer* pk = &ctx->mpk.pk;
 
-  ctx->broken |=
+  ctx->mpk.broken |=
     msgpack_pack_map(pk, 1)                ||
       upd_msgpack_pack_cstr(pk, "success") ||
         msgpack_pack_true(pk);
 
   upd_file_trigger(f, UPD_FILE_UPDATE);
-  stream_handle_next_(f);
+  stream_msgpack_cb_(&ctx->mpk);
 }
 
 static void stream_error_(upd_file_t* f, const char* msg) {
@@ -575,7 +510,7 @@ static void stream_error_(upd_file_t* f, const char* msg) {
 
   msgpack_packer* pk = &ctx->mpk.pk;
 
-  ctx->broken |=
+  ctx->mpk.broken |=
     msgpack_pack_map(pk, 2)                ||
       upd_msgpack_pack_cstr(pk, "success") ||
         msgpack_pack_false(pk)             ||
@@ -583,143 +518,7 @@ static void stream_error_(upd_file_t* f, const char* msg) {
         upd_msgpack_pack_cstr(pk, msg);
 
   upd_file_trigger(f, UPD_FILE_UPDATE);
-  stream_handle_next_(f);
-}
-
-static void stream_handle_obj_(upd_file_t* f) {
-  stream_t_* ctx = f->ctx;
-
-  const msgpack_object_str* iface = NULL;
-  const msgpack_object_str* cmd   = NULL;
-
-  if (HEDLEY_UNLIKELY(ctx->upkd->data.type != MSGPACK_OBJECT_MAP)) {
-    stream_error_(f, "msgpack root must be a map");
-    return;
-  }
-
-  const char* invalid =
-    upd_msgpack_find_fields(&ctx->upkd->data.via.map, (upd_msgpack_field_t[]) {
-        { .name = "interface", .required = true,  .str = &iface,      },
-        { .name = "command",   .required = true,  .str = &cmd,        },
-        { .name = "param",     .required = false, .map = &ctx->param, },
-        { NULL, },
-      });
-  if (HEDLEY_UNLIKELY(invalid)) {
-    stream_error_(f, "invalid field found");
-    return;
-  }
-  if (HEDLEY_UNLIKELY(!upd_streq_c("encoder", iface->ptr, iface->size))) {
-    stream_error_(f, "unknown interface");
-    return;
-  }
-
-  if (HEDLEY_LIKELY(upd_streq_c("frame", cmd->ptr, cmd->size))) {
-    if (HEDLEY_LIKELY(!ctx->done)) {
-      stream_handle_frame_(f);
-    } else {
-      stream_error_(f,
-        "this is an image encoder which takes just one frame X(");
-    }
-    return;
-  }
-
-  if (HEDLEY_UNLIKELY(upd_streq_c("info", cmd->ptr, cmd->size))) {
-    stream_handle_info_(f);
-    return;
-  }
-  if (HEDLEY_UNLIKELY(upd_streq_c("init", cmd->ptr, cmd->size))) {
-    if (HEDLEY_LIKELY(!ctx->done)) {
-      stream_success_(f);
-    } else {
-      stream_error_(f, "already done");
-    }
-    return;
-  }
-  if (HEDLEY_UNLIKELY(upd_streq_c("finalize", cmd->ptr, cmd->size))) {
-    if (HEDLEY_LIKELY(ctx->done)) {
-      stream_success_(f);
-    } else {
-      stream_error_(f, "no frame encoded");
-    }
-    return;
-  }
-  stream_error_(f, "unknown command");
-}
-
-static void stream_handle_info_(upd_file_t* f) {
-  stream_t_* ctx = f->ctx;
-
-  msgpack_packer* pk = &ctx->mpk.pk;
-
-  ctx->broken |=
-    msgpack_pack_map(pk, 2)                                ||
-      upd_msgpack_pack_cstr(pk, "success")                 ||
-        msgpack_pack_true(pk)                              ||
-      upd_msgpack_pack_cstr(pk, "result")                  ||
-        msgpack_pack_map(pk, 4)                            ||
-          upd_msgpack_pack_cstr(pk, "description")         ||
-            upd_msgpack_pack_cstr(pk, "PNG image encoder") ||
-          upd_msgpack_pack_cstr(pk, "type")                ||
-            upd_msgpack_pack_cstr(pk, "image")             ||
-          upd_msgpack_pack_cstr(pk, "initParam")           ||
-            msgpack_pack_map(pk, 0)                        ||
-          upd_msgpack_pack_cstr(pk, "frameParam")          ||
-            msgpack_pack_map(pk, 0);
-
-  upd_file_trigger(f, UPD_FILE_UPDATE);
-  stream_handle_next_(f);
-}
-
-static void stream_handle_frame_(upd_file_t* f) {
-  upd_iso_t* iso = f->iso;
-  stream_t_* ctx = f->ctx;
-
-  if (HEDLEY_UNLIKELY(ctx->param == NULL)) {
-    stream_error_(f, "requires param");
-    return;
-  }
-
-  const msgpack_object_str* file_s  = NULL;
-  uintmax_t                 file_id = 0;
-
-  const char* invalid =
-      upd_msgpack_find_fields(ctx->param, (upd_msgpack_field_t[]) {
-          { .name = "file", .required = true, .str = &file_s, .ui = &file_id },
-          { NULL, }
-        });
-  if (HEDLEY_UNLIKELY(invalid)) {
-    stream_error_(f, "invalid param");
-    return;
-  }
-
-  if (file_s) {
-    const bool pf = upd_pathfind_with_dup(&(upd_pathfind_t) {
-        .iso   = iso,
-        .path  = (uint8_t*) file_s->ptr,
-        .len   = file_s->size,
-        .udata = f,
-        .cb    = stream_pathfind_tensor_cb_,
-      });
-    if (HEDLEY_UNLIKELY(!pf)) {
-      stream_error_(f, "pathfind context allocation failure");
-    }
-    return;
-  }
-
-  upd_file_t* tensor = upd_file_get(iso, file_id);
-  if (HEDLEY_UNLIKELY(tensor == NULL)) {
-    stream_error_(f, "invalid file id");
-    return;
-  }
-  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
-      .file  = tensor,
-      .udata = f,
-      .cb    = stream_lock_tensor_cb_,
-    });
-  if (HEDLEY_UNLIKELY(!lock)) {
-    stream_error_(f, "tensor lock refusal");
-    return;
-  }
+  stream_msgpack_cb_(&ctx->mpk);
 }
 
 
@@ -876,26 +675,96 @@ static void png_read_cb_(io_t_* io) {
 }
 
 
-static void stream_pathfind_tensor_cb_(upd_pathfind_t* pf) {
-  upd_file_t* f   = pf->udata;
-  upd_iso_t*  iso = f->iso;
+static void stream_msgpack_cb_(upd_msgpack_t* mpk) {
+  upd_file_t* f   = mpk->udata;
+  stream_t_*  ctx = f->ctx;
 
-  upd_file_t* tensor = pf->len? NULL: pf->base;
-  upd_iso_unstack(iso, pf);
+  if (HEDLEY_LIKELY(!mpk->busy)) {
+    msgpack_unpacked_init(&ctx->upkd);
+  }
 
-  if (HEDLEY_UNLIKELY(tensor == NULL)) {
-    stream_error_(f, "pathfind failure");
+  if (HEDLEY_UNLIKELY(!upd_msgpack_pop(mpk, &ctx->upkd))) {
+    msgpack_unpacked_destroy(&ctx->upkd);
+    if (HEDLEY_UNLIKELY(mpk->broken)) {
+      upd_file_trigger(f, UPD_FILE_UPDATE);
+    }
+    if (mpk->busy) {
+      mpk->busy = 0;
+      upd_file_unref(f);
+    }
     return;
   }
 
-  const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
-      .file  = tensor,
-      .udata = f,
-      .cb    = stream_lock_tensor_cb_,
-    });
-  if (HEDLEY_UNLIKELY(!lock)) {
-    stream_error_(f, "tensor lock refusal");
+  if (HEDLEY_LIKELY(!mpk->busy)) {
+    mpk->busy = true;
+    upd_file_ref(f);
+  }
+
+  ctx->par = (upd_proto_parse_t) {
+    .iso   = f->iso,
+    .src   = &ctx->upkd.data,
+    .iface = UPD_PROTO_ENCODER,
+    .udata = f,
+    .cb    = stream_proto_parse_cb_,
+  };
+  upd_proto_parse(&ctx->par);
+}
+
+static void stream_proto_parse_cb_(upd_proto_parse_t* par) {
+  upd_file_t*            f   = par->udata;
+  stream_t_*             ctx = f->ctx;
+  const upd_proto_msg_t* msg = &par->msg;
+
+  if (HEDLEY_UNLIKELY(par->err)) {
+    stream_error_(f, par->err);
     return;
+  }
+
+  msgpack_packer* pk = &ctx->mpk.pk;
+
+  switch (msg->cmd) {
+  case UPD_PROTO_ENCODER_INFO:
+    ctx->mpk.broken |=
+      msgpack_pack_map(pk, 2)                                ||
+        upd_msgpack_pack_cstr(pk, "success")                 ||
+          msgpack_pack_true(pk)                              ||
+        upd_msgpack_pack_cstr(pk, "result")                  ||
+          msgpack_pack_map(pk, 4)                            ||
+            upd_msgpack_pack_cstr(pk, "description")         ||
+              upd_msgpack_pack_cstr(pk, "PNG image encoder") ||
+            upd_msgpack_pack_cstr(pk, "type")                ||
+              upd_msgpack_pack_cstr(pk, "image")             ||
+            upd_msgpack_pack_cstr(pk, "initParam")           ||
+              msgpack_pack_map(pk, 0)                        ||
+            upd_msgpack_pack_cstr(pk, "frameParam")          ||
+              msgpack_pack_map(pk, 0);
+    upd_file_trigger(f, UPD_FILE_UPDATE);
+    stream_msgpack_cb_(&ctx->mpk);
+    return;
+
+  case UPD_PROTO_ENCODER_INIT:
+    stream_success_(f);
+    return;
+
+  case UPD_PROTO_ENCODER_FRAME: {
+    const bool lock = upd_file_lock_with_dup(&(upd_file_lock_t) {
+        .file  = msg->encoder_frame.file,
+        .udata = f,
+        .cb    = stream_lock_tensor_cb_,
+      });
+    if (HEDLEY_UNLIKELY(!lock)) {
+      stream_error_(f, "tensor lock refusal");
+      return;
+    }
+  } return;
+
+  case UPD_PROTO_ENCODER_FINALIZE:
+    stream_success_(f);
+    return;
+
+  default:
+    assert(false);
+    HEDLEY_UNREACHABLE();
   }
 }
 

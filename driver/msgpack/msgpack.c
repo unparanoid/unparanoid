@@ -11,6 +11,7 @@
 #include <libupd/array.h>
 #include <libupd/memory.h>
 #include <libupd/msgpack.h>
+#include <libupd/proto.h>
 #include <libupd/str.h>
 
 
@@ -52,14 +53,11 @@ typedef struct stream_t_ {
   upd_file_lock_t lock;
   size_t          bin_offset;
 
-  upd_msgpack_t mpk;
+  upd_msgpack_t      mpk;
+  msgpack_unpacked*  upkd;
+  upd_proto_parse_t  par;
 
-  msgpack_unpacked*         upkd;  /* data is on iso stack */
-  const msgpack_object_map* param;
-
-  unsigned busy   : 1;
   unsigned locked : 1;
-  unsigned broken : 1;
 } stream_t_;
 
 
@@ -112,26 +110,6 @@ stream_handle_(
 
 static
 void
-stream_handle_next_(
-  upd_file_t* f);
-
-static
-void
-stream_handle_obj_(
-  upd_file_t* f);
-
-static
-void
-stream_handle_get_(
-  upd_file_t* f);
-
-static
-void
-stream_handle_set_(
-  upd_file_t* f);
-
-static
-void
 stream_teardown_(
   stream_t_* ctx);
 
@@ -178,6 +156,16 @@ void
 prog_watch_bin_cb_(
   upd_file_watch_t* w);
 
+
+static
+void
+stream_msgpack_cb_(
+  upd_msgpack_t* mpk);
+
+static
+void
+stream_proto_parse_cb_(
+  upd_proto_parse_t* par);
 
 static
 void
@@ -314,16 +302,15 @@ static bool stream_init_(upd_file_t* f) {
   }
   *ctx = (stream_t_) {
     .file = f,
-    .mpk  = {
-      .iso = iso,
-    },
   };
+  f->ctx = ctx;
 
   if (HEDLEY_UNLIKELY(!upd_msgpack_init(&ctx->mpk))) {
     upd_free(&ctx);
     return false;
   }
-  f->ctx = ctx;
+  ctx->mpk.udata = f;
+  ctx->mpk.cb    = stream_msgpack_cb_;
   return true;
 }
 
@@ -344,249 +331,20 @@ static bool stream_handle_(upd_req_t* req) {
   upd_file_t* f   = req->file;
   stream_t_*  ctx = f->ctx;
 
-  if (HEDLEY_UNLIKELY(ctx->broken)) {
+  if (HEDLEY_UNLIKELY(ctx->mpk.broken)) {
     req->result = UPD_REQ_ABORTED;
     return false;
   }
 
   switch (req->type) {
-  case UPD_REQ_DSTREAM_WRITE: {
-    if (HEDLEY_UNLIKELY(!upd_msgpack_unpack(&ctx->mpk, &req->stream.io))) {
-      req->result = UPD_REQ_ABORTED;
-      return false;
-    }
-    if (HEDLEY_UNLIKELY(!ctx->busy)) {
-      stream_handle_next_(f);
-    }
-    req->result = UPD_REQ_OK;
-    req->cb(req);
-  } return true;
-
-  case UPD_REQ_DSTREAM_READ: {
-    req->stream.io = (upd_req_stream_io_t) {
-      .buf  = (uint8_t*) ctx->mpk.out.data,
-      .size = ctx->mpk.out.size,
-    };
-    uint8_t* ptr = (void*) msgpack_sbuffer_release(&ctx->mpk.out);
-    req->result = UPD_REQ_OK;
-    req->cb(req);
-    free(ptr);
-  } return true;
+  case UPD_REQ_DSTREAM_WRITE:
+  case UPD_REQ_DSTREAM_READ:
+    return upd_msgpack_handle(&ctx->mpk, req);
 
   default:
     req->result = UPD_REQ_INVALID;
     return false;
   }
-}
-
-static void stream_handle_next_(upd_file_t* f) {
-  upd_iso_t* iso = f->iso;
-  stream_t_* ctx = f->ctx;
-
-  if (HEDLEY_LIKELY(ctx->upkd != NULL)) {
-    msgpack_unpacked_destroy(ctx->upkd);
-    upd_iso_unstack(iso, ctx->upkd);
-    ctx->upkd = NULL;
-  }
-
-  msgpack_unpacked* upkd = upd_msgpack_pop(&ctx->mpk);
-  if (HEDLEY_UNLIKELY(upkd == NULL)) {
-    ctx->busy = false;
-    upd_file_unref(f);
-    return;
-  }
-  if (HEDLEY_LIKELY(!ctx->busy)) {
-    ctx->busy = true;
-    upd_file_ref(f);
-  }
-  ctx->upkd = upkd;
-  stream_handle_obj_(f);
-}
-
-static void stream_handle_obj_(upd_file_t* f) {
-  stream_t_*        ctx  = f->ctx;
-  msgpack_unpacked* upkd = ctx->upkd;
-
-  if (HEDLEY_UNLIKELY(upkd->data.type != MSGPACK_OBJECT_MAP)) {
-    stream_return_(f, false, "root object must be a map");
-    return;
-  }
-
-  /* Don't forget to destroy and unstack upkd. */
-
-  const msgpack_object_str* iface = NULL;
-  const msgpack_object_str* cmd   = NULL;
-
-  ctx->param = NULL;
-  upd_msgpack_find_fields(&upkd->data.via.map, (upd_msgpack_field_t[]) {
-      { .name = "interface", .str = &iface,      },
-      { .name = "command",   .str = &cmd,        },
-      { .name = "param",     .map = &ctx->param, },
-      { NULL, },
-    });
-
-  if (iface) {
-    if (HEDLEY_UNLIKELY(!upd_streq_c("object", iface->ptr, iface->size))) {
-      stream_return_(f, false, "unknown interface");
-      return;
-    }
-  }
-  if (HEDLEY_UNLIKELY(!cmd)) {
-    stream_return_(f, false, "command not specified");
-    return;
-  }
-
-  const bool lock   = upd_streq_c("lock", cmd->ptr, cmd->size);
-  const bool exlock = upd_streq_c("exlock", cmd->ptr, cmd->size);
-  if (lock || exlock) {
-    if (HEDLEY_UNLIKELY(ctx->locked)) {
-      stream_return_(f, false, "already locked");
-      return;
-    }
-    ctx->lock = (upd_file_lock_t) {
-      .file  = ctx->bin,
-      .ex    = exlock,
-      .udata = f,
-      .cb    = stream_lock_bin_cb_,
-    };
-    if (HEDLEY_UNLIKELY(!upd_file_lock(&ctx->lock))) {
-      stream_return_(f, false, "lock refused");
-    }
-    return;
-  }
-
-  if (upd_streq_c("unlock", cmd->ptr, cmd->size)) {
-    if (HEDLEY_UNLIKELY(!ctx->locked)) {
-      stream_return_(f, false, "already unlocked");
-      return;
-    }
-    stream_unlock_(ctx);
-    return;
-  }
-
-  if (upd_streq_c("get", cmd->ptr, cmd->size)) {
-    if (HEDLEY_UNLIKELY(!ctx->locked)) {
-      stream_return_(f, false, "do lock firstly");
-      return;
-    }
-    stream_handle_get_(f);
-    return;
-  }
-
-  if (upd_streq_c("set", cmd->ptr, cmd->size)) {
-    if (HEDLEY_UNLIKELY(!ctx->locked || !ctx->lock.ex)) {
-      stream_return_(f, false, "do exlock firstly");
-      return;
-    }
-    stream_handle_set_(f);
-    return;
-  }
-
-  stream_return_(f, false, "unknown command");
-  return;
-}
-
-static void stream_handle_get_(upd_file_t* f) {
-  upd_iso_t* iso = f->iso;
-  stream_t_* ctx = f->ctx;
-  prog_t_*   tar = ctx->target->ctx;
-
-  const msgpack_object* path = NULL;
-
-  if (ctx->param) {
-    upd_msgpack_find_fields(ctx->param, (upd_msgpack_field_t[]) {
-        { .name = "path", .any = &path, },
-        { NULL, },
-      });
-  }
-
-  msgpack_object* obj = &tar->obj;
-  if (path != NULL) {
-    if (HEDLEY_UNLIKELY(path->type != MSGPACK_OBJECT_ARRAY)) {
-      stream_return_(f, false, "invalid path specification");
-      return;
-    }
-    const msgpack_object_array* p = &path->via.array;
-
-    for (size_t i = 0; obj && i < p->size; ++i) {
-      obj = mpk_find_(obj, &p->ptr[i]);
-    }
-    if (HEDLEY_UNLIKELY(obj == NULL)) {
-      stream_return_(f, false, "no such object found");
-      return;
-    }
-  }
-
-  msgpack_packer* pk = &ctx->mpk.pk;
-  ctx->broken =
-    msgpack_pack_map(pk, 2) ||
-
-      upd_msgpack_pack_cstr(pk, "success") ||
-      msgpack_pack_true(pk) ||
-
-      upd_msgpack_pack_cstr(pk, "result") ||
-      msgpack_pack_object(pk, *obj);
-
-  if (HEDLEY_UNLIKELY(ctx->broken)) {
-    upd_iso_msgf(iso,
-      LOG_PREFIX_"msgpack pack failure (maybe requested object is too huge)\n");
-  }
-  upd_file_trigger(f, UPD_FILE_UPDATE);
-  stream_handle_next_(f);
-}
-
-static void stream_handle_set_(upd_file_t* f) {
-  stream_t_* ctx = f->ctx;
-  prog_t_*   tar = ctx->target->ctx;
-
-  const msgpack_object* path  = NULL;
-  const msgpack_object* value = NULL;
-
-  if (ctx->param) {
-    upd_msgpack_find_fields(ctx->param, (upd_msgpack_field_t[]) {
-        { .name = "path",  .any = &path,  },
-        { .name = "value", .any = &value, },
-        { NULL, },
-      });
-  }
-
-  msgpack_unpacked* upkd = ctx->upkd;
-  ctx->upkd = NULL;
-  if (HEDLEY_UNLIKELY(!upd_array_insert(&tar->upkd, upkd, SIZE_MAX))) {
-    stream_return_(f, false, "zone insertion failure");
-    return;
-  }
-
-  msgpack_object* obj = &tar->obj;
-
-  if (path != NULL) {
-    if (HEDLEY_UNLIKELY(path->type != MSGPACK_OBJECT_ARRAY)) {
-      stream_return_(f, false, "invalid path specification");
-      return;
-    }
-    const msgpack_object_array* p = &path->via.array;
-    for (size_t i = 0; i < p->size; ++i) {
-      msgpack_object* par = obj;
-      obj = mpk_find_(obj, &p->ptr[i]);
-      if (obj == NULL) {
-        obj = mpk_set_nil_(par, upkd->zone, &p->ptr[i]);
-        if (HEDLEY_UNLIKELY(obj == NULL)) {
-          stream_return_(f, false, "new object insertion failure");
-          return;
-        }
-        tar->clean = false;
-      }
-    }
-  }
-
-  tar->clean = false;
-  if (HEDLEY_LIKELY(value)) {
-    *obj = *value;
-  } else {
-    obj->type = MSGPACK_OBJECT_NIL;
-  }
-  stream_return_(f, true, "");
-  return;
 }
 
 static void stream_teardown_(stream_t_* ctx) {
@@ -643,12 +401,11 @@ FINALIZE:
 }
 
 static void stream_return_(upd_file_t* f, bool success, const char* msg) {
-  upd_iso_t* iso = f->iso;
   stream_t_* ctx = f->ctx;
 
   msgpack_packer* pk = &ctx->mpk.pk;
 
-  ctx->broken =
+  ctx->mpk.broken |=
     msgpack_pack_map(pk, 2) ||
 
       upd_msgpack_pack_cstr(pk, "success") ||
@@ -657,11 +414,8 @@ static void stream_return_(upd_file_t* f, bool success, const char* msg) {
       upd_msgpack_pack_cstr(pk, "msg") ||
       upd_msgpack_pack_cstr(pk, msg);
 
-  if (HEDLEY_UNLIKELY(ctx->broken)) {
-    upd_iso_msgf(iso, LOG_PREFIX_"msgpack pack failure\n");
-  }
   upd_file_trigger(f, UPD_FILE_UPDATE);
-  stream_handle_next_(f);
+  stream_msgpack_cb_(&ctx->mpk);
 }
 
 
@@ -740,6 +494,180 @@ static void prog_watch_bin_cb_(upd_file_watch_t* w) {
   }
 }
 
+
+static void stream_msgpack_cb_(upd_msgpack_t* mpk) {
+  upd_file_t* f   = mpk->udata;
+  upd_iso_t*  iso = f->iso;
+  stream_t_*  ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(ctx->upkd)) {
+    msgpack_unpacked_destroy(ctx->upkd);
+    upd_iso_unstack(iso, ctx->upkd);
+    ctx->upkd = NULL;
+  }
+
+  msgpack_unpacked* upkd = upd_iso_stack(iso, sizeof(*upkd));
+  if (HEDLEY_UNLIKELY(upkd == NULL)) {
+    mpk->broken = false;
+    return;
+  }
+  msgpack_unpacked_init(upkd);
+
+  if (HEDLEY_UNLIKELY(!upd_msgpack_pop(mpk, upkd))) {
+    msgpack_unpacked_destroy(upkd);
+    upd_iso_unstack(iso, upkd);
+
+    if (HEDLEY_UNLIKELY(mpk->broken)) {
+      upd_file_trigger(f, UPD_FILE_UPDATE);
+    }
+    if (mpk->busy) {
+      mpk->busy = false;
+      upd_file_unref(f);
+    }
+    return;
+  }
+  ctx->upkd = upkd;
+
+  if (HEDLEY_UNLIKELY(!mpk->busy)) {
+    mpk->busy = true;
+    upd_file_ref(f);
+  }
+
+  ctx->par = (upd_proto_parse_t) {
+    .iso   = iso,
+    .src   = &upkd->data,
+    .iface = UPD_PROTO_OBJECT,
+    .udata = f,
+    .cb    = stream_proto_parse_cb_,
+  };
+  upd_proto_parse(&ctx->par);
+}
+
+static void stream_proto_parse_cb_(upd_proto_parse_t* par) {
+  upd_file_t*            f   = par->udata;
+  stream_t_*             ctx = f->ctx;
+  const upd_proto_msg_t* msg = &par->msg;
+  prog_t_*               tar = ctx->target->ctx;
+
+  if (HEDLEY_UNLIKELY(par->err)) {
+    stream_return_(f, false, par->err);
+    return;
+  }
+  switch (msg->cmd) {
+  case UPD_PROTO_OBJECT_LOCK:
+    if (HEDLEY_UNLIKELY(ctx->locked)) {
+      stream_return_(f, false, "already locked");
+    }
+    ctx->lock = (upd_file_lock_t) {
+      .file  = ctx->bin,
+      .udata = f,
+      .cb    = stream_lock_bin_cb_,
+    };
+    if (HEDLEY_UNLIKELY(!upd_file_lock(&ctx->lock))) {
+      stream_return_(f, false, "lock refusal");
+    }
+    return;
+
+  case UPD_PROTO_OBJECT_LOCKEX:
+    if (HEDLEY_UNLIKELY(ctx->locked)) {
+      stream_return_(f, false, "already locked");
+    }
+    ctx->lock = (upd_file_lock_t) {
+      .file  = ctx->bin,
+      .ex    = true,
+      .udata = f,
+      .cb    = stream_lock_bin_cb_,
+    };
+    if (HEDLEY_UNLIKELY(!upd_file_lock(&ctx->lock))) {
+      stream_return_(f, false, "lock refusal");
+    }
+    return;
+
+  case UPD_PROTO_OBJECT_UNLOCK:
+    if (HEDLEY_UNLIKELY(!ctx->locked)) {
+      stream_return_(f, false, "already unlocked");
+      return;
+    }
+    stream_unlock_(ctx);
+    return;
+
+  case UPD_PROTO_OBJECT_GET: {
+    if (HEDLEY_UNLIKELY(!ctx->locked)) {
+      stream_return_(f, false, "do lock firstly");
+      return;
+    }
+    const msgpack_object_array* path = msg->object.path;
+
+    msgpack_object* obj = &tar->obj;
+    if (path != NULL) {
+      for (size_t i = 0; obj && i < path->size; ++i) {
+        obj = mpk_find_(obj, &path->ptr[i]);
+      }
+      if (HEDLEY_UNLIKELY(obj == NULL)) {
+        stream_return_(f, false, "no such object found");
+        return;
+      }
+    }
+
+    msgpack_packer* pk = &ctx->mpk.pk;
+
+    ctx->mpk.broken |=
+      msgpack_pack_map(pk, 2) ||
+
+        upd_msgpack_pack_cstr(pk, "success") ||
+        msgpack_pack_true(pk) ||
+
+        upd_msgpack_pack_cstr(pk, "result") ||
+        msgpack_pack_object(pk, *obj);
+    upd_file_trigger(f, UPD_FILE_UPDATE);
+    stream_msgpack_cb_(&ctx->mpk);
+  } return;
+
+  case UPD_PROTO_OBJECT_SET: {
+    if (HEDLEY_UNLIKELY(!ctx->locked || !ctx->lock.ex)) {
+      stream_return_(f, false, "do exclusive-lock firstly");
+      return;
+    }
+    const msgpack_object_array* path  = msg->object.path;
+    const msgpack_object*       value = msg->object.value;
+
+    msgpack_unpacked* upkd = ctx->upkd;
+    ctx->upkd = NULL;
+    if (HEDLEY_UNLIKELY(!upd_array_insert(&tar->upkd, upkd, SIZE_MAX))) {
+      stream_return_(f, false, "zone insertion failure");
+      return;
+    }
+
+    msgpack_object* obj = &tar->obj;
+    if (path != NULL) {
+      for (size_t i = 0; i < path->size; ++i) {
+        msgpack_object* par = obj;
+        obj = mpk_find_(obj, &path->ptr[i]);
+        if (obj == NULL) {
+          obj = mpk_set_nil_(par, upkd->zone, &path->ptr[i]);
+          if (HEDLEY_UNLIKELY(obj == NULL)) {
+            stream_return_(f, false, "new object insertion failure");
+            return;
+          }
+          tar->clean = false;
+        }
+      }
+    }
+
+    tar->clean = false;
+    if (HEDLEY_LIKELY(value)) {
+      *obj = *value;
+    } else {
+      obj->type = MSGPACK_OBJECT_NIL;
+    }
+    stream_return_(f, true, "");
+  } return;
+
+  default:
+    assert(false);
+    HEDLEY_UNREACHABLE();
+  }
+}
 
 static void stream_lock_bin_cb_(upd_file_lock_t* k) {
   upd_file_t* f   = k->udata;
