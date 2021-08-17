@@ -298,10 +298,15 @@ static void lk_handle_link_(upd_file_t* f) {
   }
 
   uint64_t target = 0;
-  upd_msgpack_find_fields(&ctx->upkd.data.via.map, (upd_msgpack_field_t[]) {
-      { .name = "target", .ui = &target, },
-      { NULL },
+  const char* invalid =
+    upd_msgpack_find_fields(&ctx->upkd.data.via.map, (upd_msgpack_field_t[]) {
+        { .name = "target", .ui = &target, },
+        { NULL },
       });
+  if (HEDLEY_UNLIKELY(invalid)) {
+    lk_error_(f, "invalid req for linking");
+    return;
+  }
 
   upd_file_t* def = upd_file_get(iso, target);
   if (HEDLEY_UNLIKELY(def == NULL || def->driver != &gra_gl3_pl_def)) {
@@ -667,10 +672,15 @@ static void lk_fetch_pl_cb_(gra_gl3_fetch_t* fe) {
   memset(ctx->varbuf, 0, pl->varbuflen);
 
   const msgpack_object_map* param = NULL;
-  upd_msgpack_find_fields(&ctx->upkd.data.via.map, (upd_msgpack_field_t[]) {
-      { .name = "param", .map = &param, },
-      { NULL, },
-    });
+  const char* invalid =
+    upd_msgpack_find_fields(&ctx->upkd.data.via.map, (upd_msgpack_field_t[]) {
+        { .name = "param", .map = &param, },
+        { NULL, },
+      });
+  if (HEDLEY_UNLIKELY(invalid)) {
+    lk_error_(f, "invalid req for execution");
+    return;
+  }
 
   ctx->refcnt = 1;
 

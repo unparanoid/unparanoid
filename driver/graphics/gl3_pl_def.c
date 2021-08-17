@@ -759,15 +759,20 @@ static void parse_va_(parse_t_* par, const msgpack_object_map* src) {
       const msgpack_object*     offset  = NULL;
       const msgpack_object*     divisor = NULL;
       uintmax_t                 dim     = 0;
-      upd_msgpack_find_fields(&kv->val.via.map, (upd_msgpack_field_t[]) {
-          { .name = "dim",     .ui  = &dim,     },
-          { .name = "buf",     .str = &sbuf,    },
-          { .name = "type",    .str = &type,    },
-          { .name = "stride",  .any = &stride,  },
-          { .name = "offset",  .any = &offset,  },
-          { .name = "divisor", .any = &divisor, },
-          { NULL },
-        });
+      const char* invalid =
+        upd_msgpack_find_fields(&kv->val.via.map, (upd_msgpack_field_t[]) {
+            { .name = "dim",     .ui  = &dim,     .required = true,   },
+            { .name = "buf",     .str = &sbuf,    .required = true,   },
+            { .name = "type",    .str = &type,    .required = true,   },
+            { .name = "stride",  .any = &stride,  .required = false,  },
+            { .name = "offset",  .any = &offset,  .required = false,  },
+            { .name = "divisor", .any = &divisor, .required = false,  },
+            { NULL },
+          });
+      if (HEDLEY_UNLIKELY(invalid)) {
+        par->error = "invalid vertexarray declaration";
+        longjmp(par->jmp, 1);
+      }
 
       if (HEDLEY_UNLIKELY(dim == 0 || 4 < dim)) {
         par->error = "buffer dim must be 0~4";
@@ -775,10 +780,6 @@ static void parse_va_(parse_t_* par, const msgpack_object_map* src) {
       }
       a->dim = dim;
 
-      if (HEDLEY_UNLIKELY(sbuf == NULL)) {
-        par->error = "buffer is not specified";
-        longjmp(par->jmp, 1);
-      }
       a->buf = gra_gl3_pl_find_var(pl, (uint8_t*) sbuf->ptr, sbuf->size);
       if (HEDLEY_UNLIKELY(a->buf == NULL)) {
         par->error = "refers unknown buffer";
@@ -884,7 +885,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
     const msgpack_object_map*   uni    = NULL;
     const msgpack_object_array* shader = NULL;
 
-    upd_msgpack_find_fields(map, (upd_msgpack_field_t[]) {
+    const char* invalid = upd_msgpack_find_fields(map, (upd_msgpack_field_t[]) {
         /* type is decided by the following 3 fields */
         { .name = "clear", .array = &clear, },
         { .name = "draw",  .str   = &draw,  },
@@ -901,6 +902,10 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
         { .name = "shader",   .array = &shader,   },
         { NULL },
       });
+    if (HEDLEY_UNLIKELY(invalid)) {
+      par->error = "invalid step item";
+      longjmp(par->jmp, 1);
+    }
     if (HEDLEY_UNLIKELY(!!clear + !!draw + !!srcfb != 1)) {
       par->error =
         "cannot determine step type, specify one of draw, src, or clear";
@@ -1610,12 +1615,13 @@ static void parse_recv_lock_cb_(upd_msgpack_recv_t* recv) {
   }
 
   bool success = false;
-  upd_msgpack_find_fields(&recv->upkd.data.via.map, (upd_msgpack_field_t[]) {
-      { .name = "success", .b = &success, },
-      { NULL },
-    });
 
-  if (HEDLEY_UNLIKELY(!success)) {
+  const char* invalid =
+    upd_msgpack_find_fields(&recv->upkd.data.via.map, (upd_msgpack_field_t[]) {
+        { .name = "success", .b = &success, },
+        { NULL },
+      });
+  if (HEDLEY_UNLIKELY(invalid || !success)) {
     def_logf_(f, "program stream lock req failure");
     goto ABORT;
   }
@@ -1645,13 +1651,15 @@ static void parse_recv_get_cb_(upd_msgpack_recv_t* recv) {
 
   bool                      success = false;
   const msgpack_object_map* result  = NULL;
-  upd_msgpack_find_fields(&recv->upkd.data.via.map, (upd_msgpack_field_t[]) {
-      { .name = "success", .b   = &success, },
-      { .name = "result",  .map = &result, },
-      { NULL },
-    });
 
-  if (HEDLEY_UNLIKELY(!success || !result)) {
+  const char* invalid =
+    upd_msgpack_find_fields(&recv->upkd.data.via.map, (upd_msgpack_field_t[]) {
+        { .name = "success", .b   = &success, },
+        { .name = "result",  .map = &result, },
+        { NULL },
+      });
+
+  if (HEDLEY_UNLIKELY(invalid || !success || !result)) {
     def_logf_(f, "program stream get req failure");
     goto EXIT;
   }
@@ -1661,14 +1669,18 @@ static void parse_recv_get_cb_(upd_msgpack_recv_t* recv) {
   const msgpack_object_map*   fb   = NULL;
   const msgpack_object_map*   va   = NULL;
   const msgpack_object_array* step = NULL;
-  upd_msgpack_find_fields(result, (upd_msgpack_field_t[]) {
-      { .name = "in",   .map   = &in,   },
-      { .name = "out",  .map   = &out,  },
-      { .name = "fb",   .map   = &fb,   },
-      { .name = "va",   .map   = &va,   },
-      { .name = "step", .array = &step, },
-      { NULL },
-    });
+  invalid = upd_msgpack_find_fields(result, (upd_msgpack_field_t[]) {
+        { .name = "in",   .map   = &in,   },
+        { .name = "out",  .map   = &out,  },
+        { .name = "fb",   .map   = &fb,   },
+        { .name = "va",   .map   = &va,   },
+        { .name = "step", .array = &step, },
+        { NULL },
+      });
+  if (HEDLEY_UNLIKELY(invalid)) {
+    def_logf_(f, "program stream returned invalid object");
+    goto EXIT;
+  }
 
   const size_t incnt  = in?   in->size:   0;
   const size_t outcnt = out?  out->size:  0;
