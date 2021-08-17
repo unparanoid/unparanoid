@@ -625,7 +625,7 @@ static void lk_msgpack_cb_(upd_msgpack_t* mpk) {
     mpk->busy = true;
     upd_file_ref(f);
   }
-  (ctx->linked? lk_handle_link_: lk_handle_exec_)(f);
+  (ctx->linked? lk_handle_exec_: lk_handle_link_)(f);
 }
 
 static void lk_lock_pl_cb_(upd_file_lock_t* k) {
@@ -780,6 +780,12 @@ static void lk_lock_output_cb_(upd_file_lock_t* k) {
     }
     ass->reso[i] = v;
   }
+
+  /* FIXME */
+  tex->ch  = ass->reso[0];
+  tex->w   = ass->reso[1];
+  tex->h   = ass->reso[2];
+  tex->fmt = gra_gl3_dim_to_color_fmt(ass->reso[0]);
 
   ass->greq = (gra_gl3_req_t) {
     .dev  = tex->gl,
