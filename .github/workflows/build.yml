@@ -18,6 +18,7 @@ jobs:
     steps:
       - name: env construction
         run: |
+          sudo apt update
           sudo apt install -y --no-install-recommends \
             libgl1-mesa-dev  \
             libglu1-mesa-dev  \
