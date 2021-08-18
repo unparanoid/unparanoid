@@ -124,6 +124,28 @@ include_luajit()
 add_subdirectory(mimetype.h)
 
 
+# ---- miniaudio (https://github.com/mackron/miniaudio) ----
+add_library(miniaudio)
+target_include_directories(miniaudio SYSTEM BEFORE
+  PUBLIC miniaudio
+)
+target_sources(miniaudio
+  PUBLIC miniaudio/miniaudio.h
+)
+set_source_files_properties(miniaudio/miniaudio.h
+  PROPERTIES
+    LANGUAGE C
+)
+target_compile_definitions(miniaudio
+  PRIVATE MINIAUDIO_IMPLEMENTATION
+)
+if (CMAKE_SYSTEM_NAME STREQUAL Linux)
+  target_link_libraries(miniaudio
+    PRIVATE m
+  )
+endif()
+
+
 # ---- picohttpparser (https://github.com/h2o/picohttpparser) ----
 add_library(picohttpparser)
 target_include_directories(picohttpparser SYSTEM BEFORE

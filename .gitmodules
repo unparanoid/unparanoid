@@ -37,3 +37,6 @@
 [submodule "thirdparty/glew-cmake"]
 	path = thirdparty/glew
 	url = https://github.com/Perlmint/glew-cmake
+[submodule "thirdparty/miniaudio"]
+	path = thirdparty/miniaudio
+	url = https://github.com/mackron/miniaudio

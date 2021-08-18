@@ -1,0 +1,17 @@
+add_driver(upd.sound)
+target_sources(upd.sound
+  PRIVATE
+    common.h
+    dev.c
+    main.c
+)
+target_link_libraries(upd.sound
+  PRIVATE
+    for-msvc
+    hedley
+    libyaml
+    miniaudio
+    msgpackc
+    tiny-regex-c
+    utf8.h
+)
