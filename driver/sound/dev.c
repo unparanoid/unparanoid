@@ -44,7 +44,7 @@ dev_playback_cb_(
 const upd_driver_t snd_dev = {
   .name   = (uint8_t*) "upd.sound.dev",
   .cats   = (upd_req_cat_t[]) {
-    UPD_REQ_TENSOR,
+    UPD_REQ_PROG,
     0,
   },
   .init   = dev_init_,
@@ -85,14 +85,6 @@ static bool dev_init_(upd_file_t* f) {
   if (HEDLEY_UNLIKELY(!upd_malloc(&ctx->ring, ringsz))) {
     upd_free(&ctx);
     goto ABORT;
-  }
-  {
-    /* TODO test */
-    for (size_t i = 0; i < ctx->samples; ++i) {
-      ctx->ring[i] = sin(i*1./(ctx->srate*ctx->ch)*2*3.14*500);
-    }
-    ctx->tail = 0;
-    ctx->head = ctx->samples;
   }
 
   if (HEDLEY_UNLIKELY(ma_mutex_init(&ctx->mtx) != MA_SUCCESS)) {
@@ -241,21 +233,46 @@ static void dev_deinit_(upd_file_t* f) {
 }
 
 static bool dev_handle_(upd_req_t* req) {
-  req->result = UPD_REQ_INVALID;
-  return false;
+  upd_file_t* f = req->file;
+
+  switch (req->type) {
+  case UPD_REQ_PROG_EXEC: {
+    upd_file_t* stf = upd_file_new(&(upd_file_t) {
+        .iso    = f->iso,
+        .driver = &snd_stream,
+      });
+    if (HEDLEY_UNLIKELY(stf == NULL)) {
+      req->result = UPD_REQ_NOMEM;
+      return false;
+    }
+    snd_stream_t* stctx = stf->ctx;
+    stctx->dev = f;
+    upd_file_ref(f);
+
+    req->prog.exec = stf;
+    req->result    = UPD_REQ_OK;
+    req->cb(req);
+    upd_file_unref(stf);
+  } return true;
+
+  default:
+    req->result = UPD_REQ_INVALID;
+    return false;
+  }
 }
 
 static void dev_playback_cb_(
     ma_device* ma, void* out, const void* in, ma_uint32 frame) {
-  upd_file_t* f   = ma->pUserData;
-  snd_dev_t*  ctx = f->ctx;
+  upd_file_t* f = ma->pUserData;
   (void) in;
 
   if (HEDLEY_UNLIKELY(f == NULL)) {
     return;
   }
+  snd_dev_t* ctx = f->ctx;
 
   const size_t need_samples = frame * ctx->ch;
+  atomic_fetch_add(&ctx->now, need_samples);
 
   uint8_t* src = (void*) ctx->ring;
   uint8_t* dst = out;

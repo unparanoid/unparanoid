@@ -4,6 +4,8 @@ target_sources(upd.sound
     common.h
     dev.c
     main.c
+    mix.c
+    stream.c
 )
 target_link_libraries(upd.sound
   PRIVATE
