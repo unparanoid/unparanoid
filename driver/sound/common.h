@@ -32,8 +32,6 @@ struct snd_dev_t {
   ma_device      ma;
   ma_device_type type;
 
-  ma_mutex mtx;
-
   float* ring;
   size_t tail;
   size_t head;

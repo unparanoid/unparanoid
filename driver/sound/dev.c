@@ -47,6 +47,9 @@ const upd_driver_t snd_dev = {
     UPD_REQ_PROG,
     0,
   },
+  .flags = {
+    .mutex = true,
+  },
   .init   = dev_init_,
   .deinit = dev_deinit_,
   .handle = dev_handle_,
@@ -87,14 +90,7 @@ static bool dev_init_(upd_file_t* f) {
     goto ABORT;
   }
 
-  if (HEDLEY_UNLIKELY(ma_mutex_init(&ctx->mtx) != MA_SUCCESS)) {
-    upd_free(&ctx->ring);
-    upd_free(&ctx);
-    goto ABORT;
-  }
-
   if (HEDLEY_UNLIKELY(!dev_prepare_(f))) {
-    ma_mutex_uninit(&ctx->mtx);
     upd_free(&ctx->ring);
     upd_free(&ctx);
     upd_iso_msgf(iso, LOG_PREFIX_"failed to prepare sound device\n");
@@ -222,7 +218,6 @@ static void dev_deinit_(upd_file_t* f) {
   snd_dev_t* ctx = f->ctx;
 
   ma_device_uninit(&ctx->ma);
-  ma_mutex_uninit(&ctx->mtx);
 
   upd_free(&ctx->ring);
   upd_free(&ctx);
@@ -277,7 +272,7 @@ static void dev_playback_cb_(
   uint8_t* src = (void*) ctx->ring;
   uint8_t* dst = out;
 
-  ma_mutex_lock(&ctx->mtx);
+  upd_file_begin_sync(f);
   const size_t offset = ctx->tail;
 
   if (ctx->head > ctx->tail) {
@@ -313,5 +308,5 @@ static void dev_playback_cb_(
   } else {
     memset(dst, 0, need_samples*4);
   }
-  ma_mutex_unlock(&ctx->mtx);
+  upd_file_end_sync(f);
 }
