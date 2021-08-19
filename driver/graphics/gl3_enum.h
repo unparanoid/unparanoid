@@ -16,6 +16,14 @@ static inline GLenum gra_gl3_dim_to_color_fmt(uint32_t dim) {
     dim == 4? GL_RGBA: 0;
 }
 
+static inline uint32_t gra_gl3_color_fmt_to_dim(GLenum fmt) {
+  return
+    fmt == GL_R?    1:
+    fmt == GL_RG?   2:
+    fmt == GL_RGB?  3:
+    fmt == GL_RGBA? 4: 0;
+}
+
 
 static inline bool gra_gl3_enum_unstringify_attachment(
     GLenum* v, const uint8_t* str, size_t len) {

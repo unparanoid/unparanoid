@@ -208,7 +208,7 @@ static void dev_work_main_(void* udata) {
   req->ok = false;
 
   const char* err = NULL;
-  if (HEDLEY_UNLIKELY(!gra_gl3_make_ctx_current(f, &err))) {
+  if (HEDLEY_UNLIKELY(!gra_gl3_dev_make_ctx_current(f, &err))) {
     dev_errf_(f, "GL ctx activation error: %s", err);
     return;
   }

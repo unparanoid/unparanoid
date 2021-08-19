@@ -204,7 +204,7 @@ static bool tex_handle_(upd_req_t* req) {
   upd_file_t*    f   = req->file;
   gra_gl3_tex_t* ctx = f->ctx;
 
-  if (HEDLEY_UNLIKELY(!ctx->gl || !ctx->id || !ctx->pbo)) {
+  if (HEDLEY_UNLIKELY(!ctx->gl || !ctx->id || !ctx->pbo || !ctx->ch)) {
     req->result = UPD_REQ_ABORTED;
     return false;
   }

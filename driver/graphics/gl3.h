@@ -286,11 +286,19 @@ gra_gl3_pl_def_fetch(
   gra_gl3_fetch_t* fe);
 
 
+/* 'req' must be a req with type GRA_GL3_REQ_TEX_ALLOC. */
+HEDLEY_NON_NULL(1)
+static inline
+void
+gra_gl3_tex_set_metadata(
+  upd_file_t*          tex,
+  const gra_gl3_req_t* req);
+
 HEDLEY_NON_NULL(1)
 HEDLEY_WARN_UNUSED_RESULT
 static inline
 bool
-gra_gl3_make_ctx_current(
+gra_gl3_dev_make_ctx_current(
   upd_file_t*  gl,
   const char** err);
 
@@ -342,7 +350,19 @@ gra_gl3_lock_and_fetch_lock_cb_(
   upd_file_lock_t* k);
 
 
-static inline bool gra_gl3_make_ctx_current(upd_file_t* gl, const char** err) {
+static inline void gra_gl3_tex_set_metadata(
+    upd_file_t* tex, const gra_gl3_req_t* req) {
+  gra_gl3_tex_t* ctx = tex->ctx;
+  assert(ctx->target == req->tex.target);
+
+  ctx->ch  = gra_gl3_color_fmt_to_dim(req->tex.fmt);
+  ctx->w   = req->tex.w;
+  ctx->h   = req->tex.h;
+  ctx->d   = req->tex.d;
+  ctx->fmt = req->tex.fmt;
+}
+
+static inline bool gra_gl3_dev_make_ctx_current(upd_file_t* gl, const char** err) {
   gra_gl3_dev_t* ctx = gl->ctx;
   if (HEDLEY_UNLIKELY(ctx->gl == NULL)) {
     if (err) *err = "OpenGL context is not generated";

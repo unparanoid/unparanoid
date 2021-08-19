@@ -781,12 +781,6 @@ static void lk_lock_output_cb_(upd_file_lock_t* k) {
     ass->reso[i] = v;
   }
 
-  /* FIXME */
-  tex->ch  = ass->reso[0];
-  tex->w   = ass->reso[1];
-  tex->h   = ass->reso[2];
-  tex->fmt = gra_gl3_dim_to_color_fmt(ass->reso[0]);
-
   ass->greq = (gra_gl3_req_t) {
     .dev  = tex->gl,
     .type = GRA_GL3_REQ_TEX_ALLOC,
@@ -802,6 +796,8 @@ static void lk_lock_output_cb_(upd_file_lock_t* k) {
     .udata = ass,
     .cb    = lk_alloc_output_cb_,
   };
+  gra_gl3_tex_set_metadata(ass->file, &ass->greq);
+
   if (HEDLEY_UNLIKELY(!gra_gl3_lock_and_req(&ass->greq))) {
     goto ABORT;
   }
