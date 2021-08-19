@@ -8,7 +8,8 @@ typedef struct upd_file_t_ {
 
   upd_array_of(upd_file_watch_t*) watch;
 
-  uv_fs_poll_t* poll;
+  uv_fs_poll_t* npoll;
+  uv_mutex_t*   mutex;
   uv_prepare_t* prepare;
   uv_check_t*   check;
   uv_timer_t*   timer;
@@ -135,6 +136,19 @@ static inline bool upd_file_trigger_timer(upd_file_t* f, uint64_t dur) {
   }
   upd_file_ref(f);
   return true;
+}
+
+
+static inline void upd_file_begin_sync(upd_file_t* f) {
+  upd_file_t_* f_ = (void*) f;
+  assert(f_->mutex);
+  uv_mutex_lock(f_->mutex);
+}
+
+static inline void upd_file_end_sync(upd_file_t* f) {
+  upd_file_t_* f_ = (void*) f;
+  assert(f_->mutex);
+  uv_mutex_unlock(f_->mutex);
 }
 
 

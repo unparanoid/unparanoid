@@ -1,12 +1,17 @@
 #include "common.h"
 
 
-#define FILE_POLL_INTERVAL_ 1500
+#define FILE_NPOLL_INTERVAL_ 1500
 
 
 static
 bool
-file_init_poll_(
+file_init_npoll_(
+  upd_file_t_* f);
+
+static
+bool
+file_init_mutex_(
   upd_file_t_* f);
 
 static
@@ -32,8 +37,8 @@ file_close_all_handlers_(
 
 static
 void
-file_poll_cb_(
-  uv_fs_poll_t*    poll,
+file_npoll_cb_(
+  uv_fs_poll_t*    npoll,
   int              status,
   const uv_stat_t* prev,
   const uv_stat_t* curr);
@@ -98,7 +103,8 @@ upd_file_t* upd_file_new_(const upd_file_t* src) {
 # undef assign_
 
   const bool ok =
-    (!d->flags.npoll || !npathlen || file_init_poll_(f))    &&
+    (!d->flags.npoll || !npathlen || file_init_npoll_(f))   &&
+    (!d->flags.mutex              || file_init_mutex_(f))   &&
     (!d->flags.preproc            || file_init_prepare_(f)) &&
     (!d->flags.postproc           || file_init_check_(f))   &&
     (!d->flags.timer              || file_init_timer_(f))   &&
@@ -129,13 +135,13 @@ void upd_file_delete(upd_file_t* f) {
   assert(!f_->lock.pending.n);
   assert(!f_->lock.refcnt);
 
-  file_close_all_handlers_(f_);
-
   upd_file_trigger(f, UPD_FILE_DELETE);
   upd_array_clear(&f_->watch);
 
   upd_array_find_and_remove(&f->iso->files, f);
   f->driver->deinit(f);
+
+  file_close_all_handlers_(f_);
 
   if (f->backend) {
     upd_file_unref(f->backend);
@@ -144,27 +150,40 @@ void upd_file_delete(upd_file_t* f) {
 }
 
 
-static bool file_init_poll_(upd_file_t_* f) {
+static bool file_init_npoll_(upd_file_t_* f) {
   upd_iso_t* iso = f->super.iso;
 
-  if (HEDLEY_UNLIKELY(!upd_malloc(&f->poll, sizeof(*f->poll)))) {
+  if (HEDLEY_UNLIKELY(!upd_malloc(&f->npoll, sizeof(*f->npoll)))) {
     return false;
   }
 
-  *f->poll = (uv_fs_poll_t) { .data = f, };
-  if (HEDLEY_UNLIKELY(0 > uv_fs_poll_init(&iso->loop, f->poll))) {
-    upd_free(&f->poll);
+  *f->npoll = (uv_fs_poll_t) { .data = f, };
+  if (HEDLEY_UNLIKELY(0 > uv_fs_poll_init(&iso->loop, f->npoll))) {
+    upd_free(&f->npoll);
     return false;
   }
-  uv_unref((uv_handle_t*) f->poll);
+  uv_unref((uv_handle_t*) f->npoll);
 
   const bool start = 0 <= uv_fs_poll_start(
-    f->poll, file_poll_cb_, (char*) f->super.npath, FILE_POLL_INTERVAL_);
+    f->npoll, file_npoll_cb_, (char*) f->super.npath, FILE_NPOLL_INTERVAL_);
   if (HEDLEY_UNLIKELY(!start)) {
-    uv_close((uv_handle_t*) f->poll, file_handle_close_cb_);
-    f->poll = NULL;
+    uv_close((uv_handle_t*) f->npoll, file_handle_close_cb_);
+    f->npoll = NULL;
     return false;
   }
+  return true;
+}
+
+static bool file_init_mutex_(upd_file_t_* f) {
+  uv_mutex_t* mtx = NULL;
+  if (HEDLEY_UNLIKELY(!upd_malloc(&mtx, sizeof(*mtx)))) {
+    return false;
+  }
+  if (HEDLEY_UNLIKELY(0 > uv_mutex_init(mtx))) {
+    upd_free(&mtx);
+    return false;
+  }
+  f->mutex = mtx;
   return true;
 }
 
@@ -229,10 +248,14 @@ static bool file_init_timer_(upd_file_t_* f) {
 }
 
 static void file_close_all_handlers_(upd_file_t_* f) {
-  if (f->poll) {
-    uv_fs_poll_stop(f->poll);
-    uv_close((uv_handle_t*) f->poll, file_handle_close_cb_);
-    f->poll = NULL;
+  if (HEDLEY_UNLIKELY(f->npoll)) {
+    uv_fs_poll_stop(f->npoll);
+    uv_close((uv_handle_t*) f->npoll, file_handle_close_cb_);
+    f->npoll = NULL;
+  }
+  if (HEDLEY_UNLIKELY(f->mutex)) {
+    uv_mutex_destroy(f->mutex);
+    f->mutex = NULL;
   }
   if (HEDLEY_UNLIKELY(f->prepare)) {
     uv_prepare_stop(f->prepare);
@@ -251,15 +274,15 @@ static void file_close_all_handlers_(upd_file_t_* f) {
 }
 
 
-static void file_poll_cb_(
-    uv_fs_poll_t*    poll,
+static void file_npoll_cb_(
+    uv_fs_poll_t*    npoll,
     int              status,
     const uv_stat_t* prev,
     const uv_stat_t* curr) {
   (void) prev;
   (void) curr;
 
-  upd_file_t* f = poll->data;
+  upd_file_t* f = npoll->data;
 
   if (HEDLEY_UNLIKELY(status < 0)) {
     upd_file_trigger(f, UPD_FILE_DELETE_N);
