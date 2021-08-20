@@ -14,6 +14,50 @@
 #define SHADER_UNI_SIZE_  2
 
 
+typedef struct view_t_   view_t_;
+typedef struct stream_t_ stream_t_;
+typedef struct frame_t_  frame_t_;
+
+
+struct view_t_ {
+  upd_file_t* gl;
+  upd_file_t* glfw;
+  upd_file_t* th;
+
+  upd_file_watch_t watch;
+  upd_file_lock_t  gl_lock;
+
+  atomic_uintptr_t stream;  /* pointer to stream file */
+
+  size_t refcnt;
+
+  GLuint vao;
+  GLuint prog;
+  GLuint sampler;
+  GLuint fbo;
+  GLuint rb;
+
+  atomic_bool thread_alive;
+  atomic_bool file_alive;
+  atomic_bool need_update;
+
+  unsigned gl_locked      : 1;
+  unsigned broken         : 1;
+
+  struct {
+    GLFWwindow* ptr;
+    atomic_bool dirty;
+    atomic_uint_least32_t w, h;
+
+    uint32_t tw, th;
+    double   aspect;
+  } win;
+
+  upd_array_of(frame_t_*) done;
+
+  uint8_t err[256];
+};
+
 static
 bool
 view_init_(
@@ -91,6 +135,12 @@ thread_main_(
 
 static
 void
+thread_update_fb_(
+  upd_file_t* f,
+  upd_file_t* stf);
+
+static
+void
 thread_watch_cb_(
   upd_file_watch_t* w);
 
@@ -107,26 +157,14 @@ thread_teardown_glfw_cb_(
 static const upd_driver_t thread_ = {
   .name   = (uint8_t*) "upd.graphics.gl3.view.thread_",
   .cats   = (upd_req_cat_t[]) {0},
+  .flags  = {
+    .mutex = true,
+  },
   .init   = thread_init_,
   .deinit = thread_deinit_,
   .handle = thread_handle_,
 };
 
-
-typedef struct stream_frame_t_ {
-  upd_file_t* stream;
-  upd_file_t* tensor;
-  uint64_t    time;
-
-  GLuint   tex;
-  uint32_t aw, ah;
-  uint32_t  w,  h;
-
-  unsigned locked  : 1;
-  unsigned fetched : 1;
-
-  upd_file_lock_t lock;
-} stream_frame_t_;
 
 typedef struct stream_t_ {
   upd_file_t* target;
@@ -143,7 +181,13 @@ typedef struct stream_t_ {
 
   unsigned init : 1;
 
-  upd_array_of(stream_frame_t_*) q;
+  upd_array_of(frame_t_*) waiting;
+  atomic_uintptr_t        pending;
+
+  struct {
+    double   aspect;
+    uint32_t tw, th;
+  } view;
 } stream_t_;
 
 static
@@ -163,11 +207,6 @@ stream_handle_(
 
 static
 void
-stream_delete_frame_(
-  stream_frame_t_* frame);
-
-static
-void
 stream_return_(
   upd_file_t* f,
   bool        ok,
@@ -182,11 +221,6 @@ static
 void
 stream_proto_parse_cb_(
   upd_proto_parse_t* par);
-
-static
-void
-stream_lock_tensor_cb_(
-  upd_file_lock_t* k);
 
 static
 void
@@ -259,20 +293,43 @@ init_setup_gl_cb_(
   void*      udata);
 
 
+struct frame_t_ {
+  upd_file_t* stream;
+  upd_file_t* tensor;
+  uint64_t    time;
+
+  GLuint   tex;
+  uint32_t aw, ah;
+  uint32_t  w,  h;
+
+  unsigned locked  : 1;
+  unsigned fetched : 1;
+
+  upd_file_lock_t lock;
+};
+
+static
+void
+frame_delete_(
+  frame_t_* frame);
+
+static
+void
+frame_lock_tensor_cb_(
+  upd_file_lock_t* k);
+
+
 static bool view_init_(upd_file_t* f) {
   upd_iso_t* iso = f->iso;
 
-  gra_gl3_view_t* ctx = NULL;
+  view_t_* ctx = NULL;
   if (HEDLEY_UNLIKELY(!upd_malloc(&ctx, sizeof(*ctx)))) {
     upd_iso_msgf(iso, LOG_PREFIX_"context allocation failure\n");
     return false;
   }
-  *ctx = (gra_gl3_view_t) {
+  *ctx = (view_t_) {
     .thread_alive = ATOMIC_VAR_INIT(true),
     .file_alive   = ATOMIC_VAR_INIT(true),
-    .tex = {
-      .id = ATOMIC_VAR_INIT(0),
-    },
     .win = {
       .dirty = ATOMIC_VAR_INIT(false),
       .w     = ATOMIC_VAR_INIT(16),
@@ -318,8 +375,8 @@ static bool view_init_(upd_file_t* f) {
 }
 
 static void view_deinit_(upd_file_t* f) {
-  upd_iso_t*      iso = f->iso;
-  gra_gl3_view_t* ctx = f->ctx;
+  upd_iso_t* iso = f->iso;
+  view_t_*   ctx = f->ctx;
 
   if (HEDLEY_LIKELY(ctx->win.ptr)) {
     glfwSetWindowUserPointer(ctx->win.ptr, NULL);
@@ -342,10 +399,16 @@ static void view_deinit_(upd_file_t* f) {
 }
 
 static bool view_handle_(upd_req_t* req) {
-  upd_file_t* f = req->file;
+  upd_file_t* f   = req->file;
+  view_t_*    ctx = f->ctx;
 
   switch (req->type) {
   case UPD_REQ_PROG_EXEC: {
+    if (HEDLEY_UNLIKELY(atomic_load(&ctx->stream))) {
+      req->result = UPD_REQ_ABORTED;
+      return false;
+    }
+
     upd_file_t* stf = upd_file_new(&(upd_file_t) {
         .iso    = f->iso,
         .driver = &stream_,
@@ -355,8 +418,11 @@ static bool view_handle_(upd_req_t* req) {
       return false;
     }
     stream_t_* stctx = stf->ctx;
+
     stctx->target = f;
     upd_file_ref(f);
+
+    atomic_store(&ctx->stream, (uintptr_t) stf);
 
     req->prog.exec = stf;
     req->cb(req);
@@ -371,8 +437,8 @@ static bool view_handle_(upd_req_t* req) {
 }
 
 static void view_teardown_gl_(void* udata) {
-  upd_file_t*     f   = udata;
-  gra_gl3_view_t* ctx = f->ctx;
+  upd_file_t* f   = udata;
+  view_t_*    ctx = f->ctx;
 
   glfwMakeContextCurrent(ctx->win.ptr);
   const char* err;
@@ -384,6 +450,8 @@ static void view_teardown_gl_(void* udata) {
   glDeleteProgram(ctx->prog);
   glDeleteVertexArrays(1, &ctx->vao);
   glDeleteSamplers(1, &ctx->sampler);
+  glDeleteFramebuffers(1, &ctx->fbo);
+  glDeleteRenderbuffers(1, &ctx->rb);
 
   assert(glGetError() == GL_NO_ERROR);
 }
@@ -393,8 +461,8 @@ static void view_size_cb_(GLFWwindow* win, int w, int h) {
   if (HEDLEY_UNLIKELY(f == NULL)) {
     return;
   }
-  upd_iso_t*      iso = f->iso;
-  gra_gl3_view_t* ctx = f->ctx;
+  upd_iso_t* iso = f->iso;
+  view_t_*   ctx = f->ctx;
 
   atomic_store(&ctx->win.w, (uint32_t) w);
   atomic_store(&ctx->win.h, (uint32_t) h);
@@ -409,8 +477,8 @@ static void view_refresh_cb_(GLFWwindow* w) {
   if (HEDLEY_UNLIKELY(f == NULL)) {
     return;
   }
-  upd_iso_t*      iso = f->iso;
-  gra_gl3_view_t* ctx = f->ctx;
+  upd_iso_t* iso = f->iso;
+  view_t_*   ctx = f->ctx;
 
   atomic_store(&ctx->need_update, true);
   if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, ctx->th->id))) {
@@ -432,8 +500,13 @@ static bool thread_init_(upd_file_t* f) {
 }
 
 static void thread_deinit_(upd_file_t* f) {
-  upd_iso_t*      iso = f->iso;
-  gra_gl3_view_t* ctx = f->ctx;
+  upd_iso_t* iso = f->iso;
+  view_t_*   ctx = f->ctx;
+
+  for (size_t i = 0; i < ctx->done.n; ++i) {
+    frame_delete_(ctx->done.p[i]);
+  }
+  upd_array_clear(&ctx->done);
 
   if (HEDLEY_UNLIKELY(ctx->win.ptr)) {
     const bool ok = gra_glfw_lock_and_req_with_dup(&(gra_glfw_req_t) {
@@ -462,9 +535,9 @@ static bool thread_handle_(upd_req_t* req) {
 }
 
 static void thread_main_(void* udata) {
-  upd_file_t*     f   = udata;
-  upd_iso_t*      iso = f->iso;
-  gra_gl3_view_t* ctx = f->ctx;
+  upd_file_t* f   = udata;
+  upd_iso_t*  iso = f->iso;
+  view_t_*    ctx = f->ctx;
 
   const upd_file_id_t id = f->id;
 
@@ -477,55 +550,47 @@ static void thread_main_(void* udata) {
 
   while (atomic_load(&ctx->file_alive)) {
     if (HEDLEY_UNLIKELY(atomic_load(&ctx->win.dirty))) {
-      const GLuint   t   = atomic_load(&ctx->tex.id);
-      const uint32_t tw  = atomic_load(&ctx->tex.w);
-      const uint32_t th  = atomic_load(&ctx->tex.h);
-      const uint32_t taw = atomic_load(&ctx->tex.aw);
-      const uint32_t tah = atomic_load(&ctx->tex.ah);
+
       const uint32_t ww  = atomic_load(&ctx->win.w);
       const uint32_t wh  = atomic_load(&ctx->win.h);
 
-      /* tex sKale */
-      double kx = 1., ky = th*1./tw*ww/wh;
-      if (ky > 1) {
-        kx /= ky;
-        ky  = 1;
-      }
-
-      /* tex siZe */
-      const double zx = tw*1./taw, zy = th*1./tah;
+      upd_file_t* stf = (void*) atomic_load(&ctx->stream);
 
       glDisable(GL_BLEND);
       glDisable(GL_DEPTH_TEST);
-      glViewport(0, 0, ww, wh);
+      if (HEDLEY_LIKELY(stf != NULL)) {
+        thread_update_fb_(f, stf);
+      }
 
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
+      glViewport(0, 0, ww, wh);
 
       glClearColor(0, 0, 0, 0);
       glClear(GL_COLOR_BUFFER_BIT);
 
-      if (t) {
-        glUseProgram(ctx->prog);
-        glBindVertexArray(ctx->vao);
+      const uint32_t tw = ctx->win.tw;
+      const uint32_t th = ctx->win.th;
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, t);
-        glBindSampler(0, ctx->sampler);
-        glUniform1i(SHADER_UNI_TEX_, 0);
+      const double aspect = ctx->win.aspect;
 
-        glUniform2f(SHADER_UNI_SCALE_, kx, ky);
-        glUniform2f(SHADER_UNI_SIZE_,  zx, zy);
+      if (HEDLEY_UNLIKELY(stf != NULL && tw && th && aspect > 0)) {
+        const uint32_t sw = aspect > 1? ww*1.    : ww*aspect;
+        const uint32_t sh = aspect > 1? wh/aspect: wh*1.;
 
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,  ctx->fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(
+          0,         0,         tw, th,
+          (ww-sw)/2, (wh-sh)/2, sw, sh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
       }
       assert(glGetError() == GL_NO_ERROR);
 
+      atomic_store(&ctx->win.dirty, false);
       if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, id))) {
         fprintf(stderr, LOG_PREFIX_
           "failed to trigger ASYNC event, "
           "this may cause OpenGL device get stuck X(\n");
       }
-      atomic_store(&ctx->win.dirty, false);
     }
     glfwSwapBuffers(ctx->win.ptr);
   }
@@ -539,13 +604,78 @@ EXIT:
   }
 }
 
+static void thread_update_fb_(upd_file_t* f, upd_file_t* stf) {
+  view_t_* ctx = f->ctx;
+
+  stream_t_* st    = stf->ctx;
+  frame_t_*  frame = (void*) atomic_exchange(&st->pending, 0);
+  if (HEDLEY_LIKELY(frame == NULL)) {
+    return;
+  }
+
+  const GLuint   t   = frame->tex;
+  const uint32_t tw  = frame->w;
+  const uint32_t th  = frame->h;
+  const uint32_t taw = frame->aw;
+  const uint32_t tah = frame->ah;
+
+  ctx->win.tw     = tw;
+  ctx->win.th     = th;
+  ctx->win.aspect = tw*1./th;
+
+  glBindRenderbuffer(GL_RENDERBUFFER, ctx->rb);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA, tw, th);
+
+  glBindFramebuffer(GL_FRAMEBUFFER, ctx->fbo);
+  glFramebufferRenderbuffer(
+    GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, ctx->rb);
+  assert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+
+  glViewport(0, 0, tw, th);
+
+  if (t) {
+    /* tex siZe */
+    const double zx = tw*1./taw, zy = th*1./tah;
+
+    glUseProgram(ctx->prog);
+    glBindVertexArray(ctx->vao);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, t);
+    glBindSampler(0, ctx->sampler);
+
+    glUniform1i(SHADER_UNI_TEX_, 0);
+    glUniform2f(SHADER_UNI_SCALE_, 1, 1);
+    glUniform2f(SHADER_UNI_SIZE_,  zx, zy);
+
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    assert(glGetError() == GL_NO_ERROR);
+  }
+
+  upd_file_begin_sync(f);
+  if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->done, frame, SIZE_MAX))) {
+    fprintf(stderr, "frame context insertion failure, this may cause dead-lock");
+  }
+  upd_file_end_sync(f);
+}
+
 static void thread_watch_cb_(upd_file_watch_t* w) {
-  upd_file_t*     f   = w->udata;
-  gra_gl3_view_t* ctx = f->ctx;
+  upd_file_t* f   = w->udata;
+  view_t_*    ctx = f->ctx;
 
   if (HEDLEY_UNLIKELY(w->event != UPD_FILE_ASYNC)) {
     return;
   }
+
+  upd_file_begin_sync(f);
+  {
+    for (size_t i = 0; i < ctx->done.n; ++i) {
+      frame_delete_(ctx->done.p[i]);
+    }
+    upd_array_clear(&ctx->done);
+  }
+  upd_file_end_sync(f);
 
   const bool th_alive    = atomic_load(&ctx->thread_alive);
   const bool need_update = atomic_load(&ctx->need_update);
@@ -585,7 +715,8 @@ static void thread_watch_cb_(upd_file_watch_t* w) {
     break;
 
   case 0x07:  /* 111 */
-    atomic_store(&ctx->win.dirty, true);
+    atomic_store(&ctx->win.dirty,   true);
+    atomic_store(&ctx->need_update, false);
     break;
   }
 
@@ -612,8 +743,8 @@ static void thread_watch_cb_(upd_file_watch_t* w) {
 }
 
 static void thread_lock_gl_cb_(upd_file_lock_t* k) {
-  upd_file_t*     f   = k->udata;
-  gra_gl3_view_t* ctx = f->ctx;
+  upd_file_t* f   = k->udata;
+  view_t_*    ctx = f->ctx;
 
   if (HEDLEY_LIKELY(k->ok)) {
     ctx->gl_locked = true;
@@ -661,11 +792,14 @@ static bool stream_init_(upd_file_t* f) {
 
 static void stream_deinit_(upd_file_t* f) {
   stream_t_* ctx = f->ctx;
+  view_t_*   tar = ctx->target->ctx;
 
-  for (size_t i = 0; i < ctx->q.n; ++i) {
-    stream_delete_frame_(ctx->q.p[i]);
+  for (size_t i = 0; i < ctx->waiting.n; ++i) {
+    frame_delete_(ctx->waiting.p[i]);
   }
-  upd_array_clear(&ctx->q);
+  upd_array_clear(&ctx->waiting);
+
+  atomic_store(&tar->stream, (uintptr_t) NULL);
 
   upd_file_unref(ctx->target);
   upd_file_unwatch(&ctx->watch);
@@ -704,7 +838,7 @@ static void stream_return_(upd_file_t* f, bool ok, const char* msg) {
   stream_msgpack_cb_(&ctx->mpk);
 }
 
-static void stream_queue_(upd_file_t* f, stream_frame_t_* frame) {
+static void stream_queue_(upd_file_t* f, frame_t_* frame) {
   stream_t_* ctx = f->ctx;
 
   const uint64_t now = upd_iso_now(f->iso);
@@ -713,7 +847,7 @@ static void stream_queue_(upd_file_t* f, stream_frame_t_* frame) {
     upd_iso_msgf(f->iso, LOG_PREFIX_"frame dropped X(\n");
     return;
   }
-  if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->q, frame, SIZE_MAX))) {
+  if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->waiting, frame, SIZE_MAX))) {
     upd_iso_msgf(f->iso, LOG_PREFIX_"frame dropped X(\n");
     return;
   }
@@ -723,13 +857,6 @@ static void stream_queue_(upd_file_t* f, stream_frame_t_* frame) {
     upd_iso_msgf(f->iso, LOG_PREFIX_"frame dropped X(\n");
     return;
   }
-}
-
-static void stream_delete_frame_(stream_frame_t_* frame) {
-  if (HEDLEY_LIKELY(frame->locked)) {
-    upd_file_unlock(&frame->lock);
-  }
-  upd_free(&frame);
 }
 
 static void stream_msgpack_cb_(upd_msgpack_t* mpk) {
@@ -876,24 +1003,26 @@ static void stream_proto_parse_cb_(upd_proto_parse_t* par) {
 
     upd_file_t* tensor = msg->encoder_frame.file;
 
-    stream_frame_t_* frame = NULL;
+    frame_t_* frame = NULL;
     if (HEDLEY_UNLIKELY(!upd_malloc(&frame, sizeof(*frame)))) {
-      stream_return_(f, false, "allocation failure");
+      stream_return_(f, false, "frame allocation failure");
       return;
     }
-    *frame = (stream_frame_t_) {
+    *frame = (frame_t_) {
       .stream = f,
       .tensor = tensor,
       .time   = expect,
       .lock = {
         .file  = tensor,
         .udata = frame,
-        .cb    = stream_lock_tensor_cb_,
+        .cb    = frame_lock_tensor_cb_,
       },
     };
+    upd_file_ref(f);
     if (HEDLEY_UNLIKELY(!upd_file_lock(&frame->lock))) {
+      upd_file_unref(f);
       upd_free(&frame);
-      stream_return_(f, false, "lock refusal");
+      stream_return_(f, false, "tensor lock refusal");
       return;
     }
     stream_return_(f, true, "");
@@ -914,42 +1043,11 @@ static void stream_proto_parse_cb_(upd_proto_parse_t* par) {
   }
 }
 
-static void stream_lock_tensor_cb_(upd_file_lock_t* k) {
-  stream_frame_t_* frame  = k->udata;
-  upd_file_t*      f      = frame->stream;
-  upd_file_t*      tensor = frame->tensor;
-  upd_iso_t*       iso    = f->iso;
-
-  if (HEDLEY_UNLIKELY(!k->ok)) {
-    upd_iso_msgf(iso, LOG_PREFIX_"tensor lock cancelled\n");
-    goto ABORT;
-  }
-
-  if (HEDLEY_UNLIKELY(tensor->driver == &gra_gl3_tex_2d)) {
-    gra_gl3_tex_t* texctx = tensor->ctx;
-    frame->tex = texctx->id;
-    frame->aw  = texctx->w;
-    frame->ah  = texctx->h;
-    frame->w   = texctx->w;
-    frame->h   = texctx->h;
-    stream_queue_(f, frame);
-    return;
-  }
-
-  /* TODO: instant texture */
-  goto ABORT;
-
-  return;
-
-ABORT:
-  stream_delete_frame_(frame);
-}
-
 static void stream_watch_cb_(upd_file_watch_t* w) {
-  upd_file_t*     f   = w->udata;
-  upd_iso_t*      iso = f->iso;
-  stream_t_*      ctx = f->ctx;
-  gra_gl3_view_t* tar = ctx->target->ctx;
+  upd_file_t* f   = w->udata;
+  upd_iso_t*  iso = f->iso;
+  stream_t_*  ctx = f->ctx;
+  view_t_*    tar = ctx->target->ctx;
 
   if (HEDLEY_UNLIKELY(w->event != UPD_FILE_TIMER)) {
     return;
@@ -957,35 +1055,33 @@ static void stream_watch_cb_(upd_file_watch_t* w) {
 
   const uint64_t now = upd_iso_now(f->iso);
 
-  stream_frame_t_* frame = NULL;
-  while (ctx->q.n) {
-    stream_frame_t_* next = ctx->q.p[0];
+  frame_t_* frame = NULL;
+  while (ctx->waiting.n) {
+    frame_t_* next = ctx->waiting.p[0];
     if (HEDLEY_UNLIKELY(now < next->time)) {
       break;
     }
     if (HEDLEY_UNLIKELY(frame)) {
-      stream_delete_frame_(frame);
+      frame_delete_(frame);
     }
-    frame = upd_array_remove(&ctx->q, 0);
+    frame = upd_array_remove(&ctx->waiting, 0);
   }
   if (HEDLEY_UNLIKELY(frame == NULL)) {
     return;
   }
 
-  if (HEDLEY_UNLIKELY(frame->tex)) {
-    atomic_store(&tar->tex.id, frame->tex);
-    atomic_store(&tar->tex.w,  frame->w);
-    atomic_store(&tar->tex.h,  frame->h);
-    atomic_store(&tar->tex.aw, frame->aw);
-    atomic_store(&tar->tex.ah, frame->ah);
-    atomic_store(&tar->need_update, true);
-  } else {
-    /* TODO use instant texture */
+  frame_t_* drop = (void*) atomic_exchange(&ctx->pending, (uintptr_t) frame);
+  if (HEDLEY_UNLIKELY(drop)) {
+    frame_delete_(drop);
   }
-  stream_delete_frame_(frame);
 
-  if (HEDLEY_LIKELY(ctx->q.n)) {
-    stream_frame_t_* next = ctx->q.p[0];
+  atomic_store(&tar->need_update, true);
+  if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, tar->th->id))) {
+    return;
+  }
+
+  if (HEDLEY_LIKELY(ctx->waiting.n)) {
+    frame_t_* next = ctx->waiting.p[0];
     if (HEDLEY_UNLIKELY(!upd_file_trigger_timer(f, next->time-now))) {
       upd_iso_msgf(iso, LOG_PREFIX_"timer aborted\n");
       return;
@@ -995,9 +1091,9 @@ static void stream_watch_cb_(upd_file_watch_t* w) {
 
 
 static void init_setup_gl_(void* udata) {
-  init_t_*        ini = udata;
-  upd_file_t*     f   = ini->file;
-  gra_gl3_view_t* ctx = f->ctx;
+  init_t_*    ini = udata;
+  upd_file_t* f   = ini->file;
+  view_t_*    ctx = f->ctx;
 
   glfwMakeContextCurrent(ctx->win.ptr);
   const char* err;
@@ -1039,19 +1135,27 @@ static void init_setup_gl_(void* udata) {
 
   glGenVertexArrays(1, &ctx->vao);
 
-  GLuint id;
-  glGenSamplers(1, &id);
-  glSamplerParameteri(id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  glSamplerParameteri(id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  ctx->sampler = id;
+  GLuint sampler;
+  glGenSamplers(1, &sampler);
+  glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  ctx->sampler = sampler;
+
+  GLuint rb;
+  glGenRenderbuffers(1, &rb);
+  ctx->rb = rb;
+
+  GLuint fbo;
+  glGenFramebuffers(1, &fbo);
+  ctx->fbo = fbo;
 
   assert(glGetError() == GL_NO_ERROR);
 }
 
 static void init_unref_(init_t_* ini) {
-  upd_file_t*     f   = ini->file;
-  upd_iso_t*      iso = f->iso;
-  gra_gl3_view_t* ctx = f->ctx;
+  upd_file_t* f   = ini->file;
+  upd_iso_t*  iso = f->iso;
+  view_t_*    ctx = f->ctx;
 
   if (HEDLEY_LIKELY(--ini->refcnt)) {
     return;
@@ -1122,10 +1226,10 @@ ABORT:
 }
 
 static void init_pathfind_gl_cb_(upd_pathfind_t* pf) {
-  init_t_*        ini = pf->udata;
-  upd_file_t*     f   = ini->file;
-  upd_iso_t*      iso = f->iso;
-  gra_gl3_view_t* ctx = f->ctx;
+  init_t_*    ini = pf->udata;
+  upd_file_t* f   = ini->file;
+  upd_iso_t*  iso = f->iso;
+  view_t_*    ctx = f->ctx;
 
   upd_file_t* gl = pf->len? NULL: pf->base;
   upd_iso_unstack(iso, pf);
@@ -1158,10 +1262,10 @@ ABORT:
 }
 
 static void init_lock_gl_cb_(upd_file_lock_t* k) {
-  init_t_*        ini = k->udata;
-  upd_file_t*     f   = ini->file;
-  upd_iso_t*      iso = f->iso;
-  gra_gl3_view_t* ctx = f->ctx;
+  init_t_*    ini = k->udata;
+  upd_file_t* f   = ini->file;
+  upd_iso_t*  iso = f->iso;
+  view_t_*    ctx = f->ctx;
 
   if (HEDLEY_UNLIKELY(!k->ok)) {
     upd_iso_msgf(iso, LOG_PREFIX_"GL device lock cancelled\n");
@@ -1199,10 +1303,10 @@ EXIT:
 }
 
 static void init_win_create_cb_(gra_glfw_req_t* req) {
-  init_t_*        ini = req->udata;
-  upd_file_t*     f   = ini->file;
-  upd_iso_t*      iso = f->iso;
-  gra_gl3_view_t* ctx = f->ctx;
+  init_t_*    ini = req->udata;
+  upd_file_t* f   = ini->file;
+  upd_iso_t*  iso = f->iso;
+  view_t_*    ctx = f->ctx;
 
   GLFWwindow* win = req->ok? req->sub.win: NULL;
   upd_file_unlock(&req->lock);
@@ -1237,4 +1341,47 @@ static void init_setup_gl_cb_(upd_iso_t* iso, void* udata) {
 
 EXIT:
   init_unref_(ini);
+}
+
+
+static void frame_delete_(frame_t_* frame) {
+  upd_file_unref(frame->stream);
+
+  if (HEDLEY_LIKELY(frame->locked)) {
+    upd_file_unlock(&frame->lock);
+  }
+  upd_free(&frame);
+}
+
+static void frame_lock_tensor_cb_(upd_file_lock_t* k) {
+  frame_t_*   frame  = k->udata;
+  upd_file_t* f      = frame->stream;
+  upd_file_t* tensor = frame->tensor;
+  upd_iso_t*  iso    = f->iso;
+
+  if (HEDLEY_UNLIKELY(!k->ok)) {
+    upd_iso_msgf(iso, LOG_PREFIX_"tensor lock cancelled\n");
+    goto ABORT;
+  }
+  frame->locked = true;
+
+  if (HEDLEY_UNLIKELY(tensor->driver == &gra_gl3_tex_2d)) {
+    gra_gl3_tex_t* texctx = tensor->ctx;
+    frame->tex = texctx->id;
+    frame->aw  = texctx->w;
+    frame->ah  = texctx->h;
+    frame->w   = texctx->w;
+    frame->h   = texctx->h;
+    stream_queue_(f, frame);
+    return;
+  }
+
+  /* TODO: instant texture */
+  upd_iso_msgf(iso, "NOT IMPLEMENTED\n");
+  goto ABORT;
+
+  return;
+
+ABORT:
+  frame_delete_(frame);
 }

@@ -230,43 +230,6 @@ struct gra_gl3_tex_t {
 };
 
 
-struct gra_gl3_view_t {
-  upd_file_t* gl;
-  upd_file_t* glfw;
-  upd_file_t* th;
-
-  upd_file_watch_t watch;
-  upd_file_lock_t  gl_lock;
-
-  upd_array_of(upd_file_t*) stream;
-
-  size_t refcnt;
-
-  GLuint vao;
-  GLuint prog;
-  GLuint sampler;
-
-  atomic_bool thread_alive;
-  atomic_bool file_alive;
-  atomic_bool need_update;
-
-  unsigned gl_locked : 1;
-  unsigned broken    : 1;
-
-  struct {
-    atomic_uintmax_t id;
-    atomic_uint_least32_t w, h, aw, ah;
-  } tex;
-  struct {
-    GLFWwindow* ptr;
-    atomic_bool dirty;
-    atomic_uint_least32_t w, h;
-  } win;
-
-  uint8_t err[256];
-};
-
-
 HEDLEY_NON_NULL(1)
 HEDLEY_WARN_UNUSED_RESULT
 bool

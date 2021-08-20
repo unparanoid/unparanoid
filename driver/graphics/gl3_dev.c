@@ -295,6 +295,8 @@ static void dev_work_main_(void* udata) {
     assert(false);
     HEDLEY_UNREACHABLE();
   }
+
+  glFlush();
   assert(glGetError() == GL_NO_ERROR);
 }
 
@@ -738,6 +740,8 @@ static void dev_work_handle_pl_exec_(upd_file_t* f, gra_gl3_req_t* req) {
       }
       glViewport(0, 0, w, h);
 
+      glClearColor(0, 1, 0, 1);
+      glClear(GL_COLOR_BUFFER_BIT);
       glDrawArraysInstanced(draw->mode, 0, count, inst);
     } break;
 
