@@ -235,7 +235,7 @@ stream_lock_tensor_cb_(
 
 static
 void
-stream_tensor_data_cb_(
+stream_fetch_tensor_cb_(
   upd_req_t* req);
 
 static
@@ -362,7 +362,7 @@ static bool png_handle_(upd_req_t* req) {
   } return true;
 
   case UPD_REQ_TENSOR_META:
-  case UPD_REQ_TENSOR_DATA:
+  case UPD_REQ_TENSOR_FETCH:
     /* this req can be caused with inclusive lock,
      * so don't forget parallelism. */
     if (HEDLEY_UNLIKELY(!ctx->clean)) {
@@ -785,12 +785,12 @@ static void stream_lock_tensor_cb_(upd_file_lock_t* k) {
 
   const bool req = upd_req_with_dup(&(upd_req_t) {
       .file  = tensor,
-      .type  = UPD_REQ_TENSOR_DATA,
+      .type  = UPD_REQ_TENSOR_FETCH,
       .tensor = { .meta = {
         .type = UPD_TENSOR_U16,
       }, },
       .udata = k,
-      .cb    = stream_tensor_data_cb_,
+      .cb    = stream_fetch_tensor_cb_,
     });
   if (HEDLEY_UNLIKELY(!req)) {
     stream_error_(f, "tensor data req refusal");
@@ -803,7 +803,7 @@ ABORT:
   upd_iso_unstack(iso, k);
 }
 
-static void stream_tensor_data_cb_(upd_req_t* req) {
+static void stream_fetch_tensor_cb_(upd_req_t* req) {
   upd_file_lock_t* k      = req->udata;
   upd_file_t*      f      = k->udata;
   upd_iso_t*       iso    = f->iso;

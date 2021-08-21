@@ -110,7 +110,7 @@ static int req_(lua_State* L) {
   case UPD_REQ_DSTREAM_READ:
   case UPD_REQ_DSTREAM_WRITE:
   case UPD_REQ_TENSOR_META:
-  case UPD_REQ_TENSOR_DATA:
+  case UPD_REQ_TENSOR_FETCH:
   case UPD_REQ_TENSOR_FLUSH:
     if (HEDLEY_UNLIKELY(!k->ex)) {
       return luaL_error(L, "requires exlock");

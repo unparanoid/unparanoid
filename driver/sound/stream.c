@@ -367,7 +367,7 @@ static void mix_lock_tensor_cb_(upd_file_lock_t* k) {
 
   mix->req = (upd_req_t) {
     .file  = mix->tensor,
-    .type  = UPD_REQ_TENSOR_DATA,
+    .type  = UPD_REQ_TENSOR_FETCH,
     .udata = mix,
     .cb    = mix_fetch_tensor_cb_,
   };

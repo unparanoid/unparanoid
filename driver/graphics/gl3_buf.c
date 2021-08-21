@@ -36,7 +36,7 @@ buf_handle_meta_(
 
 static
 bool
-buf_handle_data_(
+buf_handle_fetch_(
   upd_req_t* req);
 
 static
@@ -168,8 +168,8 @@ static bool buf_handle_(upd_req_t* req) {
   case UPD_REQ_TENSOR_META:
     return buf_handle_meta_(req);
 
-  case UPD_REQ_TENSOR_DATA:
-    return buf_handle_data_(req);
+  case UPD_REQ_TENSOR_FETCH:
+    return buf_handle_fetch_(req);
 
   case UPD_REQ_TENSOR_FLUSH:
     return buf_handle_flush_(req);
@@ -199,7 +199,7 @@ static bool buf_handle_meta_(upd_req_t* req) {
   return true;
 }
 
-static bool buf_handle_data_(upd_req_t* req) {
+static bool buf_handle_fetch_(upd_req_t* req) {
   upd_file_t*    f   = req->file;
   gra_gl3_buf_t* ctx = f->ctx;
 

@@ -42,7 +42,7 @@ tex_handle_meta_(
 
 static
 bool
-tex_handle_data_(
+tex_handle_fetch_(
   upd_req_t* req);
 
 static
@@ -213,8 +213,8 @@ static bool tex_handle_(upd_req_t* req) {
   case UPD_REQ_TENSOR_META:
     return tex_handle_meta_(req);
 
-  case UPD_REQ_TENSOR_DATA:
-    return tex_handle_data_(req);
+  case UPD_REQ_TENSOR_FETCH:
+    return tex_handle_fetch_(req);
 
   case UPD_REQ_TENSOR_FLUSH:
     return tex_handle_flush_(req);
@@ -247,7 +247,7 @@ static bool tex_handle_meta_(upd_req_t* req) {
   return true;
 }
 
-static bool tex_handle_data_(upd_req_t* req) {
+static bool tex_handle_fetch_(upd_req_t* req) {
   upd_file_t*    f   = req->file;
   gra_gl3_tex_t* ctx = f->ctx;
 
