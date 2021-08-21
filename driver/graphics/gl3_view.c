@@ -75,6 +75,11 @@ view_handle_(
 
 static
 void
+view_req_update_(
+  upd_file_t* f);
+
+static
+void
 view_teardown_gl_(
   void* udata);
 
@@ -330,6 +335,7 @@ static bool view_init_(upd_file_t* f) {
   *ctx = (view_t_) {
     .thread_alive = ATOMIC_VAR_INIT(true),
     .file_alive   = ATOMIC_VAR_INIT(true),
+    .need_update  = ATOMIC_VAR_INIT(true),
     .win = {
       .dirty = ATOMIC_VAR_INIT(false),
       .w     = ATOMIC_VAR_INIT(16),
@@ -427,6 +433,7 @@ static bool view_handle_(upd_req_t* req) {
     upd_file_ref(f);
 
     atomic_store(&ctx->stream, (uintptr_t) stf);
+    view_req_update_(f);
 
     req->prog.exec = stf;
     req->cb(req);
@@ -437,6 +444,16 @@ static bool view_handle_(upd_req_t* req) {
   default:
     req->result = UPD_REQ_INVALID;
     return false;
+  }
+}
+
+static void view_req_update_(upd_file_t* f) {
+  upd_iso_t* iso = f->iso;
+  view_t_*   ctx = f->ctx;
+
+  atomic_store(&ctx->need_update, true);
+  if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, ctx->th->id))) {
+    /* ignore errors */
   }
 }
 
@@ -467,15 +484,11 @@ static void view_size_cb_(GLFWwindow* win, int w, int h) {
   if (HEDLEY_UNLIKELY(f == NULL)) {
     return;
   }
-  upd_iso_t* iso = f->iso;
-  view_t_*   ctx = f->ctx;
+  view_t_* ctx = f->ctx;
 
   atomic_store(&ctx->win.w, (uint32_t) w);
   atomic_store(&ctx->win.h, (uint32_t) h);
-  atomic_store(&ctx->need_update, true);
-  if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, ctx->th->id))) {
-    return;
-  }
+  view_req_update_(f);
 }
 
 static void view_refresh_cb_(GLFWwindow* w) {
@@ -483,13 +496,7 @@ static void view_refresh_cb_(GLFWwindow* w) {
   if (HEDLEY_UNLIKELY(f == NULL)) {
     return;
   }
-  upd_iso_t* iso = f->iso;
-  view_t_*   ctx = f->ctx;
-
-  atomic_store(&ctx->need_update, true);
-  if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, ctx->th->id))) {
-    return;
-  }
+  view_req_update_(f);
 }
 
 static void view_teardown_gl_cb_(upd_iso_t* iso, void* udata) {
@@ -566,28 +573,30 @@ static void thread_main_(void* udata) {
         thread_update_fb_(f, stf);
       }
 
-      glViewport(0, 0, ww, wh);
-
-      glClear(GL_COLOR_BUFFER_BIT);
-
       const uint32_t tw = ctx->win.tw;
       const uint32_t th = ctx->win.th;
 
       const double aspect = ctx->win.aspect;
 
+      glBindFramebuffer(GL_READ_FRAMEBUFFER,  ctx->fbo);
+      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+
+      glViewport(0, 0, ww, wh);
+      glClear(GL_COLOR_BUFFER_BIT);
+
       if (HEDLEY_UNLIKELY(stf != NULL && tw && th && aspect > 0)) {
         const uint32_t sw = aspect > 1? ww*1.    : ww*aspect;
         const uint32_t sh = aspect > 1? wh/aspect: wh*1.;
 
-        glBindFramebuffer(GL_READ_FRAMEBUFFER,  ctx->fbo);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
         glBlitFramebuffer(
           0,         0,         tw, th,
           (ww-sw)/2, (wh-sh)/2, sw, sh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
       }
+
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
       assert(glGetError() == GL_NO_ERROR);
 
+      glfwSwapBuffers(ctx->win.ptr);
       glfwMakeContextCurrent(NULL);
 
       atomic_store(&ctx->win.dirty, false);
@@ -812,6 +821,7 @@ static void stream_deinit_(upd_file_t* f) {
   upd_array_clear(&ctx->waiting);
 
   atomic_store(&tar->stream, (uintptr_t) NULL);
+  view_req_update_(ctx->target);
 
   upd_file_unref(ctx->target);
   upd_file_unwatch(&ctx->watch);
@@ -1207,6 +1217,9 @@ static void init_unref_(init_t_* ini) {
     atomic_store(&ctx->thread_alive, false);
     upd_iso_msgf(iso, LOG_PREFIX_"failed to start thread\n");
     return;
+  }
+  if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, ctx->th->id))) {
+    /* ignore error */
   }
 }
 
