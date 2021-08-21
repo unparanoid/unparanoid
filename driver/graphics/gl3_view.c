@@ -600,12 +600,16 @@ static void thread_main_(void* udata) {
       glClear(GL_COLOR_BUFFER_BIT);
 
       if (HEDLEY_UNLIKELY(stf != NULL && tw && th && aspect > 0)) {
-        const uint32_t sw = aspect > 1? ww*1.    : ww*aspect;
-        const uint32_t sh = aspect > 1? wh/aspect: wh*1.;
+        uint32_t sw = ww, sh = ww/aspect;
+        if (sw > ww || sh > wh) {
+          sw = wh*aspect, sh = wh;
+        }
 
+        const uint32_t ox = (ww-sw)/2;
+        const uint32_t oy = (wh-sh)/2;
         glBlitFramebuffer(
-          0,         0,         tw, th,
-          (ww-sw)/2, (wh-sh)/2, sw, sh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+          0,  0,  tw,    th,
+          ox, oy, ox+sw, oy+sh, GL_COLOR_BUFFER_BIT, GL_LINEAR);
       }
 
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
