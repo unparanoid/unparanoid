@@ -35,7 +35,7 @@ struct view_t_ {
   GLuint prog;
   GLuint sampler;
   GLuint fbo;
-  GLuint rb;
+  GLuint tex;
 
   atomic_bool thread_alive;
   atomic_bool file_alive;
@@ -303,14 +303,19 @@ struct frame_t_ {
   upd_file_t* tensor;
   uint64_t    time;
 
-  GLuint   tex;
-  uint32_t aw, ah;
-  uint32_t  w,  h;
+  uint32_t w, h;  /* image size */
+
+  GLuint tex;
+
+  uint8_t*          data;
+  uint8_t           ch;
+  upd_tensor_type_t type;
 
   unsigned locked  : 1;
   unsigned fetched : 1;
 
   upd_file_lock_t lock;
+  upd_req_t       req;
 };
 
 static
@@ -322,6 +327,16 @@ static
 void
 frame_lock_tensor_cb_(
   upd_file_lock_t* k);
+
+static
+void
+frame_fetch_tensor_cb_(
+  upd_req_t* req);
+
+static
+void
+frame_flush_tensor_cb_(
+  upd_req_t* req);
 
 
 static bool view_init_(upd_file_t* f) {
@@ -472,7 +487,7 @@ static void view_teardown_gl_(void* udata) {
   glDeleteVertexArrays(1, &ctx->vao);
   glDeleteSamplers(1, &ctx->sampler);
   glDeleteFramebuffers(1, &ctx->fbo);
-  glDeleteRenderbuffers(1, &ctx->rb);
+  glDeleteTextures(1, &ctx->tex);
 
   assert(glGetError() == GL_NO_ERROR);
 
@@ -630,26 +645,25 @@ static void thread_update_fb_(upd_file_t* f, upd_file_t* stf) {
   const GLuint   t   = frame->tex;
   const uint32_t tw  = frame->w;
   const uint32_t th  = frame->h;
-  const uint32_t taw = frame->aw;
-  const uint32_t tah = frame->ah;
+  const uint32_t taw = gra_next_power2(tw);
+  const uint32_t tah = gra_next_power2(th);
 
   ctx->win.tw     = tw;
   ctx->win.th     = th;
   ctx->win.aspect = tw*1./th;
 
-  glBindRenderbuffer(GL_RENDERBUFFER, ctx->rb);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA, tw, th);
-  glBindRenderbuffer(GL_RENDERBUFFER, 0);
+  glBindTexture(GL_TEXTURE_2D, ctx->tex);
+  glTexImage2D(GL_TEXTURE_2D,
+    0, GL_RGBA, taw, tah, 0, GL_RED, GL_UNSIGNED_BYTE, NULL);
 
   glBindFramebuffer(GL_FRAMEBUFFER, ctx->fbo);
-  glFramebufferRenderbuffer(
-    GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, ctx->rb);
+  glFramebufferTexture2D(
+    GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ctx->tex, 0);
   assert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
 
   glViewport(0, 0, tw, th);
 
   if (t) {
-    /* tex siZe */
     const double zx = tw*1./taw, zy = th*1./tah;
 
     glUseProgram(ctx->prog);
@@ -669,11 +683,16 @@ static void thread_update_fb_(upd_file_t* f, upd_file_t* stf) {
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindVertexArray(0);
     glUseProgram(0);
+  } else {
 
-    assert(glGetError() == GL_NO_ERROR);
+    const GLenum fmt  = gra_gl3_dim_to_color_fmt(frame->ch);
+    const GLenum type = gra_gl3_tensor_type_to_type(frame->type);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, tw, th, fmt, type, frame->data);
   }
 
+  glBindTexture(GL_TEXTURE_2D, 0);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  assert(glGetError() == GL_NO_ERROR);
 
   upd_file_begin_sync(f);
   if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->done, frame, SIZE_MAX))) {
@@ -760,6 +779,7 @@ static void thread_watch_cb_(upd_file_watch_t* w) {
   }
   if (HEDLEY_UNLIKELY(teardown)) {
     upd_file_unwatch(&ctx->watch);
+    upd_file_unref(f);
   }
 }
 
@@ -1163,9 +1183,9 @@ static void init_setup_gl_(void* udata) {
   glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   ctx->sampler = sampler;
 
-  GLuint rb;
-  glGenRenderbuffers(1, &rb);
-  ctx->rb = rb;
+  GLuint tex;
+  glGenTextures(1, &tex);
+  ctx->tex = tex;
 
   GLuint fbo;
   glGenFramebuffers(1, &fbo);
@@ -1371,11 +1391,21 @@ EXIT:
 
 
 static void frame_delete_(frame_t_* frame) {
-  upd_file_unref(frame->stream);
-
+  if (HEDLEY_UNLIKELY(frame->fetched)) {
+    frame->req = (upd_req_t) {
+      .file  = frame->tensor,
+      .type  = UPD_REQ_TENSOR_FLUSH,
+      .udata = frame,
+      .cb    = frame_flush_tensor_cb_,
+    };
+    if (HEDLEY_LIKELY(upd_req(&frame->req))) {
+      return;
+    }
+  }
   if (HEDLEY_LIKELY(frame->locked)) {
     upd_file_unlock(&frame->lock);
   }
+  upd_file_unref(frame->stream);
   upd_free(&frame);
 }
 
@@ -1394,20 +1424,64 @@ static void frame_lock_tensor_cb_(upd_file_lock_t* k) {
   if (HEDLEY_UNLIKELY(tensor->driver == &gra_gl3_tex_2d)) {
     gra_gl3_tex_t* texctx = tensor->ctx;
     frame->tex = texctx->id;
-    frame->aw  = texctx->w;
-    frame->ah  = texctx->h;
     frame->w   = texctx->w;
     frame->h   = texctx->h;
     stream_queue_(f, frame);
     return;
   }
 
-  /* TODO: instant texture */
-  upd_iso_msgf(iso, "NOT IMPLEMENTED\n");
-  goto ABORT;
-
+  frame->req = (upd_req_t) {
+    .file  = tensor,
+    .type  = UPD_REQ_TENSOR_FETCH,
+    .udata = frame,
+    .cb    = frame_fetch_tensor_cb_,
+  };
+  if (HEDLEY_UNLIKELY(!upd_req(&frame->req))) {
+    upd_iso_msgf(iso, LOG_PREFIX_"tensor fetch refusal\n");
+    goto ABORT;
+  }
   return;
 
 ABORT:
+  frame_delete_(frame);
+}
+
+static void frame_fetch_tensor_cb_(upd_req_t* req) {
+  frame_t_*   frame = req->udata;
+  upd_file_t* f     = frame->stream;
+  upd_iso_t*  iso   = f->iso;
+
+  if (HEDLEY_UNLIKELY(req->result != UPD_REQ_OK)) {
+    upd_iso_msgf(iso, LOG_PREFIX_"tensor fetch failure\n");
+    goto ABORT;
+  }
+  frame->fetched = true;
+
+  const upd_req_tensor_data_t* data = &req->tensor.data;
+  if (HEDLEY_UNLIKELY(data->meta.rank != 3)) {
+    upd_iso_msgf(iso, LOG_PREFIX_"tensor rank must be 3\n");
+    goto ABORT;
+  }
+  if (HEDLEY_UNLIKELY(data->meta.type == UPD_TENSOR_F64)) {
+    upd_iso_msgf(iso, LOG_PREFIX_"f64 tensor is not supported X(\n");
+    goto ABORT;
+  }
+
+  frame->ch   = data->meta.reso[0];
+  frame->w    = data->meta.reso[1];
+  frame->h    = data->meta.reso[2];
+  frame->type = data->meta.type;
+  frame->data = data->ptr;
+  stream_queue_(f, frame);
+  return;
+
+ABORT:
+  frame_delete_(frame);
+}
+
+static void frame_flush_tensor_cb_(upd_req_t* req) {
+  frame_t_* frame = req->udata;
+
+  frame->fetched = false;
   frame_delete_(frame);
 }

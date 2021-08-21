@@ -271,25 +271,9 @@ gra_gl3_pl_var_type_unstringify(
   size_t         len);
 
 static inline
-bool
-gra_gl3_enum_unstringify_attachment(
-  GLenum*        v,
-  const uint8_t* str,
-  size_t         len);
-
-static inline
-bool
-gra_gl3_enum_unstringify_format(
-  GLenum*        v,
-  const uint8_t* str,
-  size_t         len);
-
-static inline
-bool
-gra_gl3_enum_unstringify_draw_mode(
-  GLenum*        v,
-  const uint8_t* str,
-  size_t         len);
+const upd_driver_t*
+gra_gl3_get_driver_from_var_type(
+  gra_gl3_pl_var_type_t type);
 
 
 static inline const gra_gl3_pl_var_t* gra_gl3_pl_find_var(

@@ -297,12 +297,6 @@ gra_gl3_lock_and_fetch_with_dup(
 
 
 static inline
-const upd_driver_t*
-gra_gl3_get_driver_from_var_type(
-  gra_gl3_pl_var_type_t type);
-
-
-static inline
 void
 gra_gl3_lock_and_req_lock_cb_(
   upd_file_lock_t* k);

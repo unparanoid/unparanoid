@@ -30,8 +30,26 @@
 #include <libupd/tensor.h>
 
 
+static inline
+uint32_t
+gra_next_power2(
+  uint32_t v);
+
+
 #include "gl3_enum.h"
 #include "gl3_pl.h"
 
 #include "gl3.h"
 #include "glfw.h"
+
+
+static inline uint32_t gra_next_power2(uint32_t v) {
+  /* https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2 */
+  --v;
+  v |= v >> 1;
+  v |= v >> 2;
+  v |= v >> 4;
+  v |= v >> 8;
+  v |= v >> 16;
+  return ++v;
+}

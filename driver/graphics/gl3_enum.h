@@ -24,6 +24,13 @@ static inline uint32_t gra_gl3_color_fmt_to_dim(GLenum fmt) {
     fmt == GL_RGBA? 4: 0;
 }
 
+static inline GLenum gra_gl3_tensor_type_to_type(upd_tensor_type_t t) {
+  return
+    t == UPD_TENSOR_U8?  GL_UNSIGNED_BYTE:
+    t == UPD_TENSOR_U16? GL_UNSIGNED_SHORT:
+    t == UPD_TENSOR_F32? GL_FLOAT: 0;
+}
+
 
 static inline bool gra_gl3_enum_unstringify_attachment(
     GLenum* v, const uint8_t* str, size_t len) {
