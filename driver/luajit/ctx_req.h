@@ -92,7 +92,7 @@ static int req_(lua_State* L) {
   upd_file_t*          stf  = lua_touserdata(L, lua_upvalueindex(1));
   const upd_req_type_t type = lua_tointeger(L, lua_upvalueindex(2));
 
-  upd_file_lock_t* k = *(void**) luaL_checkudata(L, 1, "Lock");
+  upd_file_lock_t* k = *(void**) luaL_checkudata(L, 1, "std_Lock");
   if (HEDLEY_UNLIKELY(k == NULL)) {
     return luaL_error(L, "first arg must be a Lock object");
   }
@@ -161,7 +161,7 @@ static int req_(lua_State* L) {
   } break;
 
   case UPD_REQ_DIR_ADD: {
-    upd_file_t* child = luaL_checkudata(L, 2, "File");
+    upd_file_t* child = luaL_checkudata(L, 2, "std_File");
 
     size_t len;
     const char* name = luaL_checklstring(L, 3, &len);
@@ -192,7 +192,7 @@ static int req_(lua_State* L) {
     if (lua_isstring(L, 2)) {
       name = luaL_checklstring(L, 2, &len);
     } else {
-      child = luaL_checkudata(L, 2, "File");
+      child = luaL_checkudata(L, 2, "std_File");
     }
 
     req = upd_iso_stack(iso, sizeof(*req)+len);

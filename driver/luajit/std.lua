@@ -187,15 +187,8 @@ end
 
 function R_.mpk_unpack(...)
   local upk = std.msgpack.unpacker()
-  if (upk.unpack(...) or 0) == 0 then
-    return nil
-  end
-
-  local function pop(i)
-    i = i+1
-    return upk:pop(), i < upk.count and pop(i) or nil
-  end
-  return pop(0)
+  local cnt = upk:unpack(...)
+  return upk:pop(cnt)
 end
 
 

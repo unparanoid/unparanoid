@@ -192,6 +192,16 @@ EXIT:
   return 1;
 }
 
+static int file_id_(lua_State* L) {
+  upd_file_t** udata = luaL_checkudata(L, 1, "std_File");
+  if (HEDLEY_UNLIKELY(*udata == NULL)) {
+    return luaL_error(L, "file has been torn down");
+  }
+  upd_file_t* f = *udata;
+  lua_pushinteger(L, f->id);
+  return 1;
+}
+
 static int file_npath_(lua_State* L) {
   upd_file_t** udata = luaL_checkudata(L, 1, "std_File");
   if (HEDLEY_UNLIKELY(*udata == NULL)) {
@@ -236,9 +246,6 @@ static int file_teardown_(lua_State* L) {
 
 
 static int lock_teardown_(lua_State* L) {
-  if (HEDLEY_UNLIKELY(lua_gettop(L) != 0)) {
-    return luaL_error(L, "invalid args");
-  }
   upd_file_lock_t** udata = luaL_checkudata(L, 1, "std_Lock");
   if (HEDLEY_UNLIKELY(*udata == NULL)) {
     return 0;
@@ -449,6 +456,9 @@ void lj_std_register(lua_State* L, upd_iso_t* iso) {
       lua_pushboolean(L, true);
       lua_pushcclosure(L, file_lock_, 1);
       lua_setfield(L, -2, "lockEx");
+
+      lua_pushcfunction(L, file_id_);
+      lua_setfield(L, -2, "id");
 
       lua_pushcfunction(L, file_npath_);
       lua_setfield(L, -2, "npath");

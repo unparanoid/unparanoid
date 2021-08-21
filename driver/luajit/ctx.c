@@ -164,10 +164,6 @@ static int sleep_(lua_State* L) {
   upd_file_t*  f   = lua_touserdata(L, lua_upvalueindex(1));
   lj_stream_t* ctx = f->ctx;
 
-  if (HEDLEY_UNLIKELY(lua_gettop(L) != 1)) {
-    return luaL_error(L, "ctx.sleep() takes 1 arg");
-  }
-
   ctx->state = LJ_STREAM_PENDING_TIMER;
 
   const lua_Integer t = luaL_checkinteger(L, 1);
