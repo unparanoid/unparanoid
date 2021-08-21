@@ -149,8 +149,7 @@ upd_iso_t* upd_iso_new(size_t stacksz) {
       .timer = { .data = iso, },
     },
     .async = {
-      .uv   = { .data = iso, },
-      .head = ATOMIC_VAR_INIT(0),
+      .uv = { .data = iso, },
     },
   };
 
@@ -499,17 +498,10 @@ static void iso_shutdown_timer_cb_(uv_timer_t* timer) {
 static void iso_async_cb_(uv_async_t* async) {
   upd_iso_t* iso = async->data;
 
-  size_t n = atomic_load(&iso->async.head);
-  if (HEDLEY_UNLIKELY(n >= UPD_ISO_ASYNC_MAX)) {
-    n = UPD_ISO_ASYNC_MAX;
-  }
+  uv_mutex_lock(&iso->mtx);
 
-  upd_file_id_t id[UPD_ISO_ASYNC_MAX];
-  memcpy(id, iso->async.id, sizeof(id)*n);
-  atomic_store(&iso->async.head, 0);
-
-  for (size_t i = 1; i < n; ++i) {
-  }
+  const size_t         n  = iso->async.n;
+  const upd_file_id_t* id = iso->async.id;
 
   for (size_t i = 0; i < n; ++i) {
     bool dup = false;
@@ -524,6 +516,9 @@ static void iso_async_cb_(uv_async_t* async) {
       upd_file_trigger(f, UPD_FILE_ASYNC);
     }
   }
+  iso->async.n = 0;
+
+  uv_mutex_unlock(&iso->mtx);
 }
 
 

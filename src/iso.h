@@ -60,8 +60,8 @@ struct upd_iso_t {
 
   struct {
     uv_async_t    uv;
-    atomic_size_t head;
     upd_file_id_t id[UPD_ISO_ASYNC_MAX];
+    size_t        n;
   } async;
 
   struct {

@@ -107,15 +107,24 @@ static inline void upd_file_trigger(upd_file_t* f, upd_file_event_t e) {
 }
 
 static inline bool upd_file_trigger_async(upd_iso_t* iso, upd_file_id_t id) {
-  const size_t n = atomic_fetch_add(&iso->async.head, 1);
-  if (HEDLEY_UNLIKELY(n >= UPD_ISO_ASYNC_MAX)) {
-    return false;
+  bool ret = false;
+
+  uv_mutex_lock(&iso->mtx);
+
+  if (HEDLEY_UNLIKELY(iso->async.n >= UPD_ISO_ASYNC_MAX)) {
+    goto EXIT;
   }
-  iso->async.id[n] = id;
+  iso->async.id[iso->async.n++] = id;
+
   if (HEDLEY_UNLIKELY(0 > uv_async_send(&iso->async.uv))) {
-    return false;
+    --iso->async.n;
+    goto EXIT;
   }
-  return true;
+  ret = true;
+
+EXIT:
+  uv_mutex_unlock(&iso->mtx);
+  return ret;
 }
 
 static inline void upd_file_trigger_timer_cb_(uv_timer_t* timer) {
