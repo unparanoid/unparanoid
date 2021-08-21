@@ -41,8 +41,8 @@ struct view_t_ {
   atomic_bool file_alive;
   atomic_bool need_update;
 
-  unsigned gl_locked      : 1;
-  unsigned broken         : 1;
+  unsigned gl_locked : 1;
+  unsigned broken    : 1;
 
   struct {
     GLFWwindow* ptr;
@@ -382,7 +382,13 @@ static void view_deinit_(upd_file_t* f) {
     glfwSetWindowUserPointer(ctx->win.ptr, NULL);
   }
 
-  if (HEDLEY_LIKELY(ctx->prog)) {
+  const bool th_alive = atomic_load(&ctx->thread_alive);
+  if (HEDLEY_LIKELY(th_alive)) {
+    atomic_store(&ctx->file_alive, false);
+  }
+
+  /* TODO */
+  if (HEDLEY_LIKELY(false && ctx->prog)) {
     upd_file_ref(ctx->th);
     const bool start = upd_iso_start_work(
       iso, view_teardown_gl_, view_teardown_gl_cb_, ctx->th);
@@ -391,9 +397,7 @@ static void view_deinit_(upd_file_t* f) {
     }
   }
 
-  if (HEDLEY_LIKELY(atomic_load(&ctx->thread_alive))) {
-    atomic_store(&ctx->file_alive, false);
-  } else {
+  if (HEDLEY_UNLIKELY(!th_alive)) {
     upd_file_unref(ctx->th);
   }
 }
@@ -454,6 +458,8 @@ static void view_teardown_gl_(void* udata) {
   glDeleteRenderbuffers(1, &ctx->rb);
 
   assert(glGetError() == GL_NO_ERROR);
+
+  glfwMakeContextCurrent(NULL);
 }
 
 static void view_size_cb_(GLFWwindow* win, int w, int h) {
@@ -541,31 +547,27 @@ static void thread_main_(void* udata) {
 
   const upd_file_id_t id = f->id;
 
-  glfwMakeContextCurrent(ctx->win.ptr);
-  const char* err;
-  if (HEDLEY_UNLIKELY(glfwGetError(&err))) {
-    utf8ncpy(ctx->err, err, sizeof(ctx->err)-1);
-    goto EXIT;
-  }
-
   while (atomic_load(&ctx->file_alive)) {
     if (HEDLEY_UNLIKELY(atomic_load(&ctx->win.dirty))) {
+
+      glfwMakeContextCurrent(ctx->win.ptr);
+      const char* err;
+      if (HEDLEY_UNLIKELY(glfwGetError(&err))) {
+        utf8ncpy(ctx->err, err, sizeof(ctx->err)-1);
+        goto EXIT;
+      }
 
       const uint32_t ww  = atomic_load(&ctx->win.w);
       const uint32_t wh  = atomic_load(&ctx->win.h);
 
       upd_file_t* stf = (void*) atomic_load(&ctx->stream);
 
-      glDisable(GL_BLEND);
-      glDisable(GL_DEPTH_TEST);
       if (HEDLEY_LIKELY(stf != NULL)) {
         thread_update_fb_(f, stf);
       }
 
-      glBindFramebuffer(GL_FRAMEBUFFER, 0);
       glViewport(0, 0, ww, wh);
 
-      glClearColor(0, 0, 0, 0);
       glClear(GL_COLOR_BUFFER_BIT);
 
       const uint32_t tw = ctx->win.tw;
@@ -582,8 +584,11 @@ static void thread_main_(void* udata) {
         glBlitFramebuffer(
           0,         0,         tw, th,
           (ww-sw)/2, (wh-sh)/2, sw, sh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
       }
       assert(glGetError() == GL_NO_ERROR);
+
+      glfwMakeContextCurrent(NULL);
 
       atomic_store(&ctx->win.dirty, false);
       if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, id))) {
@@ -625,6 +630,7 @@ static void thread_update_fb_(upd_file_t* f, upd_file_t* stf) {
 
   glBindRenderbuffer(GL_RENDERBUFFER, ctx->rb);
   glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA, tw, th);
+  glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
   glBindFramebuffer(GL_FRAMEBUFFER, ctx->fbo);
   glFramebufferRenderbuffer(
@@ -650,8 +656,15 @@ static void thread_update_fb_(upd_file_t* f, upd_file_t* stf) {
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
+    glBindSampler(0, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindVertexArray(0);
+    glUseProgram(0);
+
     assert(glGetError() == GL_NO_ERROR);
   }
+
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
   upd_file_begin_sync(f);
   if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->done, frame, SIZE_MAX))) {
@@ -738,7 +751,6 @@ static void thread_watch_cb_(upd_file_watch_t* w) {
   }
   if (HEDLEY_UNLIKELY(teardown)) {
     upd_file_unwatch(&ctx->watch);
-    upd_file_unref(f);
   }
 }
 
@@ -1150,6 +1162,7 @@ static void init_setup_gl_(void* udata) {
   ctx->fbo = fbo;
 
   assert(glGetError() == GL_NO_ERROR);
+  glfwMakeContextCurrent(NULL);
 }
 
 static void init_unref_(init_t_* ini) {

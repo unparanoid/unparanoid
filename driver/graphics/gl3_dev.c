@@ -298,6 +298,8 @@ static void dev_work_main_(void* udata) {
 
   glFlush();
   assert(glGetError() == GL_NO_ERROR);
+
+  glfwMakeContextCurrent(NULL);
 }
 
 static void dev_work_handle_buf_alloc_(upd_file_t* f, gra_gl3_req_t* req) {
@@ -311,6 +313,8 @@ static void dev_work_handle_buf_alloc_(upd_file_t* f, gra_gl3_req_t* req) {
   const void*  data  = req->buf_alloc.data;
   const size_t size  = req->buf_alloc.size;
   glBufferData(target, size, data, usage);
+
+  glBindBuffer(target, 0);
 }
 
 static void dev_work_handle_buf_map_(upd_file_t* f, gra_gl3_req_t* req) {
@@ -320,6 +324,8 @@ static void dev_work_handle_buf_map_(upd_file_t* f, gra_gl3_req_t* req) {
 
   const GLenum mode = req->buf_map.mode;
   void* data = glMapBuffer(target, mode);
+  glBindBuffer(target, 0);
+
   if (HEDLEY_UNLIKELY(data == NULL)) {
     dev_errf_(f, "buffer map failure");
     return;
@@ -332,7 +338,11 @@ static void dev_work_handle_buf_unmap_(upd_file_t* f, gra_gl3_req_t* req) {
   const GLuint id     = req->buf_map.id;
   const GLenum target = req->buf_map.target;
   glBindBuffer(target, id);
-  if (HEDLEY_UNLIKELY(GL_FALSE == glUnmapBuffer(target))) {
+
+  const GLboolean ret = glUnmapBuffer(target);
+  glBindBuffer(target, 0);
+
+  if (HEDLEY_UNLIKELY(ret == GL_FALSE)) {
     dev_errf_(f, "buffer unmap failure");
     return;
   }
@@ -355,6 +365,9 @@ static void dev_work_handle_buf_map_pbo_(upd_file_t* f, gra_gl3_req_t* req) {
   glGetTexImage(target, 0, fmt, type, 0);
 
   void* data = glMapBuffer(GL_PIXEL_PACK_BUFFER, req->buf_map_pbo.mode);
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+  glBindTexture(target, 0);
+
   if (HEDLEY_UNLIKELY(data == NULL)) {
     dev_errf_(f, "PBO map failure");
     return;
@@ -367,7 +380,10 @@ static void dev_work_handle_buf_unmap_pbo_(upd_file_t* f, gra_gl3_req_t* req) {
   const GLuint id = req->buf_map_pbo.id;
   glBindBuffer(GL_PIXEL_PACK_BUFFER, id);
 
-  if (HEDLEY_UNLIKELY(GL_FALSE == glUnmapBuffer(GL_PIXEL_PACK_BUFFER))) {
+  const GLboolean ret = glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+  if (HEDLEY_UNLIKELY(ret == GL_FALSE)) {
     dev_errf_(f, "PBO unmap corruption");
     return;
   }
@@ -378,11 +394,14 @@ static void dev_work_handle_buf_unmap_pbo_(upd_file_t* f, gra_gl3_req_t* req) {
 
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, id);
 
+  const GLuint tex    = req->buf_map_pbo.tex;
+  const GLenum target = req->buf_map_pbo.tex_target;
+  glBindTexture(target, tex);
+
   const uint32_t w = req->buf_map_pbo.w;
   const uint32_t h = req->buf_map_pbo.h;
   const uint32_t d = req->buf_map_pbo.d;
 
-  const GLenum target = req->buf_map_pbo.tex_target;
   const GLenum fmt    = req->buf_map_pbo.fmt;
   const GLenum type   = req->buf_map_pbo.type;
   switch (target) {
@@ -396,6 +415,10 @@ static void dev_work_handle_buf_unmap_pbo_(upd_file_t* f, gra_gl3_req_t* req) {
     glTexSubImage3D(target, 0, 0, 0, 0, w, h, d, fmt, type, 0);
     break;
   }
+
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+  glBindTexture(target, 0);
+
   req->ok = true;
 }
 
@@ -428,6 +451,9 @@ static void dev_work_handle_tex_alloc_(upd_file_t* f, gra_gl3_req_t* req) {
     glTexImage3D(target, 0, GL_RGBA, w, h, d, 0, fmt, type, data);
     break;
   }
+
+  glBindTexture(target, 0);
+
   req->ok = true;
 }
 
@@ -517,6 +543,8 @@ static void dev_work_handle_pl_link_(upd_file_t* f, gra_gl3_req_t* req) {
     }
 
     const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
     if (HEDLEY_UNLIKELY(status != GL_FRAMEBUFFER_COMPLETE)) {
       dev_errf_(f, "fb status invalid");
       continue;
@@ -579,13 +607,16 @@ static void dev_work_handle_pl_link_(upd_file_t* f, gra_gl3_req_t* req) {
       }
 
       glBindBuffer(GL_ARRAY_BUFFER, buf);
+
       glEnableVertexAttribArray(j);
       glVertexAttribPointer(
         j, a->dim, a->type, GL_FALSE, stride, (GLvoid*) offset);
       glVertexAttribDivisor(j, divisor);
 
+      glBindBuffer(GL_ARRAY_BUFFER, 0);
       assert(glGetError() == GL_NO_ERROR);
     }
+    glBindVertexArray(0);
   }
 
   req->ok = !ctx->error[0];
@@ -646,9 +677,6 @@ static void dev_work_handle_pl_exec_(upd_file_t* f, gra_gl3_req_t* req) {
   const gra_gl3_pl_t* pl   = req->pl.ptr;
   const uint8_t*      vbuf = req->pl.varbuf;
 
-  glEnable(GL_BLEND);
-  glEnable(GL_DEPTH_TEST);
-
   for (size_t i = 0; i < pl->stepcnt; ++i) {
     const gra_gl3_step_t* step = &pl->step[i];
     switch (step->type) {
@@ -674,9 +702,6 @@ static void dev_work_handle_pl_exec_(upd_file_t* f, gra_gl3_req_t* req) {
 
       const GLuint fbid = *(GLuint*) (vbuf + fb->var->offset);
       const GLuint vaid = *(GLuint*) (vbuf + va->var->offset);
-
-      glBindFramebuffer(GL_FRAMEBUFFER, fbid);
-      glBindVertexArray(vaid);
 
       for (size_t j = 0; j < GRA_GL3_STEP_DRAW_UNI_MAX; ++j) {
         const gra_gl3_pl_value_t* val = &draw->uni[j];
@@ -706,6 +731,7 @@ static void dev_work_handle_pl_exec_(upd_file_t* f, gra_gl3_req_t* req) {
       const bool countvalid =
         gra_gl3_pl_get_value(&draw->count, vbuf, &count, NULL);
       if (HEDLEY_UNLIKELY(!countvalid || count < 0)) {
+        glUseProgram(0);
         dev_errf_(f, "invalid draw count");
         return;
       }
@@ -714,9 +740,27 @@ static void dev_work_handle_pl_exec_(upd_file_t* f, gra_gl3_req_t* req) {
       const bool instvalid =
         gra_gl3_pl_get_value(&draw->instance, vbuf, &inst, NULL);
       if (HEDLEY_UNLIKELY(!instvalid || inst < 0)) {
+        glUseProgram(0);
         dev_errf_(f, "invalid draw instance");
         return;
       }
+
+      intmax_t w, h;
+      const bool vpvalid =
+        gra_gl3_pl_get_value(&draw->viewport[0], vbuf, &w, NULL) &&
+        gra_gl3_pl_get_value(&draw->viewport[1], vbuf, &h, NULL) &&
+        w > 0 && h > 0;
+      if (HEDLEY_UNLIKELY(!vpvalid)) {
+        glUseProgram(0);
+        dev_errf_(f, "invalid viewport");
+        return;
+      }
+
+      /* set parameters */
+      glViewport(0, 0, w, h);
+
+      glEnable(GL_BLEND);
+      glEnable(GL_DEPTH_TEST);
 
       const GLboolean r = draw->blend.mask.r? GL_TRUE: GL_FALSE;
       const GLboolean g = draw->blend.mask.g? GL_TRUE: GL_FALSE;
@@ -729,20 +773,27 @@ static void dev_work_handle_pl_exec_(upd_file_t* f, gra_gl3_req_t* req) {
       glDepthMask(draw->depth.mask? GL_TRUE: GL_FALSE);
       glDepthFunc(draw->depth.func);
 
-      intmax_t w, h;
-      const bool vpvalid =
-        gra_gl3_pl_get_value(&draw->viewport[0], vbuf, &w, NULL) &&
-        gra_gl3_pl_get_value(&draw->viewport[1], vbuf, &h, NULL) &&
-        w > 0 && h > 0;
-      if (HEDLEY_UNLIKELY(!vpvalid)) {
-        dev_errf_(f, "invalid viewport");
-        return;
-      }
-      glViewport(0, 0, w, h);
+      glBindFramebuffer(GL_FRAMEBUFFER, fbid);
+      glBindVertexArray(vaid);
 
-      glClearColor(0, 1, 0, 1);
-      glClear(GL_COLOR_BUFFER_BIT);
+      /* draw */
       glDrawArraysInstanced(draw->mode, 0, count, inst);
+
+      /* restore */
+      glBindVertexArray(0);
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+      glDepthFunc(GL_LESS);
+      glDepthMask(GL_TRUE);
+
+      glBlendFunc(GL_ONE, GL_ZERO);
+      glBlendEquation(GL_FUNC_ADD);
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+      glDisable(GL_BLEND);
+      glDisable(GL_DEPTH_TEST);
+
+      glUseProgram(0);
     } break;
 
     case GRA_GL3_STEP_BLIT:

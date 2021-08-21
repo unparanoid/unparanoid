@@ -276,6 +276,7 @@ static bool thread_handle_req_(upd_file_t* f, gra_glfw_req_t* req) {
       thread_errf_(f, "glewInit error");
       return false;
     }
+    glfwMakeContextCurrent(NULL);
     return true;
 
   case GRA_GLFW_REQ_SUB_INIT: {
