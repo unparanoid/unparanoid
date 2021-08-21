@@ -23,12 +23,12 @@ if(IS_BIG_ENDIAN)
   message(ERROR "big endian is not supported")
 endif()
 
-if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
+if (CMAKE_COMPILER_IS_GNUCC)
   set(UPD_C_FLAGS -Wall -Wextra -Werror -pedantic -Wno-missing-field-initializers)
-elseif (CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+elseif (MSVC)
   set(UPD_C_FLAGS /W2 /std:c11 /Zc:preprocessor-)
 else()
-  message(ERROR "unknown compiler")
+  message(ERROR "unknown environment")
 endif()
 
 

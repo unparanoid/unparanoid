@@ -1,4 +1,4 @@
-find_program(XXD xxd)
+find_program(XXD xxd REQUIRED)
 
 set(XXD_PWD "${CMAKE_CURRENT_SOURCE_DIR}")
 set(XXD_SRC "${CMAKE_CURRENT_SOURCE_DIR}/std.lua")

@@ -1,4 +1,4 @@
-find_program(XXD xxd)
+find_program(XXD xxd REQUIRED)
 
 include(FindOpenGL)
 if (NOT OPENGL_FOUND)

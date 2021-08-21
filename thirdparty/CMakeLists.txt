@@ -40,9 +40,8 @@ add_subdirectory(cwalk)
 
 # ---- additional headers for MSVC
 #   - https://github.com/cdschreiber/c11
-#   - https://www.khronos.org/registry/OpenGL/api/GL/glext.h
 add_library(for-msvc INTERFACE)
-if (CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+if (MSVC)
   target_sources(for-msvc
     INTERFACE
       for-msvc/stdatomic.h
@@ -82,30 +81,46 @@ endif()
 function (include_luajit)
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/luajit" DESTINATION .)
 
-  if (WIN32)
-    set(LUAJIT_TYPE  STATIC)
-    set(LUAJIT_LIB   lua51.lib)
+  set(src "${CMAKE_CURRENT_BINARY_DIR}/luajit/src")
+  if (UNIX)
+    find_program(MAKE make REQUIRED)
+
+    set(lib "${src}/libluajit.a")
     add_custom_target(luajit-build
+      COMMAND ${MAKE} -j BUILDMODE=static CFLAGS=-fPIC
+
+      WORKING_DIRECTORY luajit
+      VERBATIM
+    )
+
+  elseif (MINGW)
+    find_program(MAKE mingw32-make REQUIRED)
+
+    set(lib "${src}/libluajit.a")
+    add_custom_target(luajit-build
+      COMMAND ${MAKE} -j BUILDMODE=static CFLAGS=-fPIC
+
       WORKING_DIRECTORY luajit/src
-      COMMAND           msvcbuild.bat static
+      VERBATIM
+    )
+
+  elseif (MSVC)
+    set(lib "${src}/lua51.lib")
+    add_custom_target(luajit-build
+      COMMAND msvcbuild.bat static
+
+      WORKING_DIRECTORY luajit/src
       VERBATIM
     )
 
   else()
-    set(LUAJIT_TYPE STATIC)
-    set(LUAJIT_LIB  libluajit.a)
-    add_custom_target(luajit-build
-      WORKING_DIRECTORY luajit
-      COMMAND           make -j BUILDMODE=static CFLAGS=-fPIC
-      VERBATIM
-    )
+    message(ERROR "unknown environment")
   endif()
 
-  add_library(luajit-imported ${LUAJIT_TYPE} IMPORTED)
+  add_library(luajit-imported STATIC IMPORTED)
   set_target_properties(luajit-imported PROPERTIES
-    IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/${LUAJIT_LIB}"
-    IMPORTED_IMPLIB   "${CMAKE_CURRENT_BINARY_DIR}/luajit/src/${LUAJIT_IMPLIB}"
-# INTERFACE_INCLUDE_DIRECTORIES doesn't work well ;(
+    IMPORTED_LOCATION "${lib}"
+#   INTERFACE_INCLUDE_DIRECTORIES doesn't work well ;(
   )
   add_dependencies(luajit-imported luajit-build)
 
@@ -114,7 +129,7 @@ function (include_luajit)
     INTERFACE luajit-imported $<$<PLATFORM_ID:Linux>:m>
   )
   target_include_directories(luajit SYSTEM BEFORE
-    INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/luajit/src"
+    INTERFACE "${src}"
   )
 endfunction()
 include_luajit()
