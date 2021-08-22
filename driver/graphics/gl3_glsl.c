@@ -426,9 +426,12 @@ static void glsl_read_bin_cb_(upd_req_t* req) {
     goto ABORT;
   }
 
-  /* GL device driver has been locked since SHADER_RENEW req */
+  upd_file_begin_sync(ctx->gl);
+
   const char* err = NULL;
   if (HEDLEY_UNLIKELY(!gra_gl3_dev_make_ctx_current(ctx->gl, &err))) {
+    upd_file_end_sync(ctx->gl);
+
     upd_file_unlock(k);
     upd_iso_unstack(iso, k);
 
@@ -450,6 +453,9 @@ static void glsl_read_bin_cb_(upd_req_t* req) {
 
   greq->shader.id     = ctx->id;
   greq->shader.target = ctx->target;
+
+  glfwMakeContextCurrent(NULL);
+  upd_file_end_sync(ctx->gl);
 
   if (HEDLEY_UNLIKELY(!gra_gl3_req(greq))) {
     glsl_logf_(f, "GL3_REQ_SHADER_COMPILE failure");

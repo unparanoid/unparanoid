@@ -29,6 +29,9 @@ dev_errf_(
 const upd_driver_t gra_gl3_dev = {
   .name   = (uint8_t*) "upd.graphics.gl3.dev",
   .cats   = (upd_req_cat_t[]) {0},
+  .flags  = {
+    .mutex = true,
+  },
   .init   = dev_init_,
   .deinit = dev_deinit_,
   .handle = dev_handle_,
@@ -207,9 +210,12 @@ static void dev_work_main_(void* udata) {
 
   req->ok = false;
 
+  upd_file_begin_sync(f);
+
   const char* err = NULL;
   if (HEDLEY_UNLIKELY(!gra_gl3_dev_make_ctx_current(f, &err))) {
     dev_errf_(f, "GL ctx activation error: %s", err);
+    upd_file_end_sync(f);
     return;
   }
 
@@ -300,6 +306,7 @@ static void dev_work_main_(void* udata) {
   assert(glGetError() == GL_NO_ERROR);
 
   glfwMakeContextCurrent(NULL);
+  upd_file_end_sync(f);
 }
 
 static void dev_work_handle_buf_alloc_(upd_file_t* f, gra_gl3_req_t* req) {

@@ -39,10 +39,8 @@ struct view_t_ {
 
   atomic_bool thread_alive;
   atomic_bool file_alive;
-  atomic_bool need_update;
 
-  unsigned gl_locked : 1;
-  unsigned broken    : 1;
+  unsigned broken : 1;
 
   struct {
     GLFWwindow* ptr;
@@ -113,8 +111,9 @@ const upd_driver_t gra_gl3_view = {
 };
 
 static const gra_glfw_win_cb_t win_cb_ = {
-  .size    = view_size_cb_,
-  .refresh = view_refresh_cb_,
+  .size            = view_size_cb_,
+  .framebuffersize = view_size_cb_,
+  .refresh         = view_refresh_cb_,
 };
 
 
@@ -148,11 +147,6 @@ static
 void
 thread_watch_cb_(
   upd_file_watch_t* w);
-
-static
-void
-thread_lock_gl_cb_(
-  upd_file_lock_t* k);
 
 static
 void
@@ -350,7 +344,6 @@ static bool view_init_(upd_file_t* f) {
   *ctx = (view_t_) {
     .thread_alive = ATOMIC_VAR_INIT(true),
     .file_alive   = ATOMIC_VAR_INIT(true),
-    .need_update  = ATOMIC_VAR_INIT(true),
     .win = {
       .dirty = ATOMIC_VAR_INIT(false),
       .w     = ATOMIC_VAR_INIT(16),
@@ -408,8 +401,7 @@ static void view_deinit_(upd_file_t* f) {
     atomic_store(&ctx->file_alive, false);
   }
 
-  /* TODO */
-  if (HEDLEY_LIKELY(false && ctx->prog)) {
+  if (HEDLEY_LIKELY(ctx->prog)) {
     upd_file_ref(ctx->th);
     const bool start = upd_iso_start_work(
       iso, view_teardown_gl_, view_teardown_gl_cb_, ctx->th);
@@ -466,7 +458,7 @@ static void view_req_update_(upd_file_t* f) {
   upd_iso_t* iso = f->iso;
   view_t_*   ctx = f->ctx;
 
-  atomic_store(&ctx->need_update, true);
+  atomic_store(&ctx->win.dirty, true);
   if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, ctx->th->id))) {
     /* ignore errors */
   }
@@ -476,9 +468,13 @@ static void view_teardown_gl_(void* udata) {
   upd_file_t* f   = udata;
   view_t_*    ctx = f->ctx;
 
+  upd_file_begin_sync(ctx->gl);
+
   glfwMakeContextCurrent(ctx->win.ptr);
   const char* err;
   if (HEDLEY_UNLIKELY(glfwGetError(&err))) {
+    upd_file_end_sync(ctx->gl);
+
     utf8ncpy(ctx->err, err, sizeof(ctx->err)-1);
     return;
   }
@@ -492,6 +488,7 @@ static void view_teardown_gl_(void* udata) {
   assert(glGetError() == GL_NO_ERROR);
 
   glfwMakeContextCurrent(NULL);
+  upd_file_end_sync(ctx->gl);
 }
 
 static void view_size_cb_(GLFWwindow* win, int w, int h) {
@@ -572,11 +569,12 @@ static void thread_main_(void* udata) {
   while (atomic_load(&ctx->file_alive)) {
     if (HEDLEY_UNLIKELY(atomic_load(&ctx->win.dirty))) {
 
+      upd_file_begin_sync(ctx->gl);
       glfwMakeContextCurrent(ctx->win.ptr);
       const char* err;
       if (HEDLEY_UNLIKELY(glfwGetError(&err))) {
-        utf8ncpy(ctx->err, err, sizeof(ctx->err)-1);
-        goto EXIT;
+        upd_file_end_sync(ctx->gl);
+        continue;
       }
 
       const uint32_t ww  = atomic_load(&ctx->win.w);
@@ -617,6 +615,7 @@ static void thread_main_(void* udata) {
 
       glfwSwapBuffers(ctx->win.ptr);
       glfwMakeContextCurrent(NULL);
+      upd_file_end_sync(ctx->gl);
 
       atomic_store(&ctx->win.dirty, false);
       if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, id))) {
@@ -625,10 +624,8 @@ static void thread_main_(void* udata) {
           "this may cause OpenGL device get stuck X(\n");
       }
     }
-    glfwSwapBuffers(ctx->win.ptr);
   }
 
-EXIT:
   atomic_store(&ctx->thread_alive, false);
   if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, id))) {
     fprintf(stderr, LOG_PREFIX_
@@ -707,6 +704,7 @@ static void thread_update_fb_(upd_file_t* f, upd_file_t* stf) {
 
 static void thread_watch_cb_(upd_file_watch_t* w) {
   upd_file_t* f   = w->udata;
+  upd_iso_t*  iso = f->iso;
   view_t_*    ctx = f->ctx;
 
   if (HEDLEY_UNLIKELY(w->event != UPD_FILE_ASYNC)) {
@@ -722,78 +720,14 @@ static void thread_watch_cb_(upd_file_watch_t* w) {
   }
   upd_file_end_sync(f);
 
-  const bool th_alive    = atomic_load(&ctx->thread_alive);
-  const bool need_update = atomic_load(&ctx->need_update);
-
-  const uint8_t state =
-    (!!th_alive) << 2 | (!!need_update) << 1 | (!!ctx->gl_locked) << 0;
-
-  bool lock = false, unlock = false, teardown= false;
-  switch (state) {
-  case 0x00:  /* 000 */
-    teardown = true;
-    break;
-
-  case 0x01:  /* 001 */
-    unlock   = true;
-    teardown = true;
-    break;
-
-  case 0x02:  /* 010 */
-    teardown = true;
-    break;
-
-  case 0x03:  /* 011 */
-    unlock   = true;
-    teardown = true;
-    break;
-
-  case 0x04:  /* 100 */
-    assert(false);
-
-  case 0x05:  /* 101 */
-    unlock = true;
-    break;
-
-  case 0x06:  /* 110 */
-    lock = true;
-    break;
-
-  case 0x07:  /* 111 */
-    atomic_store(&ctx->win.dirty,   true);
-    atomic_store(&ctx->need_update, false);
-    break;
-  }
-
-  if (HEDLEY_UNLIKELY(lock)) {
-    atomic_store(&ctx->need_update, false);
-    ctx->gl_lock = (upd_file_lock_t) {
-      .file  = ctx->gl,
-      .ex    = true,
-      .udata = f,
-      .cb    = thread_lock_gl_cb_,
-    };
-    if (HEDLEY_UNLIKELY(!upd_file_lock(&ctx->gl_lock))) {
-      /* ignore errors */
+  if (HEDLEY_UNLIKELY(!atomic_load(&ctx->thread_alive))) {
+    if (ctx->err[0]) {
+      upd_iso_msgf(iso, "view thread error: %s\n", ctx->err);
+    } else {
+      upd_iso_msgf(iso, "view thread exited\n");
     }
-  }
-  if (HEDLEY_UNLIKELY(unlock)) {
-    ctx->gl_locked = false;
-    upd_file_unlock(&ctx->gl_lock);
-  }
-  if (HEDLEY_UNLIKELY(teardown)) {
     upd_file_unwatch(&ctx->watch);
     upd_file_unref(f);
-  }
-}
-
-static void thread_lock_gl_cb_(upd_file_lock_t* k) {
-  upd_file_t* f   = k->udata;
-  view_t_*    ctx = f->ctx;
-
-  if (HEDLEY_LIKELY(k->ok)) {
-    ctx->gl_locked = true;
-    atomic_store(&ctx->win.dirty, true);
   }
 }
 
@@ -1093,7 +1027,6 @@ static void stream_watch_cb_(upd_file_watch_t* w) {
   upd_file_t* f   = w->udata;
   upd_iso_t*  iso = f->iso;
   stream_t_*  ctx = f->ctx;
-  view_t_*    tar = ctx->target->ctx;
 
   if (HEDLEY_UNLIKELY(w->event != UPD_FILE_TIMER)) {
     return;
@@ -1121,10 +1054,7 @@ static void stream_watch_cb_(upd_file_watch_t* w) {
     frame_delete_(drop);
   }
 
-  atomic_store(&tar->need_update, true);
-  if (HEDLEY_UNLIKELY(!upd_file_trigger_async(iso, tar->th->id))) {
-    return;
-  }
+  view_req_update_(ctx->target);
 
   if (HEDLEY_LIKELY(ctx->waiting.n)) {
     frame_t_* next = ctx->waiting.p[0];
@@ -1141,9 +1071,12 @@ static void init_setup_gl_(void* udata) {
   upd_file_t* f   = ini->file;
   view_t_*    ctx = f->ctx;
 
+  upd_file_begin_sync(ctx->gl);
   glfwMakeContextCurrent(ctx->win.ptr);
   const char* err;
   if (HEDLEY_UNLIKELY(glfwGetError(&err))) {
+    upd_file_end_sync(ctx->gl);
+
     utf8ncpy(ctx->err, err, sizeof(ctx->err)-1);
     return;
   }
@@ -1197,6 +1130,7 @@ static void init_setup_gl_(void* udata) {
 
   assert(glGetError() == GL_NO_ERROR);
   glfwMakeContextCurrent(NULL);
+  upd_file_end_sync(ctx->gl);
 }
 
 static void init_unref_(init_t_* ini) {

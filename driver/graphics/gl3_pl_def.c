@@ -30,7 +30,6 @@ struct parse_t_ {
   (*cb)(
     parse_t_* par);
 
-  jmp_buf     jmp;
   const char* error;
   size_t      depth;
   size_t      loc[PARSE_DEPTH_MAX_];
@@ -137,32 +136,37 @@ parse_stack_(
   parse_t_* par,
   size_t    index);
 
+HEDLEY_WARN_UNUSED_RESULT
 static
-void
+bool
 parse_in_(
   parse_t_*                 par,
   const msgpack_object_map* src);
 
+HEDLEY_WARN_UNUSED_RESULT
 static
-void
+bool
 parse_fb_(
   parse_t_*                 par,
   const msgpack_object_map* src);
 
+HEDLEY_WARN_UNUSED_RESULT
 static
-void
+bool
 parse_va_(
   parse_t_*                 par,
   const msgpack_object_map* src);
 
+HEDLEY_WARN_UNUSED_RESULT
 static
-void
+bool
 parse_step_(
   parse_t_*                   par,
   const msgpack_object_array* src);
 
+HEDLEY_WARN_UNUSED_RESULT
 static
-void
+bool
 parse_value_(
   parse_t_*             par,
   gra_gl3_pl_value_t*   v,
@@ -517,21 +521,21 @@ static gra_gl3_pl_var_t* parse_var_name_(
 
   if (HEDLEY_UNLIKELY(src->type != MSGPACK_OBJECT_STR)) {
     par->error = "found non-string var name";
-    longjmp(par->jmp, 1);
+    return NULL;
   }
 
   const msgpack_object_str* k = &src->via.str;
   if (HEDLEY_UNLIKELY(k->size >= GRA_GL3_PL_IDENT_MAX)) {
     par->error = "too long var name";
-    longjmp(par->jmp, 1);
+    return NULL;
   }
   if (HEDLEY_UNLIKELY(k->size == 0)) {
     par->error = "empty var name";
-    longjmp(par->jmp, 1);
+    return NULL;
   }
   if (HEDLEY_UNLIKELY(gra_gl3_pl_find_var(pl, (uint8_t*) k->ptr, k->size))) {
     par->error = "var name duplicated";
-    longjmp(par->jmp, 1);
+    return NULL;
   }
 
   gra_gl3_pl_var_t* var = &pl->var[pl->varcnt++];
@@ -540,7 +544,7 @@ static gra_gl3_pl_var_t* parse_var_name_(
   return var;
 }
 
-static void parse_in_(parse_t_* par, const msgpack_object_map* src) {
+static bool parse_in_(parse_t_* par, const msgpack_object_map* src) {
   upd_file_t*       f   = par->def;
   gra_gl3_pl_def_t* ctx = f->ctx;
   gra_gl3_pl_t*     pl  = ctx->pl;
@@ -552,10 +556,13 @@ static void parse_in_(parse_t_* par, const msgpack_object_map* src) {
     const msgpack_object_kv* kv = &src->ptr[i];
     if (HEDLEY_UNLIKELY(kv->val.type != MSGPACK_OBJECT_STR)) {
       par->error = "expected string";
-      longjmp(par->jmp, 1);
+      return false;
     }
 
     gra_gl3_pl_var_t* var = parse_var_name_(par, &kv->key);
+    if (HEDLEY_UNLIKELY(var == NULL)) {
+      return false;
+    }
     var->in     = true;
     var->index  = i;
     var->offset = pl->varbuflen;
@@ -564,16 +571,17 @@ static void parse_in_(parse_t_* par, const msgpack_object_map* src) {
     var->type = gra_gl3_pl_var_type_unstringify((uint8_t*) v->ptr, v->size);
     if (HEDLEY_UNLIKELY(var->type == GRA_GL3_PL_VAR_NONE)) {
       par->error = "invalid var type specification";
-      longjmp(par->jmp, 1);
+      return false;
     }
 
     pl->varbuflen += gra_gl3_pl_sizeof_var(var->type);
 
     --par->depth;
   }
+  return true;
 }
 
-static void parse_out_(parse_t_* par, const msgpack_object_map* src) {
+static bool parse_out_(parse_t_* par, const msgpack_object_map* src) {
   upd_file_t*       f   = par->def;
   gra_gl3_pl_def_t* ctx = f->ctx;
   gra_gl3_pl_t*     pl  = ctx->pl;
@@ -585,10 +593,13 @@ static void parse_out_(parse_t_* par, const msgpack_object_map* src) {
     const msgpack_object_kv* kv = &src->ptr[i];
     if (HEDLEY_UNLIKELY(kv->val.type != MSGPACK_OBJECT_ARRAY)) {
       par->error = "expected array";
-      longjmp(par->jmp, 1);
+      return false;
     }
 
     gra_gl3_pl_var_t* var = parse_var_name_(par, &kv->key);
+    if (HEDLEY_UNLIKELY(var == NULL)) {
+      return false;
+    }
     var->index  = pl->outcnt;
     var->offset = pl->varbuflen;
 
@@ -600,7 +611,7 @@ static void parse_out_(parse_t_* par, const msgpack_object_map* src) {
     const msgpack_object_array* v = &kv->val.via.array;
     if (HEDLEY_UNLIKELY(v->size < 2 || 4 < v->size)) {
       par->error = "texture dimension must be 2~4";
-      longjmp(par->jmp, 1);
+      return false;
     }
 
     var->type =
@@ -615,13 +626,15 @@ static void parse_out_(parse_t_* par, const msgpack_object_map* src) {
       parse_stack_(par, j);
 
       gra_gl3_pl_value_t* val = &out->reso[j];
-      parse_value_(par, val, &v->ptr[j]);
+      if (HEDLEY_UNLIKELY(!parse_value_(par, val, &v->ptr[j]))) {
+        return false;
+      }
 
       const gra_gl3_pl_var_type_t t =
         gra_gl3_pl_get_value_entity_type(val);
       if (HEDLEY_UNLIKELY(t != GRA_GL3_PL_VAR_INTEGER)) {
         par->error = "texture resolution must be integer";
-        longjmp(par->jmp, 1);
+        return false;
       }
 
       --par->depth;
@@ -629,9 +642,10 @@ static void parse_out_(parse_t_* par, const msgpack_object_map* src) {
 
     --par->depth;
   }
+  return true;
 }
 
-static void parse_fb_(parse_t_* par, const msgpack_object_map* src) {
+static bool parse_fb_(parse_t_* par, const msgpack_object_map* src) {
   upd_file_t*       f   = par->def;
   gra_gl3_pl_def_t* ctx = f->ctx;
   gra_gl3_pl_t*     pl  = ctx->pl;
@@ -643,10 +657,13 @@ static void parse_fb_(parse_t_* par, const msgpack_object_map* src) {
     const msgpack_object_kv* kv = &src->ptr[i];
     if (HEDLEY_UNLIKELY(kv->val.type != MSGPACK_OBJECT_MAP)) {
       par->error = "expected map";
-      longjmp(par->jmp, 1);
+      return false;
     }
 
     gra_gl3_pl_var_t* var = parse_var_name_(par, &kv->key);
+    if (HEDLEY_UNLIKELY(var == NULL)) {
+      return false;
+    }
     var->type   = GRA_GL3_PL_VAR_FB;
     var->index  = pl->fbcnt;
     var->offset = pl->varbuflen;
@@ -665,11 +682,11 @@ static void parse_fb_(parse_t_* par, const msgpack_object_map* src) {
       const msgpack_object_kv* kv = &v->ptr[j];
       if (HEDLEY_UNLIKELY(kv->key.type != MSGPACK_OBJECT_STR)) {
         par->error = "non-string key found";
-        longjmp(par->jmp, 1);
+        return false;
       }
       if (HEDLEY_UNLIKELY(kv->val.type != MSGPACK_OBJECT_STR)) {
         par->error = "string expected";
-        longjmp(par->jmp, 1);
+        return false;
       }
 
       const msgpack_object_str* k2 = &v->ptr[i].key.via.str;
@@ -681,20 +698,20 @@ static void parse_fb_(parse_t_* par, const msgpack_object_map* src) {
         &a->type, (uint8_t*) k2->ptr, k2->size);
       if (HEDLEY_UNLIKELY(!typevalid)) {
         par->error = "unknown attachment type";
-        longjmp(par->jmp, 1);
+        return false;
       }
 
       a->var = gra_gl3_pl_find_var(pl, (uint8_t*) v2->ptr, v2->size);
       if (HEDLEY_UNLIKELY(a->var == NULL)) {
         par->error = "references unknown renderbuffer or texture";
-        longjmp(par->jmp, 1);
+        return false;
       }
       const bool vtypevalid =
         a->var->type == GRA_GL3_PL_VAR_RB ||
         a->var->type == GRA_GL3_PL_VAR_TEX2;
       if (HEDLEY_UNLIKELY(!vtypevalid)) {
         par->error = "references var with incompatible type";
-        longjmp(par->jmp, 1);
+        return false;
       }
 
       --par->depth;
@@ -702,9 +719,10 @@ static void parse_fb_(parse_t_* par, const msgpack_object_map* src) {
 
     --par->depth;
   }
+  return true;
 }
 
-static void parse_va_(parse_t_* par, const msgpack_object_map* src) {
+static bool parse_va_(parse_t_* par, const msgpack_object_map* src) {
   upd_file_t*       f   = par->def;
   gra_gl3_pl_def_t* ctx = f->ctx;
   gra_gl3_pl_t*     pl  = ctx->pl;
@@ -717,10 +735,13 @@ static void parse_va_(parse_t_* par, const msgpack_object_map* src) {
 
     if (HEDLEY_UNLIKELY(kv->val.type != MSGPACK_OBJECT_MAP)) {
       par->error = "expected map";
-      longjmp(par->jmp, 1);
+      return false;
     }
 
     gra_gl3_pl_var_t* var = parse_var_name_(par, &kv->key);
+    if (HEDLEY_UNLIKELY(var == NULL)) {
+      return false;
+    }
     var->type   = GRA_GL3_PL_VAR_VA;
     var->index  = pl->vacnt;
     var->offset = pl->varbuflen;
@@ -739,16 +760,16 @@ static void parse_va_(parse_t_* par, const msgpack_object_map* src) {
       const msgpack_object_kv* kv = &v->ptr[j];
       if (HEDLEY_UNLIKELY(kv->key.type != MSGPACK_OBJECT_POSITIVE_INTEGER)) {
         par->error = "key must be positive integer";
-        longjmp(par->jmp, 1);
+        return false;
       }
       if (HEDLEY_UNLIKELY(kv->val.type != MSGPACK_OBJECT_MAP)) {
         par->error = "expected a map value";
-        longjmp(par->jmp, 1);
+        return false;
       }
       const size_t index = kv->key.via.u64;
       if (HEDLEY_UNLIKELY(index >= GRA_GL3_STEP_DRAW_IN_MAX)) {
         par->error = "vertex array index is too large";
-        longjmp(par->jmp, 1);
+        return false;
       }
 
       gra_gl3_pl_va_attach_t* a = &va->attach[index];
@@ -771,34 +792,34 @@ static void parse_va_(parse_t_* par, const msgpack_object_map* src) {
           });
       if (HEDLEY_UNLIKELY(invalid)) {
         par->error = "invalid vertexarray declaration";
-        longjmp(par->jmp, 1);
+        return false;
       }
 
       if (HEDLEY_UNLIKELY(dim == 0 || 4 < dim)) {
         par->error = "buffer dim must be 0~4";
-        longjmp(par->jmp, 1);
+        return false;
       }
       a->dim = dim;
 
       a->buf = gra_gl3_pl_find_var(pl, (uint8_t*) sbuf->ptr, sbuf->size);
       if (HEDLEY_UNLIKELY(a->buf == NULL)) {
         par->error = "refers unknown buffer";
-        longjmp(par->jmp, 1);
+        return false;
       }
       if (HEDLEY_UNLIKELY(a->buf->type != GRA_GL3_PL_VAR_BUF_ARRAY)) {
         par->error = "refers var with incompatible type as buffer";
-        longjmp(par->jmp, 1);
+        return false;
       }
 
       if (HEDLEY_UNLIKELY(type == NULL)) {
         par->error = "type is not specified";
-        longjmp(par->jmp, 1);
+        return false;
       }
       const bool typevalid = gra_gl3_enum_unstringify_buf_type(
         &a->type, (uint8_t*) type->ptr, type->size);
       if (HEDLEY_UNLIKELY(!typevalid)) {
         par->error = "invalid type";
-        longjmp(par->jmp, 1);
+        return false;
       }
 
       a->stride = (gra_gl3_pl_value_t) {
@@ -806,12 +827,14 @@ static void parse_va_(parse_t_* par, const msgpack_object_map* src) {
         .i    = 0,
       };
       if (HEDLEY_UNLIKELY(stride)) {
-        parse_value_(par, &a->stride, stride);
+        if (HEDLEY_UNLIKELY(!parse_value_(par, &a->stride, stride))) {
+          return false;
+        }
         const gra_gl3_pl_var_type_t t =
           gra_gl3_pl_get_value_entity_type(&a->stride);
         if (HEDLEY_UNLIKELY(t != GRA_GL3_PL_VAR_INTEGER)) {
           par->error = "'stride' must be integer value";
-          longjmp(par->jmp, 1);
+          return false;
         }
       }
 
@@ -820,12 +843,14 @@ static void parse_va_(parse_t_* par, const msgpack_object_map* src) {
         .i    = 0,
       };
       if (HEDLEY_UNLIKELY(offset)) {
-        parse_value_(par, &a->offset, offset);
+        if (HEDLEY_UNLIKELY(!parse_value_(par, &a->offset, offset))) {
+          return false;
+        }
         const gra_gl3_pl_var_type_t t =
           gra_gl3_pl_get_value_entity_type(&a->offset);
         if (HEDLEY_UNLIKELY(t != GRA_GL3_PL_VAR_INTEGER)) {
           par->error = "'offset' must be integer value";
-          longjmp(par->jmp, 1);
+          return false;
         }
       }
 
@@ -834,12 +859,14 @@ static void parse_va_(parse_t_* par, const msgpack_object_map* src) {
         .i    = 0,
       };
       if (HEDLEY_UNLIKELY(divisor)) {
-        parse_value_(par, &a->divisor, divisor);
+        if (HEDLEY_UNLIKELY(!parse_value_(par, &a->divisor, divisor))) {
+          return false;
+        }
         const gra_gl3_pl_var_type_t t =
           gra_gl3_pl_get_value_entity_type(&a->divisor);
         if (HEDLEY_UNLIKELY(t != GRA_GL3_PL_VAR_INTEGER)) {
           par->error = "'divisor' must be integer value";
-          longjmp(par->jmp, 1);
+          return false;
         }
       }
 
@@ -848,9 +875,10 @@ static void parse_va_(parse_t_* par, const msgpack_object_map* src) {
 
     --par->depth;
   }
+  return true;
 }
 
-static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
+static bool parse_step_(parse_t_* par, const msgpack_object_array* src) {
   upd_file_t*       f   = par->def;
   gra_gl3_pl_def_t* ctx = f->ctx;
   gra_gl3_pl_t*     pl  = ctx->pl;
@@ -861,7 +889,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
 
     if (HEDLEY_UNLIKELY(src->ptr[i].type != MSGPACK_OBJECT_MAP)) {
       par->error = "expected map";
-      longjmp(par->jmp, 1);
+      return false;
     }
     const msgpack_object_map* map = &src->ptr[i].via.map;
 
@@ -904,12 +932,12 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
       });
     if (HEDLEY_UNLIKELY(invalid)) {
       par->error = "invalid step item";
-      longjmp(par->jmp, 1);
+      return false;
     }
     if (HEDLEY_UNLIKELY(!!clear + !!draw + !!srcfb != 1)) {
       par->error =
         "cannot determine step type, specify one of draw, src, or clear";
-      longjmp(par->jmp, 1);
+      return false;
     }
 
     if (clear) {
@@ -920,7 +948,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
       for (size_t i = 0; i < clear->size; ++i) {
         if (HEDLEY_UNLIKELY(clear->ptr[i].type != MSGPACK_OBJECT_STR)) {
           par->error = "'clear' must be string array";
-          longjmp(par->jmp, 1);
+          return false;
         }
         const msgpack_object_str* v = &clear->ptr[i].via.str;
 
@@ -929,20 +957,20 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
           gra_gl3_enum_unstringify_clear_bit(&b, (uint8_t*) v->ptr, v->size);
         if (HEDLEY_UNLIKELY(!valid)) {
           par->error = "'clear' has unknown target";
-          longjmp(par->jmp, 1);
+          return false;
         }
         dst->bits |= b;
       }
 
       if (HEDLEY_UNLIKELY(dstfb == NULL)) {
         par->error = "'dst' is not specified";
-        longjmp(par->jmp, 1);
+        return false;
       }
       const gra_gl3_pl_var_t* fb =
         gra_gl3_pl_find_var(pl, (uint8_t*) dstfb->ptr, dstfb->size);
       if (HEDLEY_UNLIKELY(fb == NULL || fb->type != GRA_GL3_PL_VAR_FB)) {
         par->error = "refers unknown framebuffer as dst";
-        longjmp(par->jmp, 1);
+        return false;
       }
       dst->fb = &pl->fb[fb->index];
 
@@ -956,25 +984,25 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
 
       if (HEDLEY_UNLIKELY(dstfb == NULL)) {
         par->error = "'dst' is not specified";
-        longjmp(par->jmp, 1);
+        return false;
       }
       const gra_gl3_pl_var_t* fb =
         gra_gl3_pl_find_var(pl, (uint8_t*) dstfb->ptr, dstfb->size);
       if (HEDLEY_UNLIKELY(fb == NULL || fb->type != GRA_GL3_PL_VAR_FB)) {
         par->error = "refers unknown framebuffer as dst";
-        longjmp(par->jmp, 1);
+        return false;
       }
       dst->fb = &pl->fb[fb->index];
 
       if (HEDLEY_UNLIKELY(va == NULL)) {
         par->error = "'va' is not specified";
-        longjmp(par->jmp, 1);
+        return false;
       }
       const gra_gl3_pl_var_t* var =
         gra_gl3_pl_find_var(pl, (uint8_t*) va->ptr, va->size);
       if (HEDLEY_UNLIKELY(var == NULL || var->type != GRA_GL3_PL_VAR_VA)) {
         par->error = "refers unknown vertex array";
-        longjmp(par->jmp, 1);
+        return false;
       }
       dst->va = &pl->va[var->index];
 
@@ -982,15 +1010,17 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
         &dst->mode, (uint8_t*) draw->ptr, draw->size);
       if (HEDLEY_UNLIKELY(!modevalid)) {
         par->error = "invalid draw mode";
-        longjmp(par->jmp, 1);
+        return false;
       }
 
-      parse_value_(par, &dst->count, count);
+      if (HEDLEY_UNLIKELY(!parse_value_(par, &dst->count, count))) {
+        return false;
+      }
       const gra_gl3_pl_var_type_t counttype =
         gra_gl3_pl_get_value_entity_type(&dst->count);
       if (HEDLEY_UNLIKELY(counttype != GRA_GL3_PL_VAR_INTEGER)) {
         par->error = "count must be integer value";
-        longjmp(par->jmp, 1);
+        return false;
       }
 
       dst->instance = (gra_gl3_pl_value_t) {
@@ -998,12 +1028,14 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
         .i    = 1,
       };
       if (instance) {
-        parse_value_(par, &dst->instance, instance);
+        if (HEDLEY_UNLIKELY(!parse_value_(par, &dst->instance, instance))) {
+          return false;
+        }
         const gra_gl3_pl_var_type_t t =
           gra_gl3_pl_get_value_entity_type(&dst->instance);
         if (HEDLEY_UNLIKELY(t != GRA_GL3_PL_VAR_INTEGER)) {
           par->error = "'instance' must be integer value";
-          longjmp(par->jmp, 1);
+          return false;
         }
       }
 
@@ -1030,7 +1062,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
             });
         if (HEDLEY_UNLIKELY(invalid)) {
           par->error = "invalid 'blend'";
-          longjmp(par->jmp, 1);
+          return false;
         }
 
         if (mask) {
@@ -1045,7 +1077,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
               });
           if (HEDLEY_UNLIKELY(invalid)) {
             par->error = "invalid 'blend.mask'";
-            longjmp(par->jmp, 1);
+            return false;
           }
           dst->blend.mask.r = r;
           dst->blend.mask.g = g;
@@ -1058,7 +1090,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
             &dst->blend.eq, (uint8_t*) eq->ptr, eq->size);
           if (HEDLEY_UNLIKELY(!valid)) {
             par->error = "invalid 'blend.equation'";
-            longjmp(par->jmp, 1);
+            return false;
           }
         }
 
@@ -1067,7 +1099,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
             &dst->blend.src, (uint8_t*) bsrc->ptr, bsrc->size);
           if (HEDLEY_UNLIKELY(!valid)) {
             par->error = "invalid 'blend.src'";
-            longjmp(par->jmp, 1);
+            return false;
           }
         }
 
@@ -1076,7 +1108,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
             &dst->blend.dst, (uint8_t*) bdst->ptr, bdst->size);
           if (HEDLEY_UNLIKELY(!valid)) {
             par->error = "invalid 'blend.dst'";
-            longjmp(par->jmp, 1);
+            return false;
           }
         }
       }
@@ -1094,7 +1126,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
             });
         if (HEDLEY_UNLIKELY(invalid)) {
           par->error = "invalid 'depth'";
-          longjmp(par->jmp, 1);
+          return false;
         }
 
         if (func) {
@@ -1102,26 +1134,28 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
             &dst->depth.func, (uint8_t*) func->ptr, func->size);
           if (HEDLEY_UNLIKELY(!valid)) {
             par->error = "invalid 'depth.func'";
-            longjmp(par->jmp, 1);
+            return false;
           }
         }
       }
 
       if (HEDLEY_UNLIKELY(viewport == NULL)) {
         par->error = "viewport is not specified";
-        longjmp(par->jmp, 1);
+        return false;
       }
       if (HEDLEY_UNLIKELY(viewport->size != 2)) {
         par->error = "viewport must be an array with 2 integers";
-        longjmp(par->jmp, 1);
+        return false;
       }
       for (size_t j = 0; j < 2; ++j) {
-        parse_value_(par, &dst->viewport[j], &viewport->ptr[j]);
+        if (HEDLEY_UNLIKELY(!parse_value_(par, &dst->viewport[j], &viewport->ptr[j]))) {
+          return false;
+        }
         const gra_gl3_pl_var_type_t t =
           gra_gl3_pl_get_value_entity_type(&dst->viewport[j]);
         if (HEDLEY_UNLIKELY(t != GRA_GL3_PL_VAR_INTEGER)) {
           par->error = "viewport must be an array with 2 integers";
-          longjmp(par->jmp, 1);
+          return false;
         }
       }
 
@@ -1132,15 +1166,17 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
         const msgpack_object_kv* kv = &uni->ptr[j];
         if (HEDLEY_UNLIKELY(kv->key.type != MSGPACK_OBJECT_POSITIVE_INTEGER)) {
           par->error = "key must be positive integer";
-          longjmp(par->jmp, 1);
+          return false;
         }
         const size_t index = kv->key.via.u64;
         if (HEDLEY_UNLIKELY(index >= GRA_GL3_STEP_DRAW_UNI_MAX)) {
           par->error = "uni index is too large";
-          longjmp(par->jmp, 1);
+          return false;
         }
         gra_gl3_pl_value_t* v = &dst->uni[index];
-        parse_value_(par, v, &kv->val);
+        if (HEDLEY_UNLIKELY(!parse_value_(par, v, &kv->val))) {
+          return false;
+        }
 
         const gra_gl3_pl_var_type_t t = gra_gl3_pl_get_value_entity_type(v);
         const bool valid =
@@ -1151,7 +1187,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
           t & GRA_GL3_PL_VAR_TEX_MASK;
         if (HEDLEY_UNLIKELY(!valid)) {
           par->error = "refers var with incompatible type";
-          longjmp(par->jmp, 1);
+          return false;
         }
 
         --par->depth;
@@ -1165,7 +1201,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
         const msgpack_object* v = &shader->ptr[j];
         if (HEDLEY_UNLIKELY(v->type != MSGPACK_OBJECT_STR)) {
           par->error = "expected string path";
-          longjmp(par->jmp, 1);
+          return false;
         }
         const bool ok = parse_shfind_with_dup_(&(parse_shfind_t_) {
             .par     = par,
@@ -1175,7 +1211,7 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
           });
         if (HEDLEY_UNLIKELY(!ok)) {
           par->error = "shader pathfind failure";
-          longjmp(par->jmp, 1);
+          return false;
         }
         --par->depth;
       }
@@ -1183,14 +1219,15 @@ static void parse_step_(parse_t_* par, const msgpack_object_array* src) {
 
     } else if (HEDLEY_UNLIKELY(srcfb)) {
       par->error = "blit is not implemented";
-      longjmp(par->jmp, 1);
+      return false;
     }
 
     --par->depth;
   }
+  return true;
 }
 
-static void parse_value_(
+static bool parse_value_(
     parse_t_* par, gra_gl3_pl_value_t* v, const msgpack_object* obj) {
   upd_file_t*       f   = par->def;
   gra_gl3_pl_def_t* ctx = f->ctx;
@@ -1198,7 +1235,7 @@ static void parse_value_(
 
   if (HEDLEY_UNLIKELY(obj == NULL)) {
     par->error = "empty value";
-    longjmp(par->jmp, 1);
+    return false;
   }
 
   const msgpack_object_str* str = &obj->via.str;
@@ -1210,38 +1247,38 @@ static void parse_value_(
     };
     if (HEDLEY_UNLIKELY(v->var == NULL)) {
       par->error = "references unknown var";
-      longjmp(par->jmp, 1);
+      return false;
     }
-    return;
+    return true;
 
   case MSGPACK_OBJECT_FLOAT:
     *v = (gra_gl3_pl_value_t) {
       .type = GRA_GL3_PL_VALUE_SCALAR,
       .f    = obj->via.f64,
     };
-    return;
+    return true;
 
   case MSGPACK_OBJECT_POSITIVE_INTEGER:
     if (HEDLEY_UNLIKELY(obj->via.u64 > INTMAX_MAX)) {
       par->error = "integer is too large";
-      longjmp(par->jmp, 1);
+      return false;
     }
     *v = (gra_gl3_pl_value_t) {
       .type = GRA_GL3_PL_VALUE_INTEGER,
       .i    = (intmax_t) obj->via.u64,
     };
-    return;
+    return true;
 
   case MSGPACK_OBJECT_NEGATIVE_INTEGER:
     *v = (gra_gl3_pl_value_t) {
       .type = GRA_GL3_PL_VALUE_INTEGER,
       .i    = obj->via.i64,
     };
-    return;
+    return true;
 
   default:
     par->error = "invalid value";
-    longjmp(par->jmp, 1);
+    return false;
   }
 }
 
@@ -1711,17 +1748,14 @@ static void parse_recv_get_cb_(upd_msgpack_recv_t* recv) {
   };
   ctx->pl = pl;
 
-  if (HEDLEY_LIKELY(setjmp(par->jmp) == 0)) {
-    par->ok = true;
-    parse_in_(par, in);
-    parse_out_(par, out);
-    parse_fb_(par, fb);
-    parse_va_(par, va);
+  par->ok =
+    parse_in_(par, in) &&
+    parse_out_(par, out) &&
+    parse_fb_(par, fb) &&
+    parse_va_(par, va) &&
     parse_step_(par, step);
 
-  } else {
-    par->ok = false;
-
+  if (!par->ok) {
     /* TODO: print location */
     def_logf_(f, "parse error: %s", par->error);
   }
