@@ -500,8 +500,13 @@ static void iso_async_cb_(uv_async_t* async) {
 
   uv_mutex_lock(&iso->mtx);
 
-  const size_t         n  = iso->async.n;
-  const upd_file_id_t* id = iso->async.id;
+  const size_t n = iso->async.n;
+  upd_file_id_t id[UPD_ISO_ASYNC_MAX];
+
+  memcpy(id, iso->async.id, n*sizeof(*id));
+  iso->async.n = 0;
+
+  uv_mutex_unlock(&iso->mtx);
 
   for (size_t i = 0; i < n; ++i) {
     bool dup = false;
@@ -516,9 +521,6 @@ static void iso_async_cb_(uv_async_t* async) {
       upd_file_trigger(f, UPD_FILE_ASYNC);
     }
   }
-  iso->async.n = 0;
-
-  uv_mutex_unlock(&iso->mtx);
 }
 
 

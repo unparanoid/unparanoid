@@ -116,14 +116,12 @@ static inline bool upd_file_trigger_async(upd_iso_t* iso, upd_file_id_t id) {
   }
   iso->async.id[iso->async.n++] = id;
 
-  if (HEDLEY_UNLIKELY(0 > uv_async_send(&iso->async.uv))) {
-    --iso->async.n;
-    goto EXIT;
-  }
   ret = true;
 
 EXIT:
   uv_mutex_unlock(&iso->mtx);
+  uv_async_send(&iso->async.uv);
+
   return ret;
 }
 
