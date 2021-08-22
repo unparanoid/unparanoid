@@ -216,12 +216,12 @@ copy_finalize_(
 
 static
 void
-copy_lock_src_cb_(
+copy_lock_dst_cb_(
   upd_file_lock_t* k);
 
 static
 void
-copy_lock_dst_cb_(
+copy_lock_src_cb_(
   upd_file_lock_t* k);
 
 static
@@ -620,10 +620,10 @@ static bool lk_assign_input_file_(
       upd_file_unref(dst);
       return false;
     }
-    if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->in, dst, SIZE_MAX))) {
+    if (HEDLEY_UNLIKELY(!lk_assign_input_file_(f, var, dst))) {
+      upd_array_find_and_remove(&ctx->external, ext);
       upd_free(&ext);
       upd_file_unref(dst);
-      upd_array_remove(&ctx->external, SIZE_MAX);
       return false;
     }
     upd_file_ref(src);
@@ -1118,6 +1118,8 @@ static void copy_fetch_src_cb_(upd_req_t* req) {
   }
   cpy->src_fetched = true;
 
+  const gra_gl3_pl_var_t* var = cpy->ext->var;
+
   const upd_req_tensor_data_t* data = &req->tensor.data;
   const upd_req_tensor_meta_t* meta = &data->meta;
 
@@ -1133,6 +1135,7 @@ static void copy_fetch_src_cb_(upd_req_t* req) {
     if (HEDLEY_UNLIKELY(meta->rank != tex->rank)) {
       goto ABORT;
     }
+
     cpy->greq = (gra_gl3_req_t) {
       .dev  = tex->gl,
       .type = GRA_GL3_REQ_TEX_ALLOC,
@@ -1161,6 +1164,8 @@ static void copy_fetch_src_cb_(upd_req_t* req) {
     if (HEDLEY_UNLIKELY(buf->id == 0)) {
       goto ABORT;
     }
+
+    *(GLuint*) (ctx->varbuf + var->offset) = buf->id;
 
     const size_t size =
       upd_tensor_count_scalars(meta)*upd_tensor_type_sizeof(meta->type);

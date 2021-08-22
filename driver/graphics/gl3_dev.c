@@ -626,6 +626,29 @@ static void dev_work_handle_pl_link_(upd_file_t* f, gra_gl3_req_t* req) {
     glBindVertexArray(0);
   }
 
+  for (size_t i = 0; i < pl->stepcnt; ++i) {
+    const gra_gl3_step_t* step = &pl->step[i];
+
+    switch (step->type) {
+    case GRA_GL3_STEP_DRAW: {
+      const gra_gl3_step_draw_t* draw = &step->draw;
+      for (size_t j = 0; j < GRA_GL3_STEP_DRAW_TEXUNIT_MAX; ++j) {
+        const gra_gl3_pl_texunit_t* unit = &draw->texunit[j];
+        if (HEDLEY_LIKELY(!unit->tex)) {
+          continue;
+        }
+        GLuint* id = (void*) (vbuf + unit->offset);
+        glGenSamplers(1, id);
+        glSamplerParameteri(*id, GL_TEXTURE_MIN_FILTER, unit->min_filter);
+        glSamplerParameteri(*id, GL_TEXTURE_MAG_FILTER, unit->mag_filter);
+      }
+    } break;
+
+    default:
+      break;
+    }
+  }
+
   req->ok = !ctx->error[0];
   if (HEDLEY_UNLIKELY(!req->ok)) {
     dev_work_handle_pl_unlink_(f, req);
@@ -707,8 +730,25 @@ static void dev_work_handle_pl_exec_(upd_file_t* f, gra_gl3_req_t* req) {
 
       glUseProgram(draw->prog);
 
-      const GLuint fbid = *(GLuint*) (vbuf + fb->var->offset);
-      const GLuint vaid = *(GLuint*) (vbuf + va->var->offset);
+      for (size_t j = 0; j < GRA_GL3_STEP_DRAW_TEXUNIT_MAX; ++j) {
+        const gra_gl3_pl_texunit_t* unit = &draw->texunit[j];
+        if (HEDLEY_LIKELY(!unit->tex)) {
+          continue;
+        }
+
+        const GLuint tex     = *(GLuint*) (vbuf + unit->tex->offset);
+        const GLuint sampler = *(GLuint*) (vbuf + unit->offset);
+        if (HEDLEY_UNLIKELY(tex == 0)) {
+          continue;
+        }
+
+        const uint8_t dim    = unit->tex->type & GRA_GL3_PL_VAR_DIM_MASK;
+        const GLenum  target = gra_gl3_rank_to_tex_target(dim+1);
+
+        glActiveTexture(GL_TEXTURE0 + j);
+        glBindTexture(target, tex);
+        glBindSampler(j, sampler);
+      }
 
       for (size_t j = 0; j < GRA_GL3_STEP_DRAW_UNI_MAX; ++j) {
         const gra_gl3_pl_value_t* val = &draw->uni[j];
@@ -779,6 +819,9 @@ static void dev_work_handle_pl_exec_(upd_file_t* f, gra_gl3_req_t* req) {
 
       glDepthMask(draw->depth.mask? GL_TRUE: GL_FALSE);
       glDepthFunc(draw->depth.func);
+
+      const GLuint fbid = *(GLuint*) (vbuf + fb->var->offset);
+      const GLuint vaid = *(GLuint*) (vbuf + va->var->offset);
 
       glBindFramebuffer(GL_FRAMEBUFFER, fbid);
       glBindVertexArray(vaid);

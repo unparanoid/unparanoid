@@ -9,9 +9,10 @@
  */
 
 
-#define GRA_GL3_STEP_DRAW_SHADER_MAX 16
-#define GRA_GL3_STEP_DRAW_UNI_MAX    16
-#define GRA_GL3_STEP_DRAW_IN_MAX     16
+#define GRA_GL3_STEP_DRAW_SHADER_MAX  16
+#define GRA_GL3_STEP_DRAW_UNI_MAX     16
+#define GRA_GL3_STEP_DRAW_TEXUNIT_MAX 16
+#define GRA_GL3_STEP_DRAW_IN_MAX      16
 
 #define GRA_GL3_PL_IDENT_MAX     32
 #define GRA_GL3_PL_FB_ATTACH_MAX 32
@@ -37,12 +38,13 @@ typedef struct gra_gl3_pl_fb_attach_t gra_gl3_pl_fb_attach_t;
 typedef struct gra_gl3_pl_fb_t        gra_gl3_pl_fb_t;
 typedef struct gra_gl3_pl_va_attach_t gra_gl3_pl_va_attach_t;
 typedef struct gra_gl3_pl_va_t        gra_gl3_pl_va_t;
+typedef struct gra_gl3_pl_texunit_t   gra_gl3_pl_texunit_t;
 typedef struct gra_gl3_pl_t           gra_gl3_pl_t;
 
-typedef struct gra_gl3_step_clear_t gra_gl3_step_clear_t;
-typedef struct gra_gl3_step_draw_t  gra_gl3_step_draw_t;
-typedef struct gra_gl3_step_blit_t  gra_gl3_step_blit_t;
-typedef struct gra_gl3_step_t       gra_gl3_step_t;
+typedef struct gra_gl3_step_clear_t        gra_gl3_step_clear_t;
+typedef struct gra_gl3_step_draw_t         gra_gl3_step_draw_t;
+typedef struct gra_gl3_step_blit_t         gra_gl3_step_blit_t;
+typedef struct gra_gl3_step_t              gra_gl3_step_t;
 
 
 typedef enum gra_gl3_pl_var_type_t {
@@ -147,6 +149,15 @@ struct gra_gl3_pl_va_t {
   size_t attachcnt;
 };
 
+struct gra_gl3_pl_texunit_t {
+  size_t offset;
+
+  const gra_gl3_pl_var_t* tex;
+
+  GLenum min_filter;
+  GLenum mag_filter;
+};
+
 struct gra_gl3_pl_t {
   gra_gl3_pl_var_t* var;
   size_t varcnt;
@@ -168,6 +179,7 @@ struct gra_gl3_pl_t {
 
   size_t varbuflen;
 };
+
 
 
 struct gra_gl3_step_clear_t {
@@ -207,8 +219,9 @@ struct gra_gl3_step_draw_t {
 
   size_t shadercnt;
 
-  upd_file_t*        shader[GRA_GL3_STEP_DRAW_SHADER_MAX];
-  gra_gl3_pl_value_t uni[GRA_GL3_STEP_DRAW_UNI_MAX];
+  upd_file_t*          shader[GRA_GL3_STEP_DRAW_SHADER_MAX];
+  gra_gl3_pl_texunit_t texunit[GRA_GL3_STEP_DRAW_TEXUNIT_MAX];
+  gra_gl3_pl_value_t   uni[GRA_GL3_STEP_DRAW_UNI_MAX];
 };
 
 struct gra_gl3_step_blit_t {

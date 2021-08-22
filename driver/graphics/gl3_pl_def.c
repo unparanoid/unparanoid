@@ -136,35 +136,30 @@ parse_stack_(
   parse_t_* par,
   size_t    index);
 
-HEDLEY_WARN_UNUSED_RESULT
 static
 bool
 parse_in_(
   parse_t_*                 par,
   const msgpack_object_map* src);
 
-HEDLEY_WARN_UNUSED_RESULT
 static
 bool
 parse_fb_(
   parse_t_*                 par,
   const msgpack_object_map* src);
 
-HEDLEY_WARN_UNUSED_RESULT
 static
 bool
 parse_va_(
   parse_t_*                 par,
   const msgpack_object_map* src);
 
-HEDLEY_WARN_UNUSED_RESULT
 static
 bool
 parse_step_(
   parse_t_*                   par,
   const msgpack_object_array* src);
 
-HEDLEY_WARN_UNUSED_RESULT
 static
 bool
 parse_value_(
@@ -910,8 +905,9 @@ static bool parse_step_(parse_t_* par, const msgpack_object_array* src) {
     const msgpack_object_map*   depth    = NULL;
     const msgpack_object_array* viewport = NULL;
 
-    const msgpack_object_map*   uni    = NULL;
-    const msgpack_object_array* shader = NULL;
+    const msgpack_object_array* shader  = NULL;
+    const msgpack_object_map*   texunit = NULL;
+    const msgpack_object_map*   uni     = NULL;
 
     const char* invalid = upd_msgpack_find_fields(map, (upd_msgpack_field_t[]) {
         /* type is decided by the following 3 fields */
@@ -926,8 +922,9 @@ static bool parse_step_(parse_t_* par, const msgpack_object_array* src) {
         { .name = "blend",    .map   = &blend,    },
         { .name = "depth",    .map   = &depth,    },
         { .name = "viewport", .array = &viewport, },
-        { .name = "uni",      .map   = &uni,      },
         { .name = "shader",   .array = &shader,   },
+        { .name = "texunit",  .map   = &texunit,  },
+        { .name = "uni",      .map   = &uni,      },
         { NULL },
       });
     if (HEDLEY_UNLIKELY(invalid)) {
@@ -977,8 +974,9 @@ static bool parse_step_(parse_t_* par, const msgpack_object_array* src) {
     } else if (draw) {
       step->type = GRA_GL3_STEP_DRAW;
 
-      const size_t unicnt    = uni?    uni->size:    0;
-      const size_t shadercnt = shader? shader->size: 0;
+      const size_t shadercnt  = shader?  shader->size:  0;
+      const size_t texunitcnt = texunit? texunit->size: 0;
+      const size_t unicnt     = uni?     uni->size:     0;
 
       gra_gl3_step_draw_t* dst = &step->draw;
 
@@ -1159,6 +1157,94 @@ static bool parse_step_(parse_t_* par, const msgpack_object_array* src) {
         }
       }
 
+      parse_stack_(par, (msgpack_object_kv*) shader - map->ptr);
+      for (size_t j = 0; j < shadercnt; ++j) {
+        parse_stack_(par, j);
+
+        const msgpack_object* v = &shader->ptr[j];
+        if (HEDLEY_UNLIKELY(v->type != MSGPACK_OBJECT_STR)) {
+          par->error = "expected string path";
+          return false;
+        }
+        const bool ok = parse_shfind_with_dup_(&(parse_shfind_t_) {
+            .par     = par,
+            .draw    = dst,
+            .path    = (uint8_t*) v->via.str.ptr,
+            .pathlen = v->via.str.size,
+          });
+        if (HEDLEY_UNLIKELY(!ok)) {
+          par->error = "shader pathfind failure";
+          return false;
+        }
+        --par->depth;
+      }
+      --par->depth;
+
+      parse_stack_(par, (msgpack_object_kv*) texunit - map->ptr);
+      for (size_t j = 0; j < texunitcnt; ++j) {
+        parse_stack_(par, j);
+
+        const msgpack_object_kv* kv = &texunit->ptr[j];
+        if (HEDLEY_UNLIKELY(kv->key.type != MSGPACK_OBJECT_POSITIVE_INTEGER)) {
+          par->error = "key must be positive integer";
+          return false;
+        }
+        if (HEDLEY_UNLIKELY(kv->val.type != MSGPACK_OBJECT_MAP)) {
+          par->error = "invalid texunit param";
+          return false;
+        }
+
+        const size_t index = kv->key.via.u64;
+        if (HEDLEY_UNLIKELY(index >= GRA_GL3_STEP_DRAW_TEXUNIT_MAX)) {
+          par->error = "texunit index is too large";
+          return false;
+        }
+
+        const msgpack_object_str* tex        = NULL;
+        const msgpack_object_str* min_filter = NULL;
+        const msgpack_object_str* mag_filter = NULL;
+
+        const char* invalid =
+          upd_msgpack_find_fields(&kv->val.via.map, (upd_msgpack_field_t[]) {
+              { .name = "tex",       .required = true, .str = &tex,        },
+              { .name = "minFilter", .required = true, .str = &min_filter, },
+              { .name = "magFilter", .required = true, .str = &mag_filter, },
+              { NULL, },
+            });
+        if (HEDLEY_UNLIKELY(invalid)) {
+          par->error = "invalid texunit param";
+          return false;
+        }
+
+        gra_gl3_pl_texunit_t* unit = &dst->texunit[index];
+        unit->offset = pl->varbuflen;
+
+        pl->varbuflen += sizeof(GLuint);
+
+        unit->tex = gra_gl3_pl_find_var(pl, (uint8_t*) tex->ptr, tex->size);
+        if (HEDLEY_UNLIKELY(unit->tex == NULL)) {
+          par->error = "texunit refers unknown var";
+          return false;
+        }
+        if (HEDLEY_UNLIKELY(!(unit->tex->type & GRA_GL3_PL_VAR_TEX_MASK))) {
+          par->error = "texunit refers non-texture var as texture";
+          return false;
+        }
+
+        const bool valid =
+          gra_gl3_enum_unstringify_tex_filter(
+            &unit->min_filter, (uint8_t*) min_filter->ptr, min_filter->size) &&
+          gra_gl3_enum_unstringify_tex_filter(
+            &unit->mag_filter, (uint8_t*) mag_filter->ptr, mag_filter->size);
+        if (HEDLEY_UNLIKELY(!valid)) {
+          par->error = "texunit has an invalid enum";
+          return false;
+        }
+
+        --par->depth;
+      }
+      --par->depth;
+
       parse_stack_(par, (msgpack_object_kv*) uni - map->ptr);
       for (size_t j = 0; j < unicnt; ++j) {
         parse_stack_(par, j);
@@ -1183,36 +1269,12 @@ static bool parse_step_(parse_t_* par, const msgpack_object_array* src) {
           t == GRA_GL3_PL_VAR_SCALAR  ||
           t == GRA_GL3_PL_VAR_INTEGER ||
           t & GRA_GL3_PL_VAR_VEC_MASK ||
-          t & GRA_GL3_PL_VAR_MAT_MASK ||
-          t & GRA_GL3_PL_VAR_TEX_MASK;
+          t & GRA_GL3_PL_VAR_MAT_MASK;
         if (HEDLEY_UNLIKELY(!valid)) {
           par->error = "refers var with incompatible type";
           return false;
         }
 
-        --par->depth;
-      }
-      --par->depth;
-
-      parse_stack_(par, (msgpack_object_kv*) shader - map->ptr);
-      for (size_t j = 0; j < shadercnt; ++j) {
-        parse_stack_(par, j);
-
-        const msgpack_object* v = &shader->ptr[j];
-        if (HEDLEY_UNLIKELY(v->type != MSGPACK_OBJECT_STR)) {
-          par->error = "expected string path";
-          return false;
-        }
-        const bool ok = parse_shfind_with_dup_(&(parse_shfind_t_) {
-            .par     = par,
-            .draw    = dst,
-            .path    = (uint8_t*) v->via.str.ptr,
-            .pathlen = v->via.str.size,
-          });
-        if (HEDLEY_UNLIKELY(!ok)) {
-          par->error = "shader pathfind failure";
-          return false;
-        }
         --par->depth;
       }
       --par->depth;

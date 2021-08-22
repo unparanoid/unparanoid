@@ -130,3 +130,11 @@ static inline bool gra_gl3_enum_unstringify_clear_bit(
     upd_strcaseq_c("stencil", str, len)? (*v = GL_STENCIL_BUFFER_BIT, true):
     false;
 }
+
+static inline bool gra_gl3_enum_unstringify_tex_filter(
+    GLenum* v, const uint8_t* str, size_t len) {
+  return
+    upd_strcaseq_c("linear",  str, len)? (*v = GL_LINEAR,  true):
+    upd_strcaseq_c("nearest", str, len)? (*v = GL_NEAREST, true):
+    false;
+}
