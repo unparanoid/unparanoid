@@ -8,9 +8,10 @@
 #define LOG_PREFIX_ "upd.graphics.gl3.pipeline.linker: "
 
 
-typedef struct ctx_t_    ctx_t_;
-typedef struct copy_t_   copy_t_;
-typedef struct assign_t_ assign_t_;
+typedef struct ctx_t_      ctx_t_;
+typedef struct external_t_ external_t_;
+typedef struct copy_t_     copy_t_;
+typedef struct assign_t_   assign_t_;
 
 struct ctx_t_ {
   /* No needs to unref, because this file is locked while entire of lifetime. */
@@ -25,36 +26,16 @@ struct ctx_t_ {
 
   size_t refcnt;
 
+  upd_array_of(external_t_*) external;
+
   upd_array_of(upd_file_t*) in;
   upd_array_of(upd_file_t*) out;
-  upd_array_of(upd_file_t*) copy;
 
   upd_array_of(upd_file_lock_t*) reslock;
 
   unsigned locked  : 1;
   unsigned linked  : 1;
   unsigned aborted : 1;
-};
-
-struct copy_t_ {
-  upd_file_t* src;
-  upd_file_t* dst;
-
-  size_t reso[4];
-};
-
-struct assign_t_ {
-  upd_file_t* def;
-
-  const gra_gl3_pl_var_t* var;
-
-  upd_file_t*     file;  /* tex or buf */
-  upd_file_lock_t lock;
-  upd_req_t       req;
-  gra_gl3_req_t   greq;
-  uint32_t        reso[4];
-
-  upd_file_t* src;
 };
 
 
@@ -129,47 +110,10 @@ lk_create_and_assign_output_tex_(
   upd_file_t*             f,
   const gra_gl3_pl_out_t* out);
 
-const upd_driver_t gra_gl3_pl_lk = {
-  .name   = (uint8_t*) "upd.graphics.gl3.pipeline.linker",
-  .cats   = (upd_req_cat_t[]) {
-    UPD_REQ_DSTREAM,
-    0,
-  },
-  .init   = lk_init_,
-  .deinit = lk_deinit_,
-  .handle = lk_handle_,
-};
-
-
 static
 void
 lk_msgpack_cb_(
   upd_msgpack_t* mpk);
-
-static
-void
-lk_lock_pl_cb_(
-  upd_file_lock_t* k);
-
-static
-void
-lk_fetch_pl_cb_(
-  gra_gl3_fetch_t* fe);
-
-static
-void
-lk_lock_input_cb_(
-  upd_file_lock_t* k);
-
-static
-void
-lk_lock_output_cb_(
-  upd_file_lock_t* k);
-
-static
-void
-lk_alloc_output_cb_(
-  gra_gl3_req_t* greq);
 
 static
 void
@@ -190,6 +134,110 @@ static
 void
 lk_unlink_cb_(
   gra_gl3_req_t* req);
+
+static
+void
+lk_lock_pl_cb_(
+  upd_file_lock_t* k);
+
+static
+void
+lk_fetch_pl_cb_(
+  gra_gl3_fetch_t* fe);
+
+const upd_driver_t gra_gl3_pl_lk = {
+  .name   = (uint8_t*) "upd.graphics.gl3.pipeline.linker",
+  .cats   = (upd_req_cat_t[]) {
+    UPD_REQ_DSTREAM,
+    0,
+  },
+  .init   = lk_init_,
+  .deinit = lk_deinit_,
+  .handle = lk_handle_,
+};
+
+
+struct external_t_ {
+  upd_file_t* lk;
+
+  const gra_gl3_pl_var_t* var;
+
+  upd_file_t* src;
+  upd_file_t* dst;
+};
+
+
+struct assign_t_ {
+  upd_file_t* lk;
+
+  const gra_gl3_pl_var_t* var;
+
+  upd_file_t* file;  /* tex or buf */
+
+  upd_file_lock_t lock;
+  upd_req_t       req;
+  gra_gl3_req_t   greq;
+  uint32_t        reso[4];
+};
+
+static
+void
+assign_lock_input_cb_(
+  upd_file_lock_t* k);
+
+static
+void
+assign_lock_output_cb_(
+  upd_file_lock_t* k);
+
+static
+void
+assign_alloc_output_cb_(
+  gra_gl3_req_t* greq);
+
+
+struct copy_t_ {
+  external_t_* ext;
+
+  upd_file_lock_t src_lock;
+  upd_file_lock_t dst_lock;
+  upd_req_t       req;
+  gra_gl3_req_t   greq;
+
+  unsigned src_locked  : 1;
+  unsigned src_fetched : 1;
+  unsigned dst_locked  : 1;
+};
+
+static
+void
+copy_finalize_(
+  copy_t_* cpy);
+
+static
+void
+copy_lock_src_cb_(
+  upd_file_lock_t* k);
+
+static
+void
+copy_lock_dst_cb_(
+  upd_file_lock_t* k);
+
+static
+void
+copy_fetch_src_cb_(
+  upd_req_t* req);
+
+static
+void
+copy_alloc_dst_cb_(
+  gra_gl3_req_t* req);
+
+static
+void
+copy_flush_src_cb_(
+  upd_req_t* req);
 
 
 static bool lk_init_(upd_file_t* f) {
@@ -277,13 +325,13 @@ static void lk_clear_(upd_file_t* f) {
   }
   upd_array_clear(&ctx->out);
 
-  for (size_t i = 0; i < ctx->copy.n; ++i) {
-    copy_t_* cp = ctx->copy.p[i];
-    upd_file_unref(cp->src);
-    upd_file_unref(cp->dst);
-    upd_free(&cp);
+  for (size_t i = 0; i < ctx->external.n; ++i) {
+    external_t_* ext = ctx->external.p[i];
+    upd_file_unref(ext->src);
+    upd_file_unref(ext->dst);
+    upd_free(&ext);
   }
-  upd_array_clear(&ctx->copy);
+  upd_array_clear(&ctx->external);
 }
 
 static void lk_handle_link_(upd_file_t* f) {
@@ -357,10 +405,36 @@ static void lk_unref_link_(upd_file_t* f) {
 }
 
 static void lk_handle_exec_(upd_file_t* f) {
-  ctx_t_* ctx = f->ctx;
-  ctx->aborted = false;
+  upd_iso_t* iso = f->iso;
+  ctx_t_*    ctx = f->ctx;
 
-  ctx->refcnt = 1;
+  ctx->aborted = false;
+  ctx->refcnt  = 1;
+
+  for (size_t i = 0; i < ctx->external.n; ++i) {
+    external_t_* ext = ctx->external.p[i];
+
+    copy_t_* cpy = upd_iso_stack(iso, sizeof(*cpy));
+    if (HEDLEY_UNLIKELY(cpy == NULL)) {
+      ctx->aborted = true;
+      goto EXIT;
+    }
+    *cpy = (copy_t_) {
+      .ext = ext,
+      .dst_lock = (upd_file_lock_t) {
+        .file  = ext->dst,
+        .ex    = true,
+        .udata = cpy,
+        .cb    = copy_lock_dst_cb_,
+      },
+    };
+    ++ctx->refcnt;
+    if (HEDLEY_UNLIKELY(!upd_file_lock(&cpy->dst_lock))) {
+      --ctx->refcnt;
+      ctx->aborted = true;
+      goto EXIT;
+    }
+  }
 
   for (size_t i = 0; i < ctx->in.n; ++i) {
     ++ctx->refcnt;
@@ -372,6 +446,7 @@ static void lk_handle_exec_(upd_file_t* f) {
     if (HEDLEY_UNLIKELY(k == NULL)) {
       --ctx->refcnt;
       ctx->aborted = true;
+      goto EXIT;
     }
   }
   for (size_t i = 0; i < ctx->out.n; ++i) {
@@ -384,9 +459,11 @@ static void lk_handle_exec_(upd_file_t* f) {
     if (HEDLEY_UNLIKELY(k == NULL)) {
       --ctx->refcnt;
       ctx->aborted = true;
+      goto EXIT;
     }
   }
 
+EXIT:
   lk_unref_exec_(f);
 }
 
@@ -518,19 +595,47 @@ static bool lk_assign_input_file_(
 
   const upd_driver_t* d = gra_gl3_get_driver_from_var_type(var->type);
 
-  upd_file_t* gl = src;
   if (HEDLEY_UNLIKELY(src->driver != d)) {
-    /* TODO: create copy_t_ struct */
-    return false;
+    upd_file_t* dst = upd_file_new(&(upd_file_t) {
+        .iso    = iso,
+        .driver = d,
+      });
+    if (HEDLEY_UNLIKELY(dst == NULL)) {
+      return false;
+    }
+
+    external_t_* ext = NULL;
+    if (HEDLEY_UNLIKELY(!upd_malloc(&ext, sizeof(*ext)))) {
+      upd_file_unref(dst);
+      return false;
+    }
+    *ext = (external_t_) {
+      .lk  = f,
+      .var = var,
+      .src = src,
+      .dst = dst,
+    };
+    if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->external, ext, SIZE_MAX))) {
+      upd_free(&ext);
+      upd_file_unref(dst);
+      return false;
+    }
+    if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->in, dst, SIZE_MAX))) {
+      upd_free(&ext);
+      upd_file_unref(dst);
+      upd_array_remove(&ctx->external, SIZE_MAX);
+      return false;
+    }
+    upd_file_ref(src);
+    return true;
   }
 
   size_t temp = 0;
-  if (HEDLEY_LIKELY(!upd_array_find(&ctx->in, &temp, gl))) {
-    upd_file_ref(gl);
-    if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->in, gl, SIZE_MAX))) {
-      upd_file_unref(gl);
+  if (HEDLEY_LIKELY(!upd_array_find(&ctx->in, &temp, src))) {
+    if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->in, src, SIZE_MAX))) {
       return false;
     }
+    upd_file_ref(src);
   }
 
   assign_t_* ass = upd_iso_stack(iso, sizeof(*ass));
@@ -538,13 +643,13 @@ static bool lk_assign_input_file_(
     return false;
   }
   *ass = (assign_t_) {
-    .def  = f,
+    .lk   = f,
     .var  = var,
-    .file = gl,
+    .file = src,
     .lock = {
       .file  = src,
       .udata = ass,
-      .cb    = lk_lock_input_cb_,
+      .cb    = assign_lock_input_cb_,
     },
   };
 
@@ -580,14 +685,14 @@ static bool lk_create_and_assign_output_tex_(
     return false;
   }
   *ass = (assign_t_) {
-    .def  = f,
+    .lk   = f,
     .var  = out->var,
     .file = gl,
     .lock = {
       .file  = gl,
       .ex    = true,
       .udata = ass,
-      .cb    = lk_lock_output_cb_,
+      .cb    = assign_lock_output_cb_,
     },
   };
 
@@ -599,7 +704,6 @@ static bool lk_create_and_assign_output_tex_(
   }
   return true;
 }
-
 
 static void lk_msgpack_cb_(upd_msgpack_t* mpk) {
   upd_file_t* f   = mpk->udata;
@@ -712,121 +816,6 @@ static void lk_fetch_pl_cb_(gra_gl3_fetch_t* fe) {
   lk_unref_link_(f);
 }
 
-static void lk_lock_input_cb_(upd_file_lock_t* k) {
-  assign_t_*  ass = k->udata;
-  upd_file_t* f   = ass->def;
-  upd_iso_t*  iso = f->iso;
-  ctx_t_*     ctx = f->ctx;
-
-  GLuint id = 0;
-  if (HEDLEY_UNLIKELY(!k->ok)) {
-    goto EXIT;
-  }
-
-  if (ass->var->type & GRA_GL3_PL_VAR_TEX_MASK) {
-    gra_gl3_tex_t* tex = ass->file->ctx;
-    id = tex->id;
-
-  } else if (ass->var->type & GRA_GL3_PL_VAR_BUF_MASK) {
-    gra_gl3_buf_t* buf = ass->file->ctx;
-    id = buf->id;
-
-  } else {
-    assert(false);
-  }
-
-  if (HEDLEY_UNLIKELY(id == 0)) {
-    ctx->aborted = true;
-  } else {
-    *(GLuint*) (ctx->varbuf + ass->var->offset) = id;
-  }
-
-EXIT:
-  upd_file_unlock(k);
-  upd_iso_unstack(iso, ass);
-
-  lk_unref_link_(f);
-}
-
-static void lk_lock_output_cb_(upd_file_lock_t* k) {
-  assign_t_*    ass = k->udata;
-  upd_file_t*   f   = ass->def;
-  upd_iso_t*    iso = f->iso;
-  ctx_t_*       ctx = f->ctx;
-
-  if (HEDLEY_UNLIKELY(!k->ok)) {
-    goto ABORT;
-  }
-
-  const gra_gl3_pl_t*     pl  = ctx->pl;
-  const gra_gl3_pl_var_t* var = ass->var;
-  const gra_gl3_pl_out_t* out = &pl->out[var->index];
-
-  gra_gl3_tex_t* tex = ass->file->ctx;
-  if (HEDLEY_UNLIKELY(tex->id == 0)) {
-    goto ABORT;
-  }
-  *(GLuint*) (ctx->varbuf + var->offset) = tex->id;
-
-  const size_t rank = (var->type & GRA_GL3_PL_VAR_DIM_MASK)+1;
-  assert(2 <= rank && rank <= 4);
-
-  for (size_t i = 0; i < rank; ++i) {
-    intmax_t v = 0;
-    const bool ok = gra_gl3_pl_get_value(
-      &out->reso[i], ctx->varbuf, &v, NULL);
-    if (HEDLEY_UNLIKELY(!ok || v <= 0)) {
-      goto ABORT;
-    }
-    ass->reso[i] = v;
-  }
-
-  ass->greq = (gra_gl3_req_t) {
-    .dev  = tex->gl,
-    .type = GRA_GL3_REQ_TEX_ALLOC,
-    .tex  = {
-      .id     = tex->id,
-      .target = gra_gl3_rank_to_tex_target(rank),
-      .fmt    = gra_gl3_dim_to_color_fmt(ass->reso[0]),
-      .type   = GL_UNSIGNED_BYTE,
-      .w      = ass->reso[1],
-      .h      = ass->reso[2],
-      .d      = ass->reso[3],
-    },
-    .udata = ass,
-    .cb    = lk_alloc_output_cb_,
-  };
-  gra_gl3_tex_set_metadata(ass->file, &ass->greq);
-
-  if (HEDLEY_UNLIKELY(!gra_gl3_lock_and_req(&ass->greq))) {
-    goto ABORT;
-  }
-  return;
-
-ABORT:
-  upd_file_unlock(k);
-  upd_iso_unstack(iso, ass);
-
-  lk_unref_link_(f);
-}
-
-static void lk_alloc_output_cb_(gra_gl3_req_t* greq) {
-  assign_t_*  ass = greq->udata;
-  upd_file_t* f   = ass->def;
-  upd_iso_t*  iso = f->iso;
-  ctx_t_*     ctx = f->ctx;
-
-  if (HEDLEY_UNLIKELY(!greq->ok)) {
-    ctx->aborted = true;
-  }
-
-  upd_file_unlock(&ass->greq.lock);
-  upd_file_unlock(&ass->lock);
-  upd_iso_unstack(iso, ass);
-
-  lk_unref_link_(f);
-}
-
 static void lk_link_cb_(gra_gl3_req_t* req) {
   upd_file_t* f   = req->udata;
   upd_iso_t*  iso = f->iso;
@@ -923,4 +912,300 @@ static void lk_unlink_cb_(gra_gl3_req_t* req) {
   upd_file_unlock(&req->lock);
   upd_iso_unstack(iso, req);
   lk_teardown_(ctx);
+}
+
+
+static void assign_lock_input_cb_(upd_file_lock_t* k) {
+  assign_t_*  ass = k->udata;
+  upd_file_t* f   = ass->lk;
+  upd_iso_t*  iso = f->iso;
+  ctx_t_*     ctx = f->ctx;
+
+  GLuint id = 0;
+  if (HEDLEY_UNLIKELY(!k->ok)) {
+    goto EXIT;
+  }
+
+  if (ass->var->type & GRA_GL3_PL_VAR_TEX_MASK) {
+    gra_gl3_tex_t* tex = ass->file->ctx;
+    id = tex->id;
+
+  } else if (ass->var->type & GRA_GL3_PL_VAR_BUF_MASK) {
+    gra_gl3_buf_t* buf = ass->file->ctx;
+    id = buf->id;
+
+  } else {
+    assert(false);
+  }
+
+  if (HEDLEY_UNLIKELY(id == 0)) {
+    ctx->aborted = true;
+  } else {
+    *(GLuint*) (ctx->varbuf + ass->var->offset) = id;
+  }
+
+EXIT:
+  upd_file_unlock(k);
+  upd_iso_unstack(iso, ass);
+
+  lk_unref_link_(f);
+}
+
+static void assign_lock_output_cb_(upd_file_lock_t* k) {
+  assign_t_*    ass = k->udata;
+  upd_file_t*   f   = ass->lk;
+  upd_iso_t*    iso = f->iso;
+  ctx_t_*       ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(!k->ok)) {
+    goto ABORT;
+  }
+
+  const gra_gl3_pl_t*     pl  = ctx->pl;
+  const gra_gl3_pl_var_t* var = ass->var;
+  const gra_gl3_pl_out_t* out = &pl->out[var->index];
+
+  gra_gl3_tex_t* tex = ass->file->ctx;
+  if (HEDLEY_UNLIKELY(tex->id == 0)) {
+    goto ABORT;
+  }
+  *(GLuint*) (ctx->varbuf + var->offset) = tex->id;
+
+  const size_t rank = (var->type & GRA_GL3_PL_VAR_DIM_MASK)+1;
+  assert(2 <= rank && rank <= 4);
+
+  for (size_t i = 0; i < rank; ++i) {
+    intmax_t v = 0;
+    const bool ok = gra_gl3_pl_get_value(
+      &out->reso[i], ctx->varbuf, &v, NULL);
+    if (HEDLEY_UNLIKELY(!ok || v <= 0)) {
+      goto ABORT;
+    }
+    ass->reso[i] = v;
+  }
+
+  ass->greq = (gra_gl3_req_t) {
+    .dev  = tex->gl,
+    .type = GRA_GL3_REQ_TEX_ALLOC,
+    .tex  = {
+      .id     = tex->id,
+      .target = gra_gl3_rank_to_tex_target(rank),
+      .fmt    = gra_gl3_dim_to_color_fmt(ass->reso[0]),
+      .type   = GL_UNSIGNED_BYTE,
+      .w      = ass->reso[1],
+      .h      = ass->reso[2],
+      .d      = ass->reso[3],
+    },
+    .udata = ass,
+    .cb    = assign_alloc_output_cb_,
+  };
+  gra_gl3_tex_set_metadata(ass->file, &ass->greq);
+
+  if (HEDLEY_UNLIKELY(!gra_gl3_lock_and_req(&ass->greq))) {
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  upd_file_unlock(k);
+  upd_iso_unstack(iso, ass);
+
+  lk_unref_link_(f);
+}
+
+static void assign_alloc_output_cb_(gra_gl3_req_t* greq) {
+  assign_t_*  ass = greq->udata;
+  upd_file_t* f   = ass->lk;
+  upd_iso_t*  iso = f->iso;
+  ctx_t_*     ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(!greq->ok)) {
+    ctx->aborted = true;
+  }
+
+  upd_file_unlock(&ass->greq.lock);
+  upd_file_unlock(&ass->lock);
+  upd_iso_unstack(iso, ass);
+
+  lk_unref_link_(f);
+}
+
+
+static void copy_finalize_(copy_t_* cpy) {
+  upd_file_t* f   = cpy->ext->lk;
+  upd_iso_t*  iso = f->iso;
+
+  if (HEDLEY_LIKELY(cpy->src_fetched)) {
+    cpy->req = (upd_req_t) {
+      .file  = cpy->ext->src,
+      .type  = UPD_REQ_TENSOR_FLUSH,
+      .udata = cpy,
+      .cb    = copy_flush_src_cb_,
+    };
+    if (HEDLEY_LIKELY(upd_req(&cpy->req))) {
+      return;
+    }
+  }
+  if (HEDLEY_LIKELY(cpy->src_locked)) {
+    upd_file_unlock(&cpy->src_lock);
+  }
+  if (HEDLEY_LIKELY(cpy->dst_locked)) {
+    upd_file_unlock(&cpy->dst_lock);
+  }
+
+  upd_iso_unstack(iso, cpy);
+  lk_unref_exec_(f);
+}
+
+static void copy_lock_dst_cb_(upd_file_lock_t* k) {
+  copy_t_*    cpy = k->udata;
+  upd_file_t* f   = cpy->ext->lk;
+  ctx_t_*     ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(!k->ok)) {
+    goto ABORT;
+  }
+  cpy->dst_locked = true;
+
+  cpy->src_lock = (upd_file_lock_t) {
+    .file  = cpy->ext->src,
+    .udata = cpy,
+    .cb    = copy_lock_src_cb_,
+  };
+  if (HEDLEY_UNLIKELY(!upd_file_lock(&cpy->src_lock))) {
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  ctx->aborted = true;
+  copy_finalize_(cpy);
+}
+
+static void copy_lock_src_cb_(upd_file_lock_t* k) {
+  copy_t_*    cpy = k->udata;
+  upd_file_t* f   = cpy->ext->lk;
+  ctx_t_*     ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(!k->ok)) {
+    goto ABORT;
+  }
+  cpy->src_locked = true;
+
+  cpy->req = (upd_req_t) {
+    .file  = cpy->ext->src,
+    .type  = UPD_REQ_TENSOR_FETCH,
+    .udata = cpy,
+    .cb    = copy_fetch_src_cb_,
+  };
+  if (HEDLEY_UNLIKELY(!upd_req(&cpy->req))) {
+    goto ABORT;
+  }
+  return;
+
+ABORT:
+  ctx->aborted = true;
+  copy_finalize_(cpy);
+}
+
+static void copy_fetch_src_cb_(upd_req_t* req) {
+  copy_t_*    cpy = req->udata;
+  upd_file_t* f   = cpy->ext->lk;
+  ctx_t_*     ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(req->result != UPD_REQ_OK)) {
+    goto ABORT;
+  }
+  cpy->src_fetched = true;
+
+  const upd_req_tensor_data_t* data = &req->tensor.data;
+  const upd_req_tensor_meta_t* meta = &data->meta;
+
+  if (HEDLEY_UNLIKELY(meta->type == UPD_TENSOR_F64)) {
+    goto ABORT;
+  }
+
+  if (cpy->ext->var->type & GRA_GL3_PL_VAR_TEX_MASK) {
+    gra_gl3_tex_t* tex = cpy->ext->dst->ctx;
+    if (HEDLEY_UNLIKELY(tex->id == 0)) {
+      goto ABORT;
+    }
+    if (HEDLEY_UNLIKELY(meta->rank != tex->rank)) {
+      goto ABORT;
+    }
+    cpy->greq = (gra_gl3_req_t) {
+      .dev  = tex->gl,
+      .type = GRA_GL3_REQ_TEX_ALLOC,
+      .tex = {
+        .id     = tex->id,
+        .target = tex->target,
+        .type   = gra_gl3_tensor_type_to_type(meta->type),
+        .fmt    = gra_gl3_dim_to_color_fmt(meta->reso[0]),
+
+        .w = meta->reso[1],
+        .h = meta->rank >= 3? meta->reso[2]: 0,
+        .d = meta->rank >= 4? meta->reso[3]: 0,
+
+        .data = data->ptr,
+      },
+      .udata = cpy,
+      .cb    = copy_alloc_dst_cb_,
+    };
+    if (HEDLEY_UNLIKELY(!gra_gl3_req(&cpy->greq))) {
+      goto ABORT;
+    }
+    return;
+
+  } else if (cpy->ext->var->type & GRA_GL3_PL_VAR_BUF_MASK) {
+    gra_gl3_buf_t* buf = cpy->ext->dst->ctx;
+    if (HEDLEY_UNLIKELY(buf->id == 0)) {
+      goto ABORT;
+    }
+
+    const size_t size =
+      upd_tensor_count_scalars(meta)*upd_tensor_type_sizeof(meta->type);
+
+    cpy->greq = (gra_gl3_req_t) {
+      .dev  = buf->gl,
+      .type = GRA_GL3_REQ_BUF_ALLOC,
+      .buf_alloc = {
+        .id     = buf->id,
+        .target = buf->target,
+        .usage  = GL_DYNAMIC_DRAW,
+        .data   = data->ptr,
+        .size   = size,
+      },
+      .udata = cpy,
+      .cb    = copy_alloc_dst_cb_,
+    };
+    if (HEDLEY_UNLIKELY(!gra_gl3_req(&cpy->greq))) {
+      goto ABORT;
+    }
+    return;
+
+  } else {
+    assert(false);
+  }
+
+ABORT:
+  ctx->aborted = true;
+  copy_finalize_(cpy);
+}
+
+static void copy_alloc_dst_cb_(gra_gl3_req_t* req) {
+  copy_t_*    cpy = req->udata;
+  upd_file_t* f   = cpy->ext->lk;
+  ctx_t_*     ctx = f->ctx;
+
+  if (HEDLEY_UNLIKELY(!req->ok)) {
+    ctx->aborted = true;
+  }
+  copy_finalize_(cpy);
+}
+
+static void copy_flush_src_cb_(upd_req_t* req) {
+  copy_t_* cpy = req->udata;
+
+  cpy->src_fetched = false;
+  copy_finalize_(cpy);
 }
