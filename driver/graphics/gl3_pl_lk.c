@@ -1154,6 +1154,7 @@ static void copy_fetch_src_cb_(upd_req_t* req) {
       .udata = cpy,
       .cb    = copy_alloc_dst_cb_,
     };
+    gra_gl3_tex_set_metadata(cpy->ext->dst, &cpy->greq);
     if (HEDLEY_UNLIKELY(!gra_gl3_req(&cpy->greq))) {
       goto ABORT;
     }
@@ -1167,8 +1168,8 @@ static void copy_fetch_src_cb_(upd_req_t* req) {
 
     *(GLuint*) (ctx->varbuf + var->offset) = buf->id;
 
-    const size_t size =
-      upd_tensor_count_scalars(meta)*upd_tensor_type_sizeof(meta->type);
+    const size_t scalars = upd_tensor_count_scalars(meta);
+    const size_t size    = scalars*upd_tensor_type_sizeof(meta->type);
 
     cpy->greq = (gra_gl3_req_t) {
       .dev  = buf->gl,
@@ -1183,6 +1184,7 @@ static void copy_fetch_src_cb_(upd_req_t* req) {
       .udata = cpy,
       .cb    = copy_alloc_dst_cb_,
     };
+    gra_gl3_buf_set_metadata(cpy->ext->dst, scalars, meta->type);
     if (HEDLEY_UNLIKELY(!gra_gl3_req(&cpy->greq))) {
       goto ABORT;
     }

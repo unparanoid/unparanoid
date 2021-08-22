@@ -208,6 +208,28 @@ static bool buf_handle_fetch_(upd_req_t* req) {
     return false;
   }
 
+  if (HEDLEY_UNLIKELY(ctx->map.refcnt)) {
+    req->tensor.data = (upd_req_tensor_data_t) {
+      .meta = {
+        .type = ctx->type,
+        .rank = 1,
+        .reso = &ctx->reso,
+      },
+      .ptr  = ctx->map.data,
+      .size = ctx->map.size,
+    };
+    req->result = UPD_REQ_OK;
+    req->cb(req);
+    return true;
+  }
+  if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->map.pending, req, SIZE_MAX))) {
+    req->result = UPD_REQ_NOMEM;
+    return false;
+  }
+  if (HEDLEY_UNLIKELY(ctx->map.pending.n > 1)) {
+    return true;
+  }
+
   ctx->map.mode = GL_READ_ONLY;
 
   const bool ok = gra_gl3_lock_and_req_with_dup(&(gra_gl3_req_t) {
@@ -218,10 +240,11 @@ static bool buf_handle_fetch_(upd_req_t* req) {
         .target = ctx->target,
         .mode   = ctx->map.mode,
       },
-      .udata = req,
+      .udata = f,
       .cb    = buf_map_cb_,
     });
   if (HEDLEY_UNLIKELY(!ok)) {
+    upd_array_clear(&ctx->map.pending);
     req->result = UPD_REQ_ABORTED;
     return false;
   }
@@ -230,11 +253,20 @@ static bool buf_handle_fetch_(upd_req_t* req) {
 
 static bool buf_handle_flush_(upd_req_t* req) {
   upd_file_t*    f   = req->file;
+  upd_iso_t*     iso = f->iso;
   gra_gl3_buf_t* ctx = f->ctx;
 
   if (HEDLEY_UNLIKELY(ctx->broken)) {
     req->result = UPD_REQ_ABORTED;
     return false;
+  }
+
+  req->result = UPD_REQ_OK;
+  req->cb(req);
+
+  assert(ctx->map.refcnt);
+  if (HEDLEY_UNLIKELY(--ctx->map.refcnt)) {
+    return true;
   }
 
   const bool ok = gra_gl3_lock_and_req_with_dup(&(gra_gl3_req_t) {
@@ -245,12 +277,11 @@ static bool buf_handle_flush_(upd_req_t* req) {
         .target = ctx->target,
         .mode   = ctx->map.mode,
       },
-      .udata = req,
+      .udata = f,
       .cb    = buf_unmap_cb_,
     });
   if (HEDLEY_UNLIKELY(!ok)) {
-    req->result = UPD_REQ_ABORTED;
-    return false;
+    upd_iso_msgf(iso, LOG_PREFIX_"mapped buffer may be leaked X(\n");
   }
   return true;
 }
@@ -358,26 +389,35 @@ static void buf_del_cb_(gra_gl3_req_t* req) {
 }
 
 static void buf_map_cb_(gra_gl3_req_t* req) {
-  upd_req_t*  oreq = req->udata;
-  upd_file_t* f    = oreq->file;
-  upd_iso_t*  iso  = f->iso;
+  upd_file_t*    f   = req->udata;
+  upd_iso_t*     iso = f->iso;
+  gra_gl3_buf_t* ctx = f->ctx;
 
-  oreq->tensor.data.ptr = req->buf_map.data;
+  upd_array_t pending = ctx->map.pending;
 
-  oreq->result = req->ok? UPD_REQ_OK: UPD_REQ_ABORTED;
-  oreq->cb(oreq);
+  ctx->map.data    = req->buf_map.data;
+  ctx->map.size    = ctx->reso * upd_tensor_type_sizeof(ctx->type);
+  ctx->map.refcnt  = pending.n;
+  ctx->map.pending = (upd_array_t) {0};
+
+  for (size_t i = 0; i < pending.n; ++i) {
+    upd_req_t* oreq = pending.p[i];
+    if (req->ok) {
+      buf_handle_fetch_(oreq);
+    } else {
+      oreq->result = UPD_REQ_ABORTED;
+      oreq->cb(oreq);
+    }
+  }
+  upd_array_clear(&pending);
 
   upd_file_unlock(&req->lock);
   upd_iso_unstack(iso, req);
 }
 
 static void buf_unmap_cb_(gra_gl3_req_t* req) {
-  upd_req_t*  oreq = req->udata;
-  upd_file_t* f    = oreq->file;
+  upd_file_t* f    = req->udata;
   upd_iso_t*  iso  = f->iso;
-
-  oreq->result = req->ok? UPD_REQ_OK: UPD_REQ_ABORTED;
-  oreq->cb(oreq);
 
   upd_file_unlock(&req->lock);
   upd_iso_unstack(iso, req);

@@ -256,16 +256,31 @@ static bool tex_handle_fetch_(upd_req_t* req) {
     return false;
   }
 
+  if (HEDLEY_UNLIKELY(ctx->map.refcnt)) {
+    req->tensor.data = (upd_req_tensor_data_t) {
+      .meta = {
+        .type = UPD_TENSOR_F32,
+        .rank = ctx->rank,
+        .reso = (uint32_t[]) { ctx->ch, ctx->w, ctx->h, ctx->d, },
+      },
+      .ptr  = ctx->map.data,
+      .size = ctx->map.size,
+    };
+    req->result = UPD_REQ_OK;
+    req->cb(req);
+    return true;
+  }
+  if (HEDLEY_UNLIKELY(!upd_array_insert(&ctx->map.pending, req, SIZE_MAX))) {
+    req->result = UPD_REQ_NOMEM;
+    return false;
+  }
+  if (HEDLEY_UNLIKELY(ctx->map.pending.n > 1)) {
+    return true;
+  }
+
   ctx->map.mode = GL_READ_ONLY;
-
-  const upd_tensor_type_t type = req->tensor.meta.type;
-  ctx->map.type =
-    type == UPD_TENSOR_U8?  GL_UNSIGNED_BYTE:
-    type == UPD_TENSOR_U16? GL_UNSIGNED_SHORT:
-    type == UPD_TENSOR_F32? GL_FLOAT: 0;
-
-  const size_t size =  /* WIP */
-    ctx->ch * ctx->w * ctx->h * 8;
+  ctx->map.type = GL_FLOAT;
+  ctx->map.size = ctx->ch * ctx->w * ctx->h * ctx->d * sizeof(float);
 
   const bool ok = gra_gl3_lock_and_req_with_dup(&(gra_gl3_req_t) {
       .dev   = ctx->gl,
@@ -277,9 +292,9 @@ static bool tex_handle_fetch_(upd_req_t* req) {
         .tex_target = ctx->target,
         .fmt        = ctx->fmt,
         .type       = ctx->map.type,
-        .size       = size,
+        .size       = ctx->map.size,
       },
-      .udata = req,
+      .udata = f,
       .cb    = tex_buf_map_pbo_cb_,
     });
   if (HEDLEY_UNLIKELY(!ok)) {
@@ -298,6 +313,13 @@ static bool tex_handle_flush_(upd_req_t* req) {
     req->result = UPD_REQ_ABORTED;
     return false;
   }
+  req->result = UPD_REQ_OK;
+  req->cb(req);
+
+  assert(ctx->map.refcnt);
+  if (HEDLEY_UNLIKELY(--ctx->map.refcnt)) {
+    return true;
+  }
 
   const bool unmap = gra_gl3_lock_and_req_with_dup(&(gra_gl3_req_t) {
       .dev  = ctx->gl,
@@ -313,13 +335,11 @@ static bool tex_handle_flush_(upd_req_t* req) {
         .h          = ctx->h,
         .d          = ctx->d,
       },
-      .udata = req,
+      .udata = f,
       .cb    = tex_buf_unmap_pbo_cb_,
     });
   if (HEDLEY_UNLIKELY(!unmap)) {
     upd_iso_msgf(iso, LOG_PREFIX_"mapped buffer may be leaked X(\n");
-    req->result = UPD_REQ_ABORTED;
-    return false;
   }
   return true;
 }
@@ -465,37 +485,34 @@ static void tex_buf_del_cb_(gra_gl3_req_t* req) {
 }
 
 static void tex_buf_map_pbo_cb_(gra_gl3_req_t* req) {
-  upd_req_t*     oreq = req->udata;
-  upd_file_t*    f    = oreq->file;
+  upd_file_t*    f    = req->udata;
   upd_iso_t*     iso  = f->iso;
   gra_gl3_tex_t* ctx  = f->ctx;
 
-  const upd_tensor_type_t type = oreq->tensor.meta.type;
+  upd_array_t pending = ctx->map.pending;
 
-  oreq->tensor.data = (upd_req_tensor_data_t) {
-    .meta = {
-      .type = type,
-      .rank = ctx->rank,
-      .reso = (uint32_t[]) { ctx->ch, ctx->w, ctx->h, ctx->d, },
-    },
-    .ptr  = req->buf_map_pbo.data,
-    .size = req->buf_map_pbo.size,
-  };
+  ctx->map.data    = req->buf_map_pbo.data;
+  ctx->map.refcnt  = req->ok? pending.n: 0;
+  ctx->map.pending = (upd_array_t) {0};
 
-  oreq->result = req->ok? UPD_REQ_OK: UPD_REQ_ABORTED;
-  oreq->cb(oreq);
+  for (size_t i = 0; i < pending.n; ++i) {
+    upd_req_t* oreq = pending.p[i];
+    if (req->ok) {
+      tex_handle_fetch_(oreq);
+    } else {
+      oreq->result = UPD_REQ_ABORTED;
+      oreq->cb(oreq);
+    }
+  }
+  upd_array_clear(&pending);
 
   upd_file_unlock(&req->lock);
   upd_iso_unstack(iso, req);
 }
 
 static void tex_buf_unmap_pbo_cb_(gra_gl3_req_t* req) {
-  upd_req_t*  oreq = req->udata;
-  upd_file_t* f    = oreq->file;
+  upd_file_t* f    = req->udata;
   upd_iso_t*  iso  = f->iso;
-
-  oreq->result = req->ok? UPD_REQ_OK: UPD_REQ_ABORTED;
-  oreq->cb(oreq);
 
   upd_file_unlock(&req->lock);
   upd_iso_unstack(iso, req);

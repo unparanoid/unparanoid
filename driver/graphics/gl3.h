@@ -168,6 +168,11 @@ struct gra_gl3_buf_t {
 
   struct {
     GLenum mode;
+    size_t size;
+    void*  data;
+
+    size_t refcnt;
+    upd_array_of(upd_req_t*) pending;
   } map;
 
   unsigned broken : 1;
@@ -224,6 +229,11 @@ struct gra_gl3_tex_t {
   struct {
     GLenum mode;
     GLenum type;
+    void*  data;
+    size_t size;
+
+    size_t refcnt;
+    upd_array_of(upd_req_t*) pending;
   } map;
 
   unsigned broken : 1;
@@ -248,6 +258,14 @@ bool
 gra_gl3_pl_def_fetch(
   gra_gl3_fetch_t* fe);
 
+
+HEDLEY_NON_NULL(1)
+static inline
+void
+gra_gl3_buf_set_metadata(
+  upd_file_t*       buf,
+  upd_tensor_type_t type,
+  size_t            reso);
 
 /* 'req' must be a req with type GRA_GL3_REQ_TEX_ALLOC. */
 HEDLEY_NON_NULL(1)
@@ -307,16 +325,33 @@ gra_gl3_lock_and_fetch_lock_cb_(
   upd_file_lock_t* k);
 
 
+static inline void gra_gl3_buf_set_metadata(
+    upd_file_t* buf, const upd_tensor_type_t type, size_t reso) {
+  gra_gl3_buf_t* ctx = buf->ctx;
+  ctx->type = type;
+  ctx->reso = reso;
+}
+
 static inline void gra_gl3_tex_set_metadata(
     upd_file_t* tex, const gra_gl3_req_t* req) {
   gra_gl3_tex_t* ctx = tex->ctx;
   assert(ctx->target == req->tex.target);
 
+  ctx->w = 1, ctx->h = 1, ctx->d = 1;
+
   ctx->ch  = gra_gl3_color_fmt_to_dim(req->tex.fmt);
-  ctx->w   = req->tex.w;
-  ctx->h   = req->tex.h;
-  ctx->d   = req->tex.d;
   ctx->fmt = req->tex.fmt;
+
+  switch (req->tex.target) {
+  case GL_TEXTURE_3D:
+    ctx->d = req->tex.d;
+    HEDLEY_FALL_THROUGH;
+  case GL_TEXTURE_2D:
+    ctx->h = req->tex.h;
+    HEDLEY_FALL_THROUGH;
+  case GL_TEXTURE_1D:
+    ctx->w = req->tex.w;
+  }
 }
 
 static inline bool gra_gl3_dev_make_ctx_current(upd_file_t* gl, const char** err) {
