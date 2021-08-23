@@ -63,8 +63,6 @@ target_sources(updcore
     src/file.c
     src/file.h
     src/iso.c
-    src/pkg.c
-    src/pkg.h
 
     src/driver/bin.c
     src/driver/dir.c

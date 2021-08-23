@@ -36,11 +36,6 @@ iso_create_dir_(
   upd_iso_t*  iso,
   const char* path);
 
-static
-void
-iso_abort_all_pkg_installations_(
-  upd_iso_t* iso);
-
 
 static
 void
@@ -213,8 +208,6 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
     return UPD_ISO_PANIC;
   }
 
-  iso_abort_all_pkg_installations_(iso);
-
   /* disalbe signal handler */
   uv_signal_stop(&iso->sigint);
   uv_signal_stop(&iso->sighup);
@@ -259,14 +252,6 @@ upd_iso_status_t upd_iso_run(upd_iso_t* iso) {
   assert(iso->threads.n    == 0);
 
   uv_mutex_destroy(&iso->mtx);
-
-  /* forget all packages */
-  for (size_t i = 0; i < iso->pkgs.n; ++i) {
-    upd_pkg_t* pkg = iso->pkgs.p[i];
-    assert(!pkg->install);
-    upd_free(&pkg);
-  }
-  upd_array_clear(&iso->pkgs);
 
   /* cleanup curl */
   curl_multi_cleanup(iso->curl.ctx);
@@ -351,12 +336,6 @@ static bool iso_get_paths_(upd_iso_t* iso) {
   cwk_path_normalize(
     (char*) iso->path.runtime, (char*) iso->path.runtime, UPD_PATH_MAX);
 
-  const size_t pkgpath = cwk_path_join(
-    (char*) iso->path.runtime, "pkg", (char*) iso->path.pkg, UPD_PATH_MAX);
-  if (HEDLEY_UNLIKELY(pkgpath >= UPD_PATH_MAX)) {
-    return false;
-  }
-
   env = getenv("UPD_WORKING_PATH");
   if (HEDLEY_UNLIKELY(env && env[0])) {
     const size_t len = cwk_path_get_absolute(
@@ -385,15 +364,6 @@ static void iso_create_dir_(upd_iso_t* iso, const char* path) {
     upd_iso_msgf(iso,
       "allocation failure on pathfind request of '%s', while iso setup\n", path);
     return;
-  }
-}
-
-static void iso_abort_all_pkg_installations_(upd_iso_t* iso) {
-  for (size_t i = 0; i < iso->pkgs.n; ++i) {
-    upd_pkg_t* pkg = iso->pkgs.p[i];
-    if (HEDLEY_UNLIKELY(pkg->install)) {
-      upd_pkg_abort_install(pkg->install);
-    }
   }
 }
 
@@ -526,8 +496,6 @@ static void iso_async_cb_(uv_async_t* async) {
 
 static void destroyer_cb_(uv_timer_t* timer) {
   upd_iso_t* iso = timer->data;
-
-  iso_abort_all_pkg_installations_(iso);
 
   if (HEDLEY_UNLIKELY(iso->files.n == 0)) {
     uv_timer_stop(&iso->destroyer);

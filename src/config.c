@@ -142,11 +142,6 @@ config_close_cb_(
 
 static
 void
-task_parse_require_cb_(
-  task_t_* task);
-
-static
-void
 task_parse_import_cb_(
   task_t_* task);
 
@@ -543,13 +538,7 @@ static void config_read_cb_(uv_fs_t* req) {
     const size_t   klen = key->data.scalar.length;
 
     bool q = false;
-    if (upd_strcaseq_c("require", k, klen)) {
-      q = task_queue_with_dup_(&(task_t_) {
-          .ctx  = ctx,
-          .node = val,
-          .cb   = task_parse_require_cb_,
-        });
-    } else if (upd_strcaseq_c("import", k, klen)) {
+    if (upd_strcaseq_c("import", k, klen)) {
       q = task_queue_with_dup_(&(task_t_) {
           .ctx  = ctx,
           .node = val,
@@ -599,67 +588,6 @@ static void config_close_cb_(uv_fs_t* req) {
   config_unref_(ctx);
 }
 
-
-static void task_parse_require_cb_(task_t_* task) {
-  ctx_t_*          ctx  = task->ctx;
-  yaml_document_t* doc  = &ctx->doc;
-  yaml_node_t*     node = task->node;
-
-  if (HEDLEY_UNLIKELY(node == NULL)) {
-    goto EXIT;
-  }
-  if (HEDLEY_UNLIKELY(!(ctx->load->feats & UPD_CONFIG_REQUIRE))) {
-    config_lognf_(ctx, node, "'require' block is not allowed in this context");
-    goto EXIT;
-  }
-  if (HEDLEY_UNLIKELY(node->type != YAML_SEQUENCE_NODE)) {
-    config_lognf_(ctx, node, "'require' block must be sequence node");
-    goto EXIT;
-  }
-
-  yaml_node_item_t* itr = node->data.sequence.items.start;
-  yaml_node_item_t* end = node->data.sequence.items.top;
-  for (; itr < end; ++itr) {
-    yaml_node_t* val = yaml_document_get_node(doc, *itr);
-    if (HEDLEY_UNLIKELY(val == NULL)) {
-      config_lognf_(ctx, node, "null item found");
-      continue;
-    }
-
-    const yaml_node_t* name = NULL;
-    bool verify_ssl = true;
-
-    switch (val->type) {
-    case YAML_SCALAR_NODE:
-      name = val;
-      break;
-
-    case YAML_MAPPING_NODE: {
-      const char* invalid = upd_yaml_find_fields(doc, val, (upd_yaml_field_t[]) {
-          { .name = "name",       .required = true,  .str = &name,       },
-          { .name = "verify_ssl", .required = false, .b   = &verify_ssl, },
-          { NULL, },
-        });
-      if (HEDLEY_UNLIKELY(invalid)) {
-        config_lognf_(ctx, val, "error on property '%s'", invalid);
-        continue;
-      }
-    } break;
-
-    default:
-      config_lognf_(ctx, val,
-        "expected package specification (scalar or mapping)");
-      continue;
-    }
-
-    /* TODO */
-    config_lognf_(ctx, name, "pkg install: %.*s (Not Implemented)",
-      (int) name->data.scalar.length, name->data.scalar.value);
-  }
-
-EXIT:
-  task_unref_(task);
-}
 
 static void task_parse_import_cb_(task_t_* task) {
   ctx_t_*          ctx  = task->ctx;

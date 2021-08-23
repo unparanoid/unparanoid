@@ -48,4 +48,3 @@ typedef struct upd_pkg_t upd_pkg_t;
 #include "config.h"
 #include "driver.h"
 #include "file.h"
-#include "pkg.h"
