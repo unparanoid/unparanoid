@@ -439,6 +439,9 @@ static bool view_handle_(upd_req_t* req) {
     stctx->target = f;
     upd_file_ref(f);
 
+    ctx->win.tw     = 0;
+    ctx->win.th     = 0;
+    ctx->win.aspect = 0;
     atomic_store(&ctx->stream, (uintptr_t) stf);
     view_req_update_(f);
 
@@ -613,6 +616,7 @@ static void thread_main_(void* udata) {
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
       assert(glGetError() == GL_NO_ERROR);
 
+      glFlush();
       glfwSwapBuffers(ctx->win.ptr);
       glfwMakeContextCurrent(NULL);
       upd_file_end_sync(ctx->gl);
@@ -684,6 +688,7 @@ static void thread_update_fb_(upd_file_t* f, upd_file_t* stf) {
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindVertexArray(0);
     glUseProgram(0);
+
   } else {
 
     const GLenum fmt  = gra_gl3_dim_to_color_fmt(frame->ch);
