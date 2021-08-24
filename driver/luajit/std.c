@@ -109,13 +109,82 @@ void lj_promise_finalize(lj_promise_t* pro, bool ok) {
   pro->done  = true;
   pro->error = !ok;
 
-  if (HEDLEY_UNLIKELY(pro == st->pending)) {
+  size_t index;
+  if (HEDLEY_UNLIKELY(upd_array_find(&st->pending, &index, pro))) {
+    upd_array_clear(&st->pending);
+    st->catalyst.pro = pro;
     lj_stream_resume(stf);
   }
   luaL_unref(st->L, LUA_REGISTRYINDEX, pro->registry.self);
   pro->registry.self = LUA_REFNIL;
 
   upd_file_unref(stf);
+}
+
+
+lj_watcher_t* lj_watcher_new(upd_file_t* stf, size_t add) {
+  lj_stream_t* st = stf->ctx;
+  lua_State*   L  = st->L;
+
+  lj_watcher_t* w = lua_newuserdata(L, sizeof(*w)+add);
+
+  lua_getfield(L, LUA_REGISTRYINDEX, "std_Watcher");
+  lua_setmetatable(L, -2);
+
+  *w = (lj_watcher_t) {
+    .stream = stf,
+    .alive  = true,
+  };
+
+  if (HEDLEY_UNLIKELY(!upd_array_insert(&st->watchers, w, SIZE_MAX))) {
+    luaL_error(L, "watcher insertion failure");
+    return NULL;
+  }
+
+  lua_pushvalue(L, -1);
+  w->registry.self = luaL_ref(L, LUA_REGISTRYINDEX);
+  return w;
+}
+
+void lj_watcher_delete(lj_watcher_t* w) {
+  upd_file_t*  stf = w->stream;
+  lj_stream_t* st  = stf->ctx;
+  lua_State*   L   = st->L;
+
+  if (HEDLEY_UNLIKELY(!upd_array_find_and_remove(&st->watchers, w))) {
+    return;
+  }
+  if (HEDLEY_UNLIKELY(st->recv == w)) {
+    st->recv = NULL;
+  }
+
+  w->unwatch(w);
+  w->alive = false;
+
+  luaL_unref(L, LUA_REGISTRYINDEX, w->registry.self);
+}
+
+void lj_watcher_trigger(lj_watcher_t* w) {
+  upd_file_t*  stf = w->stream;
+  lj_stream_t* st  = stf->ctx;
+
+  if (HEDLEY_UNLIKELY(!w->alive)) {
+    return;
+  }
+
+  size_t index;
+  if (HEDLEY_UNLIKELY(upd_array_find(&st->pending, &index, w))) {
+    upd_array_clear(&st->pending);
+    st->catalyst.w = w;
+    lj_stream_resume(stf);
+  }
+}
+
+int lj_watcher_push_events(lj_watcher_t* w) {
+  if (HEDLEY_UNLIKELY(!w->alive)) {
+    return 0;
+  }
+  return w->push(w);
 }
 
 
@@ -211,8 +280,10 @@ static int promise_await_(lua_State* L) {
   lj_stream_t*  st  = stf->ctx;
 
   if (!pro->done) {
+    if (HEDLEY_UNLIKELY(!upd_array_insert(&st->pending, pro, SIZE_MAX))) {
+      return luaL_error(L, "insertion failure");
+    }
     st->state   = LJ_STREAM_PENDING_PROMISE;
-    st->pending = pro;
     return lua_yield(L, 0);
   }
   return lj_promise_push_result(pro);
@@ -238,6 +309,42 @@ static int promise_result_(lua_State* L) {
 static int promise_gc_(lua_State* L) {
   lj_promise_t* pro = luaL_checkudata(L, 1, "std_Promise");
   luaL_unref(L, LUA_REGISTRYINDEX, pro->registry.result);
+  return 0;
+}
+
+
+static int watcher_await_(lua_State* L) {
+  lj_watcher_t* w   = luaL_checkudata(L, 1, "std_Watcher");
+  upd_file_t*   stf = w->stream;
+  lj_stream_t*  st  = stf->ctx;
+
+  if (HEDLEY_UNLIKELY(!w->alive)) {
+    return 0;
+  }
+
+  const int n = lj_watcher_push_events(w);
+  if (HEDLEY_LIKELY(n)) {
+    return n;
+  }
+
+  if (HEDLEY_UNLIKELY(!upd_array_insert(&st->pending, w, SIZE_MAX))) {
+    return luaL_error(L, "watcher insertion failure");
+  }
+  st->state = LJ_STREAM_PENDING_WATCHER;
+  return lua_yield(L, 0);
+}
+
+static int watcher_pop_(lua_State* L) {
+  lj_watcher_t* w = luaL_checkudata(L, 1, "std_Watcher");
+  if (HEDLEY_UNLIKELY(!w->alive)) {
+    return 0;
+  }
+  return lj_watcher_push_events(w);
+}
+
+static int watcher_teardown_(lua_State* L) {
+  lj_watcher_t* w = luaL_checkudata(L, 1, "std_Watcher");
+  lj_watcher_delete(w);
   return 0;
 }
 
@@ -451,6 +558,26 @@ void lj_std_register(lua_State* L, upd_iso_t* iso) {
     lua_setfield(L, -2, "__gc");
   }
   lua_setfield(L, LUA_REGISTRYINDEX, "std_Promise");
+
+  lua_createtable(L, 0, 0);
+  {
+    lua_createtable(L, 0, 0);
+    {
+      lua_pushcfunction(L, watcher_await_);
+      lua_setfield(L, -2, "await");
+
+      lua_pushcfunction(L, watcher_pop_);
+      lua_setfield(L, -2, "pop");
+
+      lua_pushcfunction(L, watcher_teardown_);
+      lua_setfield(L, -2, "teardown");
+    }
+    lua_setfield(L, -2, "__index");
+
+    lua_pushcfunction(L, watcher_teardown_);
+    lua_setfield(L, -2, "__gc");
+  }
+  lua_setfield(L, LUA_REGISTRYINDEX, "std_Watcher");
 
   lua_createtable(L, 0, 0);
   {

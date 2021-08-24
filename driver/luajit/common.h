@@ -40,6 +40,7 @@ typedef struct lj_stream_t lj_stream_t;
 
 typedef struct lj_compile_t lj_compile_t;
 typedef struct lj_promise_t lj_promise_t;
+typedef struct lj_watcher_t lj_watcher_t;
 
 
 struct lj_dev_t {
@@ -66,9 +67,10 @@ typedef enum lj_stream_state_t {
   LJ_STREAM_ABORTED = 0x01,
 
   LJ_STREAM_RUNNING         = 0x10,
-  LJ_STREAM_PENDING_TIMER   = 0x11,
+  LJ_STREAM_WAITING_TIMER   = 0x11,
   LJ_STREAM_PENDING_PROMISE = 0x12,
-  LJ_STREAM_PENDING_INPUT   = 0x13,
+  LJ_STREAM_PENDING_WATCHER = 0x13,
+  LJ_STREAM_PENDING_SELECT  = 0x14,
 } lj_stream_state_t;
 
 struct lj_stream_t {
@@ -88,10 +90,19 @@ struct lj_stream_t {
   upd_array_of(upd_file_t**)      files;
   upd_array_of(upd_file_lock_t**) locks;
 
+  upd_array_of(lj_watcher_t*) watchers;
+
   upd_buf_t in;
   upd_buf_t out;
 
-  lj_promise_t* pending;
+  lj_watcher_t* recv;
+
+  upd_array_of(void*) pending;
+
+  struct {
+    lj_promise_t* pro;
+    lj_watcher_t* w;
+  } catalyst;
 };
 
 
@@ -123,6 +134,24 @@ struct lj_promise_t {
 
   unsigned error : 1;
   unsigned done  : 1;
+};
+
+struct lj_watcher_t {
+  upd_file_t* stream;
+
+  struct {
+    int self;
+  } registry;
+
+  void* udata;
+  int
+  (*push)(
+    lj_watcher_t* w);
+  void
+  (*unwatch)(
+    lj_watcher_t* w);
+
+  unsigned alive : 1;
 };
 
 
@@ -198,6 +227,28 @@ void
 lj_promise_finalize(
   lj_promise_t* pro,
   bool          ok);
+
+HEDLEY_NON_NULL(1)
+HEDLEY_WARN_UNUSED_RESULT
+lj_watcher_t*
+lj_watcher_new(
+  upd_file_t* w,
+  size_t      add);
+
+HEDLEY_NON_NULL(1)
+void
+lj_watcher_delete(
+  lj_watcher_t* w);
+
+HEDLEY_NON_NULL(1)
+void
+lj_watcher_trigger(
+  lj_watcher_t* w);
+
+HEDLEY_NON_NULL(1)
+int
+lj_watcher_push_events(
+  lj_watcher_t* w);
 
 
 static inline bool lj_compile_with_dup(const lj_compile_t* src) {

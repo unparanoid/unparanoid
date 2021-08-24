@@ -157,6 +157,12 @@ static void stream_deinit_(upd_file_t* f) {
   upd_buf_clear(&ctx->in);
   upd_buf_clear(&ctx->out);
 
+  upd_array_clear(&ctx->pending);
+
+  for (ssize_t i = ctx->watchers.n-1; i >= 0; --i) {
+    lj_watcher_delete(ctx->watchers.p[i]);
+  }
+
   if (HEDLEY_LIKELY(L)) {
     luaL_unref(L, LUA_REGISTRYINDEX, ctx->registry.thread);
     luaL_unref(L, LUA_REGISTRYINDEX, ctx->registry.func);
@@ -205,11 +211,8 @@ static bool stream_handle_(upd_req_t* req) {
       req->result = UPD_REQ_NOMEM;
       return false;
     }
-    if (HEDLEY_UNLIKELY(ctx->state == LJ_STREAM_PENDING_INPUT)) {
-      if (HEDLEY_UNLIKELY(!lj_stream_resume(f))) {
-        req->result = UPD_REQ_ABORTED;
-        return false;
-      }
+    if (HEDLEY_LIKELY(ctx->recv)) {
+      lj_watcher_trigger(ctx->recv);
     }
     req->cb(req);
   } return true;
@@ -302,13 +305,24 @@ static void stream_watch_cb_(upd_file_watch_t* w) {
 
   int args = 0;
   switch (ctx->state) {
-  case LJ_STREAM_PENDING_INPUT:
-    args = 1;
-    lua_pushlstring(L, (char*) ctx->in.ptr, ctx->in.size);
-    upd_buf_clear(&ctx->in);
-    break;
   case LJ_STREAM_PENDING_PROMISE:
-    args = lj_promise_push_result(ctx->pending);
+    args = lj_promise_push_result(ctx->catalyst.pro);
+    ctx->catalyst.pro = NULL;
+    break;
+  case LJ_STREAM_PENDING_WATCHER:
+    if (ctx->catalyst.w) {
+      args = lj_watcher_push_events(ctx->catalyst.w);
+    } else {
+      lua_pushnil(L);
+      args = 1;
+    }
+    ctx->catalyst.w = NULL;
+    break;
+  case LJ_STREAM_PENDING_SELECT:
+    lua_rawgeti(L, LUA_REGISTRYINDEX,
+      ctx->catalyst.pro? ctx->catalyst.pro->registry.self:
+      ctx->catalyst.w  ? ctx->catalyst.w  ->registry.self: LUA_REFNIL);
+    args = 1;
     break;
   default:
     break;

@@ -220,7 +220,7 @@ static int sleep_(lua_State* L) {
   upd_file_t*  f   = lua_touserdata(L, lua_upvalueindex(1));
   lj_stream_t* ctx = f->ctx;
 
-  ctx->state = LJ_STREAM_PENDING_TIMER;
+  ctx->state = LJ_STREAM_WAITING_TIMER;
 
   const lua_Integer t = luaL_checkinteger(L, 1);
   if (HEDLEY_UNLIKELY(t < 0)) {
@@ -233,26 +233,45 @@ static int sleep_(lua_State* L) {
   return lua_yield(L, 0);
 }
 
-static int recv_(lua_State* L) {
-  upd_file_t*  f   = lua_touserdata(L, lua_upvalueindex(1));
-  lj_stream_t* ctx = f->ctx;
+static int recv_push_cb_(lj_watcher_t* w) {
+  upd_file_t*  stf = w->udata;
+  lj_stream_t* ctx = stf->ctx;
+  lua_State*   L   = ctx->L;
 
+  if (HEDLEY_LIKELY(!ctx->in.size)) {
+    return 0;
+  }
   lua_pushlstring(L, (char*) ctx->in.ptr, ctx->in.size);
   upd_buf_clear(&ctx->in);
   return 1;
 }
+static void recv_unwatch_cb_(lj_watcher_t* w) {
+  upd_file_t*  stf = w->udata;
+  lj_stream_t* ctx = stf->ctx;
 
-static int recv_blocked_(lua_State* L) {
-  upd_file_t*  f   = lua_touserdata(L, lua_upvalueindex(1));
-  lj_stream_t* ctx = f->ctx;
+  ctx->recv = NULL;
+}
+static int recv_(lua_State* L) {
+  upd_file_t*  stf = lua_touserdata(L, lua_upvalueindex(1));
+  lj_stream_t* ctx = stf->ctx;
 
-  if (HEDLEY_LIKELY(ctx->in.size == 0)) {
-    ctx->state = LJ_STREAM_PENDING_INPUT;
-    return lua_yield(L, 0);
+  if (HEDLEY_UNLIKELY(ctx->recv)) {
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ctx->recv->registry.self);
+    return 1;
   }
 
-  lua_pushlstring(L, (char*) ctx->in.ptr, ctx->in.size);
-  upd_buf_clear(&ctx->in);
+  lj_watcher_t* w     = lj_watcher_new(stf, 0);
+  const int     index = lua_gettop(L);
+
+  w->udata   = stf;
+  w->push    = recv_push_cb_;
+  w->unwatch = recv_unwatch_cb_;
+
+  ctx->recv = w;
+  if (HEDLEY_UNLIKELY(ctx->in.size)) {
+    lj_watcher_trigger(w);
+  }
+  lua_pushvalue(L, index);
   return 1;
 }
 
@@ -285,12 +304,12 @@ void lj_ctx_create(lua_State* L, upd_file_t* stf) {
 
         lua_pushlightuserdata(L, stf);
         lua_pushboolean(L, false);
-        lua_pushcclosure(L, lock_, 1);
+        lua_pushcclosure(L, lock_, 2);
         lua_setfield(L, -2, "lock");
 
         lua_pushlightuserdata(L, stf);
         lua_pushboolean(L, true);
-        lua_pushcclosure(L, lock_, 1);
+        lua_pushcclosure(L, lock_, 2);
         lua_setfield(L, -2, "lockEx");
 
         lua_pushlightuserdata(L, stf);
@@ -300,10 +319,6 @@ void lj_ctx_create(lua_State* L, upd_file_t* stf) {
         lua_pushlightuserdata(L, stf);
         lua_pushcclosure(L, recv_, 1);
         lua_setfield(L, -2, "recv");
-
-        lua_pushlightuserdata(L, stf);
-        lua_pushcclosure(L, recv_blocked_, 1);
-        lua_setfield(L, -2, "recvBlocked");
 
         lua_pushlightuserdata(L, stf);
         req_create_(L);
