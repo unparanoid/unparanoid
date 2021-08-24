@@ -136,62 +136,6 @@ static int print_(lua_State* L) {
 }
 
 
-static void file_lock_cb_(upd_file_lock_t* k) {
-  lj_promise_t* pro = k->udata;
-  upd_file_t*   stf = pro->stream;
-  lj_stream_t*  st  = stf->ctx;
-  lua_State*    L   = st->L;
-
-  if (HEDLEY_LIKELY(k->ok)) {
-    lj_lock_new(stf, k);
-    pro->registry.result = luaL_ref(L, LUA_REGISTRYINDEX);
-    lj_promise_finalize(pro, true);
-  } else {
-    upd_free(&k);
-    lj_promise_finalize(pro, false);
-  }
-}
-static int file_lock_(lua_State* L) {
-  const bool ex = lua_toboolean(L, lua_upvalueindex(1));
-
-  upd_file_t* stf = lj_stream_get(L);
-
-  upd_file_t** udata = luaL_checkudata(L, 1, "std_File");
-  if (HEDLEY_UNLIKELY(*udata == NULL)) {
-    return luaL_error(L, "file has been torn down");
-  }
-  upd_file_t* f = *udata;
-
-  const lua_Integer timeout = lua_tointeger(L, 2);
-  if (HEDLEY_UNLIKELY(timeout < 0)) {
-    return luaL_error(L, "negative timeout");
-  }
-
-  lj_promise_t* pro   = lj_promise_new(stf);
-  const int     index = lua_gettop(L);
-
-  upd_file_lock_t* k = NULL;
-  if (HEDLEY_UNLIKELY(!upd_malloc(&k, sizeof(*k)))) {
-    lj_promise_finalize(pro, false);
-    goto EXIT;
-  }
-  *k = (upd_file_lock_t) {
-    .file    = f,
-    .ex      = ex,
-    .timeout = timeout,
-    .udata   = pro,
-    .cb      = file_lock_cb_,
-  };
-  if (HEDLEY_UNLIKELY(!upd_file_lock(k))) {
-    lj_promise_finalize(pro, false);
-    goto EXIT;
-  }
-
-EXIT:
-  lua_pushvalue(L, index);
-  return 1;
-}
-
 static int file_id_(lua_State* L) {
   upd_file_t** udata = luaL_checkudata(L, 1, "std_File");
   if (HEDLEY_UNLIKELY(*udata == NULL)) {
@@ -449,14 +393,6 @@ void lj_std_register(lua_State* L, upd_iso_t* iso) {
   {
     lua_createtable(L, 0, 0);
     {
-      lua_pushboolean(L, false);
-      lua_pushcclosure(L, file_lock_, 1);
-      lua_setfield(L, -2, "lock");
-
-      lua_pushboolean(L, true);
-      lua_pushcclosure(L, file_lock_, 1);
-      lua_setfield(L, -2, "lockEx");
-
       lua_pushcfunction(L, file_id_);
       lua_setfield(L, -2, "id");
 
