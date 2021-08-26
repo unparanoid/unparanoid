@@ -159,8 +159,8 @@ static void stream_deinit_(upd_file_t* f) {
 
   upd_array_clear(&ctx->pending);
 
-  for (ssize_t i = ctx->watchers.n-1; i >= 0; --i) {
-    lj_watcher_delete(ctx->watchers.p[i]);
+  for (size_t i = ctx->watchers.n; i > 0; --i) {
+    lj_watcher_delete(ctx->watchers.p[i-1]);
   }
 
   if (HEDLEY_LIKELY(L)) {
