@@ -4,3 +4,11 @@ driver:
 file:
   /sys/upd.luajit.dev:
     driver: upd.luajit.dev
+
+  /lib/upd.luajit/:
+    driver: upd.syncdir
+    npath : ./lib
+    param : |
+      '.*\.lua':
+        - upd.luajit
+        - upd.bin

@@ -379,9 +379,6 @@ void lj_std_register(lua_State* L, upd_iso_t* iso) {
         lua_pushcfunction(L, assert_);
         lua_setfield(L, -2, "assert");
 
-        lua_getfield(L, std, "lambda");
-        lua_setfield(L, -2, "lambda");
-
         lua_newuserdata(L, 0);
         {
           lua_createtable(L, 0, 0);
@@ -474,21 +471,6 @@ void lj_std_register(lua_State* L, upd_iso_t* iso) {
         lua_pushlightuserdata(L, iso);
         lua_pushcclosure(L, print_, 1);
         lua_setfield(L, -2, "print");
-
-        lua_newuserdata(L, 0);
-        {
-          lua_createtable(L, 0, 0);
-          {
-            lua_createtable(L, 0, 0);
-            {
-              lua_getfield(L, std, "trait_number");
-              lua_setfield(L, -2, "number");
-            }
-            lua_setfield(L, -2, "__index");
-          }
-          lua_setmetatable(L, -2);
-        }
-        lua_setfield(L, -2, "trait");
       }
       lua_setfield(L, -2, "__index");
     }

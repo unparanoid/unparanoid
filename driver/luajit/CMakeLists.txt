@@ -15,7 +15,11 @@ add_custom_command(
 )
 
 
-add_driver(upd.luajit)
+add_driver(upd.luajit
+  FILES
+    lib/lambda.lua
+    lib/trait.lua
+)
 target_sources(upd.luajit
   PRIVATE
   "${XXD_DST}"

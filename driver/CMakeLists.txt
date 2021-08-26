@@ -4,7 +4,7 @@ add_custom_target(pack ALL)
 
 
 function (add_driver name)
-  cmake_parse_arguments(AD "" "" "FILES")
+  cmake_parse_arguments(AD "" "" "FILES" ${ARGN})
   set(suffix ".x86_64${CMAKE_SHARED_LIBRARY_SUFFIX}")
 
   add_library(${name} SHARED)
