@@ -233,6 +233,7 @@ static int sleep_(lua_State* L) {
   return lua_yield(L, 0);
 }
 
+
 static int recv_push_cb_(lj_watcher_t* w) {
   upd_file_t*  stf = w->udata;
   lj_stream_t* ctx = stf->ctx;
@@ -275,6 +276,7 @@ static int recv_(lua_State* L) {
   return 1;
 }
 
+
 static int send_(lua_State* L) {
   upd_file_t*  f   = lua_touserdata(L, lua_upvalueindex(1));
   lj_stream_t* ctx = f->ctx;
@@ -289,6 +291,94 @@ static int send_(lua_State* L) {
     }
   }
   return 0;
+}
+
+
+typedef struct {
+  lj_watcher_t super;
+
+  upd_file_watch_t watch;
+
+  struct {
+    upd_file_event_t ptr[32];
+    size_t           n;
+  } events;
+} watch_t_;
+
+static void watch_cb_(upd_file_watch_t* watch) {
+  watch_t_* w = watch->udata;
+  if (HEDLEY_UNLIKELY(w->events.n >= sizeof(w->events.ptr)/sizeof(w->events.ptr[0]))) {
+    return;
+  }
+  switch (watch->event) {
+  case UPD_FILE_UPDATE:
+  case UPD_FILE_DELETE:
+    w->events.ptr[w->events.n++] = watch->event;
+    lj_watcher_trigger(&w->super);
+    break;
+  default:
+    break;
+  }
+}
+static int watch_push_cb_(lj_watcher_t* super) {
+  watch_t_*    w   = super->udata;
+  upd_file_t*  stf = w->super.stream;
+  lj_stream_t* st  = stf->ctx;
+  lua_State*   L   = st->L;
+
+  if (HEDLEY_UNLIKELY(w->events.n == 0)) {
+    return 0;
+  }
+
+  switch (w->events.ptr[0]) {
+  case UPD_FILE_UPDATE:
+    lua_pushstring(L, "UPDATE");
+    break;
+  case UPD_FILE_DELETE:
+    lua_pushstring(L, "DELETE");
+    break;
+  default:
+    assert(false);
+    HEDLEY_UNREACHABLE();
+  }
+
+  --w->events.n;
+  memmove(w->events.ptr, w->events.ptr+1, sizeof(w->events.ptr[0])*w->events.n);
+  return 1;
+}
+static void watch_unwatch_cb_(lj_watcher_t* super) {
+  watch_t_* w = super->udata;
+  upd_file_unwatch(&w->watch);
+}
+static int watch_(lua_State* L) {
+  upd_file_t* stf = lua_touserdata(L, lua_upvalueindex(1));
+
+  upd_file_t* f = *(void**) luaL_checkudata(L, 1, "std_File");
+  if (HEDLEY_UNLIKELY(f == NULL)) {
+    return luaL_error(L, "invalid file");
+  }
+
+  static const size_t addsize = sizeof(watch_t_) - sizeof(lj_watcher_t);
+
+  watch_t_* w     = (void*) lj_watcher_new(stf, addsize);
+  const int index = lua_gettop(L);
+
+  w->super.udata   = w;
+  w->super.push    = watch_push_cb_;
+  w->super.unwatch = watch_unwatch_cb_;
+
+  w->events.n = 0;
+
+  w->watch = (upd_file_watch_t) {
+    .file  = f,
+    .udata = w,
+    .cb    = watch_cb_,
+  };
+  if (HEDLEY_UNLIKELY(!upd_file_watch(&w->watch))) {
+    return luaL_error(L, "watcher insertion failure");
+  }
+  lua_pushvalue(L, index);
+  return 1;
 }
 
 
@@ -335,6 +425,10 @@ void lj_ctx_create(lua_State* L, upd_file_t* stf) {
         lua_pushlightuserdata(L, stf);
         lua_pushcclosure(L, sleep_, 1);
         lua_setfield(L, -2, "sleep");
+
+        lua_pushlightuserdata(L, stf);
+        lua_pushcclosure(L, watch_, 1);
+        lua_setfield(L, -2, "watch");
       }
       lua_setfield(L, -2, "__index");
 

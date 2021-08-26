@@ -156,10 +156,11 @@ function Protocol:handle()
     end
   end
 
+  local receiver = self.ctx.recv();
   while true do
     local cnt = 0;
     while cnt == 0 do
-      cnt = self.upk:unpack(self.ctx.recvBlocked());
+      cnt = self.upk:unpack(receiver:await());
       if not cnt then
         return false;
       end
