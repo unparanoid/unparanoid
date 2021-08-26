@@ -47,17 +47,6 @@ static void dev_deinit_(upd_file_t* f) {
   lj_dev_t*  ctx = f->ctx;
   lua_State* L   = ctx->L;
 
-# if !defined(NDEBUG)
-    lua_pushnil(L);
-    while (lua_next(L, LUA_REGISTRYINDEX) != 0) {
-      lua_pushvalue(L, -2);
-      upd_iso_msgf(f->iso, "%s - %s\n",
-          lua_tostring(L, -1),
-          lua_typename(L, lua_type(L, -2)));
-      lua_pop(L, 2);
-    }
-# endif
-
   lua_close(L);
   upd_free(&ctx);
 }
